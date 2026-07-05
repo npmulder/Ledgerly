@@ -16,8 +16,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const migrationsTable = "public.ledgerly_migrations"
-
 // AppliedMigration describes a migration applied by this run.
 type AppliedMigration struct {
 	Module   string
