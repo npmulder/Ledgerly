@@ -6,6 +6,17 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+func (r *Rate) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind != yaml.ScalarNode {
+		return fmt.Errorf("rate must be a scalar")
+	}
+	if value.Tag != "!!str" {
+		return fmt.Errorf("rate must be a decimal string")
+	}
+	*r = Rate(value.Value)
+	return nil
+}
+
 func (v *VAT) UnmarshalYAML(value *yaml.Node) error {
 	if value.Kind != yaml.MappingNode {
 		return fmt.Errorf("vat must be a mapping")
@@ -19,6 +30,10 @@ func (v *VAT) UnmarshalYAML(value *yaml.Node) error {
 		switch key {
 		case "regime":
 			if err := node.Decode(&v.Regime); err != nil {
+				return err
+			}
+		case "authority":
+			if err := node.Decode(&v.Authority); err != nil {
 				return err
 			}
 		case "reverse_charge":

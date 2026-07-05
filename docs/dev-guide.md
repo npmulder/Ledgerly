@@ -83,26 +83,83 @@ module's store or mounting routes directly in `cmd/ledgerly`.
 
 ## Integration Proof
 
-The IT-0 walking-skeleton test lives in `cmd/ledgerly` with the `integration`
-build tag. It runs against the compose PostgreSQL database:
+The IT-0 walking-skeleton test lives under `internal/it/harness` with the
+`integration` build tag. It boots the full monolith in-process on an isolated
+IT0-1 database:
 
 ```sh
-LEDGERLY_TEST_DB=postgres://postgres:postgres@localhost:5432/ledgerly_dev?sslmode=disable \
-  go test -tags=integration ./cmd/ledgerly -run TestDemoWalkingSkeletonE2E -count=1
+go test -tags=integration ./internal/it/harness -run TestDemoWalkingSkeletonE2E -count=1
 ```
 
 The proof:
 
-- migrates the compose database;
-- boots the same router assembly used by `ledgerly serve`;
+- clones a migrated IT0-1 template database for the suite;
+- boots the same `internal/app.Build` wiring used by `ledgerly serve`;
+- logs in a first-run owner and returns an authenticated HTTP client;
 - posts a demo note through HTTP;
 - lists notes through HTTP;
 - verifies an audit row exists in `demo.notes`;
 - injects a subscriber error and verifies the note and audit rows both rolled
   back.
 
-CI runs this as the first step in the integration job before the broader
-`task test:integration` command.
+### Writing an Integration Suite
+
+Use `internal/it/harness` for app-level tests:
+
+```go
+//go:build integration
+
+package mymodule_test
+
+import (
+	"context"
+	"net/http"
+	"os"
+	"testing"
+	"time"
+
+	"github.com/npmulder/ledgerly/internal/app"
+	"github.com/npmulder/ledgerly/internal/it/harness"
+	"github.com/npmulder/ledgerly/internal/it/testdb"
+	"github.com/npmulder/ledgerly/internal/platform/db"
+)
+
+func TestMain(m *testing.M) {
+	os.Exit(testdb.Main(m))
+}
+
+func TestWorkflow(t *testing.T) {
+	t.Parallel()
+
+	h := harness.New(t, harness.Options{
+		Jobs: map[string]app.Job{
+			"job-name": func(context.Context) error { return nil },
+		},
+	})
+	h.Clock.Advance(time.Hour)
+	if err := h.RunJob("job-name"); err != nil {
+		t.Fatalf("run job: %v", err)
+	}
+	h.Tx(func(ctx context.Context, tx db.Tx) error {
+		_, err := tx.Exec(ctx, "SELECT 1")
+		return err
+	})
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "/api/demo/notes", nil)
+	if err != nil {
+		t.Fatalf("create request: %v", err)
+	}
+	resp, err := h.Do(req)
+	if err != nil {
+		t.Fatalf("GET notes: %v", err)
+	}
+	defer resp.Body.Close()
+}
+```
+
+Do not use wall-clock sleeps in integration suites. Advance `h.Clock` for time
+dependent behavior and drive background work through `h.RunJob` or module-level
+`RunNow` helpers.
 
 ## Guardrails
 
