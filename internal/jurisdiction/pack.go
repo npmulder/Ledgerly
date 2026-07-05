@@ -68,6 +68,8 @@ type Filing struct {
 	Authority          string `yaml:"authority"`
 	Cadence            string `yaml:"cadence,omitempty"`
 	RequiredAtZeroRate bool   `yaml:"required_at_zero_rate,omitempty"`
+
+	dueExpression *deadlineExpression `yaml:"-"`
 }
 
 type DirectorLoanYear struct {

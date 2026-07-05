@@ -148,6 +148,20 @@ func TestValidationFailuresNameFilePathAndField(t *testing.T) {
 			wantText:  "unknown deadline anchor",
 		},
 		{
+			name:      "old vat period anchor",
+			pack:      strings.Replace(valid, "quarter_end + 1 month", "vat_period_end + 1 month", 1),
+			wantPath:  "filings.vat_return.due",
+			wantField: "due",
+			wantText:  "unknown deadline anchor",
+		},
+		{
+			name:      "unsupported year offset",
+			pack:      strings.Replace(valid, "accounting_year_end + 12 months + 1 day", "accounting_year_end + 1 year", 1),
+			wantPath:  "filings.company_tax_return.due",
+			wantField: "due",
+			wantText:  "unknown deadline offset unit",
+		},
+		{
 			name:      "empty wording",
 			pack:      strings.Replace(valid, "invoice_wording: Testland reverse charge applies", "invoice_wording: \"\"", 1),
 			wantPath:  "tax.vat.reverse_charge.b2b_services_eu.invoice_wording",
@@ -207,7 +221,7 @@ func TestLoadFromFSRejectsUnknownVATYearField(t *testing.T) {
 	}
 }
 
-func testFixtureFS(t *testing.T) fs.FS {
+func testFixtureFS(t testing.TB) fs.FS {
 	t.Helper()
 
 	files, err := fs.Sub(embeddedTestFixtures, "testdata")

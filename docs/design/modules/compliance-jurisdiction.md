@@ -36,6 +36,8 @@ advisor_rules: [ ... ]                          # rule defs consumed by advisor 
 
 Rates/allowances are **year-versioned data** keyed by tax year, not constants. Deadline expressions are a tiny declarative grammar (`anchor + offset`) evaluated against company facts (incorporation date, year end) supplied by the caller.
 
+Deadline month arithmetic is deliberately calendar-based and applied left-to-right. Month offsets clamp overflow days to the destination month end (`31 Jan + 1 month` becomes `28 Feb` or `29 Feb` in a leap year). Leap-day anniversaries clamp to `28 Feb` in non-leap years and remain `29 Feb` in leap years. Compound offsets apply in order, so `accounting_year_end + 12 months + 1 day` first resolves the 12-month calendar shift, then adds one day.
+
 ## Public API (Go)
 
 ```go
