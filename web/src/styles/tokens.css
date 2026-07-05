@@ -1,0 +1,69 @@
+:root {
+  --color-navy: #16337f;
+  --color-teal: #2bb8b8;
+  --color-teal-light: #7fe0dd;
+  --color-success: #0e7c7b;
+  --color-success-bg: #d9f3f2;
+  --color-success-tint: #f2fbfb;
+  --color-navy-tint: #e8edf9;
+  --color-panel: #f2f5fa;
+  --color-warning: #b07408;
+  --color-warning-bg: #fdf1dc;
+  --color-warning-callout: #fff8ef;
+  --color-warning-border: #f2e3c8;
+  --color-danger: #b0263a;
+  --color-danger-bg: #f7dee2;
+  --color-danger-row-tint: #fdf5f6;
+  --color-text: #1c2433;
+  --color-text-secondary: #6b7484;
+  --color-text-muted: #9aa2b1;
+  --color-page-bg: #f7f8fb;
+  --color-card: #ffffff;
+  --color-border-hairline: #e7eaf1;
+  --color-border-input: #d6dcea;
+  --color-canvas: #e9ebf0;
+
+  --font-ui:
+    "Instrument Sans", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  --font-mono:
+    "IBM Plex Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+
+  --radius-card: 12px;
+  --radius-input: 8px;
+  --radius-button: 8px;
+  --radius-inner-row: 8px;
+  --radius-pill: 999px;
+
+  --shadow-screen: 0 8px 40px rgba(20, 30, 60, 0.12);
+  --border-card: 1px solid var(--color-border-hairline);
+
+  --type-page-title-size: 26px;
+  --type-page-title-line-height: 1.2;
+  --type-page-title-weight: 700;
+  --type-card-title-size: 15px;
+  --type-card-title-line-height: 1.25;
+  --type-card-title-weight: 700;
+  --type-body-size: 13.5px;
+  --type-body-line-height: 1.45;
+  --type-secondary-size: 12.5px;
+  --type-secondary-line-height: 1.45;
+  --type-stat-size: 26px;
+  --type-stat-line-height: 1.15;
+  --type-stat-weight: 700;
+  --type-uppercase-label-size: 11.5px;
+  --type-uppercase-label-line-height: 1.2;
+  --type-uppercase-label-weight: 700;
+  --type-uppercase-label-letter-spacing: 0.05em;
+  --type-mono-numeral-size: 12.5px;
+  --type-mono-numeral-line-height: 1.35;
+  --type-mono-numeral-weight: 500;
+
+  --layout-screen-width: 1280px;
+  --layout-header-padding-block: 18px;
+  --layout-header-padding-inline: 32px;
+  --layout-content-padding-block: 28px;
+  --layout-content-padding-inline: 32px;
+  --layout-grid-gap: 16px;
+  --layout-grid-gap-large: 20px;
+}
