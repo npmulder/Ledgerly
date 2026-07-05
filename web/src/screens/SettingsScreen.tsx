@@ -27,6 +27,7 @@ import {
   type InvoicingClientRequest,
   type InvoicingMoneyAmount,
 } from "@/api/invoicing";
+import { getJurisdictionPack } from "@/api/jurisdiction";
 import { queryKeys } from "@/api/queryKeys";
 import {
   AmountText,
@@ -142,10 +143,13 @@ export function SettingsScreen() {
         <Routes>
           <Route index element={<Navigate replace to="company" />} />
           <Route path="company" element={<CompanySettings />} />
+          <Route path="jurisdiction" element={<JurisdictionSettings />} />
           <Route path="clients" element={<ClientsSettings />} />
           {settingsItems
             .slice(1)
-            .filter((item) => item.path !== "clients")
+            .filter(
+              (item) => item.path !== "jurisdiction" && item.path !== "clients",
+            )
             .map((item) => (
               <Route
                 element={<ComingSoonSettings title={item.title} />}
@@ -159,6 +163,86 @@ export function SettingsScreen() {
           />
         </Routes>
       </section>
+    </div>
+  );
+}
+
+function JurisdictionSettings() {
+  const packQuery = useQuery({
+    queryFn: getJurisdictionPack,
+    queryKey: queryKeys.jurisdiction.pack(),
+  });
+  const pack = packQuery.data;
+
+  if (packQuery.isPending) {
+    return (
+      <div className="settings-detail">
+        <PageTitle id="settings-page-title">Jurisdiction</PageTitle>
+        <Card title="Rules pack">
+          <p className="type-secondary">Loading jurisdiction pack.</p>
+        </Card>
+      </div>
+    );
+  }
+
+  if (packQuery.isError) {
+    return (
+      <div className="settings-detail">
+        <PageTitle id="settings-page-title">Jurisdiction</PageTitle>
+        <Card title="Rules pack">
+          <ProblemAlert
+            error={packQuery.error}
+            fallbackTitle="Unable to load jurisdiction pack"
+          />
+        </Card>
+      </div>
+    );
+  }
+
+  if (!pack) {
+    return (
+      <div className="settings-detail">
+        <PageTitle id="settings-page-title">Jurisdiction</PageTitle>
+        <Card title="Rules pack">
+          <p className="type-secondary">Loading jurisdiction pack.</p>
+        </Card>
+      </div>
+    );
+  }
+
+  return (
+    <div className="settings-detail">
+      <PageTitle id="settings-page-title">Jurisdiction</PageTitle>
+      <Card
+        actions={<Badge variant="neutral">v{pack.meta.version}</Badge>}
+        title={`${pack.meta.name} rules pack`}
+      >
+        <div className="jurisdiction-pack">
+          <div className="jurisdiction-pack__meta">
+            <strong>{pack.meta.name}</strong>
+            <span>{pack.meta.id}</span>
+          </div>
+          <ul
+            aria-label="Jurisdiction rule summaries"
+            className="jurisdiction-rule-list"
+          >
+            {pack.rule_summaries.map((summary) => (
+              <li className="jurisdiction-rule-row" key={summary.id}>
+                <span className="jurisdiction-rule-row__label">
+                  {summary.label}
+                </span>
+                <span className="jurisdiction-rule-row__summary">
+                  {summary.summary}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className="jurisdiction-pack__note">
+            rules packs are installable modules — adding a jurisdiction adds a
+            pack
+          </p>
+        </div>
+      </Card>
     </div>
   );
 }
@@ -826,14 +910,20 @@ function ComingSoonSettings({ title }: { readonly title: string }) {
   );
 }
 
-function ProblemAlert({ error }: { readonly error: unknown }) {
+function ProblemAlert({
+  error,
+  fallbackTitle = "Unable to load company profile",
+}: {
+  readonly error: unknown;
+  readonly fallbackTitle?: string;
+}) {
   if (isApiError(error)) {
     return <ProblemPanel problem={error.problem} />;
   }
 
   return (
     <div className="problem-alert" role="alert">
-      <strong>Unable to load company profile</strong>
+      <strong>{fallbackTitle}</strong>
     </div>
   );
 }

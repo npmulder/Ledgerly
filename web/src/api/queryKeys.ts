@@ -16,6 +16,9 @@ export const queryKeys = {
       { includeArchived },
     ],
   },
+  jurisdiction: {
+    pack: (): ApiQueryKey => ["jurisdiction", "pack", {}],
+  },
   platform: {
     health: (): ApiQueryKey => ["platform", "healthz", {}],
   },

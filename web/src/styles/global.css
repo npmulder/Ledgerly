@@ -333,6 +333,79 @@
   font-size: 12px;
 }
 
+.jurisdiction-pack {
+  display: grid;
+  gap: 16px;
+}
+
+.jurisdiction-pack__meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+.jurisdiction-pack__meta strong {
+  color: var(--color-text);
+}
+
+.jurisdiction-pack__meta span {
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--type-mono-numeral-size);
+}
+
+.jurisdiction-rule-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.jurisdiction-rule-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 0.36fr) minmax(0, 1fr);
+  gap: 12px;
+  min-width: 0;
+  padding: 12px 0;
+  border-top: 1px solid var(--color-border-hairline);
+}
+
+.jurisdiction-rule-row:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.jurisdiction-rule-row:last-child {
+  padding-bottom: 0;
+}
+
+.jurisdiction-rule-row__label {
+  color: var(--color-text-secondary);
+  font-size: var(--type-uppercase-label-size);
+  font-weight: var(--type-uppercase-label-weight);
+  letter-spacing: var(--type-uppercase-label-letter-spacing);
+  line-height: var(--type-uppercase-label-line-height);
+  text-transform: uppercase;
+}
+
+.jurisdiction-rule-row__summary {
+  min-width: 0;
+  color: var(--color-text);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-line-height);
+  overflow-wrap: anywhere;
+}
+
+.jurisdiction-pack__note {
+  margin: 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--color-border-hairline);
+  color: var(--color-text-secondary);
+  font-size: var(--type-secondary-size);
+  line-height: var(--type-secondary-line-height);
+}
+
 .clients-settings,
 .client-form {
   display: grid;
@@ -627,6 +700,7 @@
   .company-field-grid,
   .client-address-grid,
   .client-field-grid,
+  .jurisdiction-rule-row,
   .registered-office-grid,
   .year-end-fields {
     grid-template-columns: 1fr;

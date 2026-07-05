@@ -198,6 +198,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/jurisdiction/deadlines": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Return resolved filing deadlines for the company */
+        get: operations["jurisdictionGetDeadlines"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/jurisdiction/pack": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Return the active jurisdiction rules pack overview */
+        get: operations["jurisdictionGetPack"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/healthz": {
         parameters: {
             query?: never;
@@ -445,6 +479,31 @@ export interface components {
             amount_minor: number;
             /** @enum {string} */
             currency: "EUR" | "GBP";
+        };
+        JurisdictionFilingDeadline: {
+            authority: string;
+            /** Format: date */
+            due_date: string;
+            key: string;
+            label: string;
+            recurrence: string;
+        };
+        JurisdictionFilingDeadlines: {
+            deadlines: components["schemas"]["JurisdictionFilingDeadline"][];
+        };
+        JurisdictionPack: {
+            meta: components["schemas"]["JurisdictionPackMeta"];
+            rule_summaries: components["schemas"]["JurisdictionRuleSummary"][];
+        };
+        JurisdictionPackMeta: {
+            id: string;
+            name: string;
+            version: string;
+        };
+        JurisdictionRuleSummary: {
+            id: string;
+            label: string;
+            summary: string;
         };
         Problem: {
             detail?: string;
@@ -1172,6 +1231,73 @@ export interface operations {
             };
             /** @description Client was not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    jurisdictionGetDeadlines: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Resolved filing deadlines */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JurisdictionFilingDeadlines"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Company profile not initialized */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    jurisdictionGetPack: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Active jurisdiction pack overview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JurisdictionPack"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

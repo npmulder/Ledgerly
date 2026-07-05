@@ -165,6 +165,42 @@ describe("Company settings", () => {
     });
   });
 
+  it("renders the jurisdiction rules pack from the API", async () => {
+    const fetchImpl = authenticatedFetch();
+    vi.stubGlobal("fetch", fetchImpl);
+
+    renderAt("/settings/jurisdiction");
+
+    expect(
+      await screen.findByRole("heading", {
+        level: 1,
+        name: "Jurisdiction",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByText("Isle of Man rules pack"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("v1.0")).toBeInTheDocument();
+    expect(screen.getByText("0% CIT (2025-26)")).toBeInTheDocument();
+    expect(
+      screen.getByText(/VAT 20% via Isle of Man Customs & Excise/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /rules packs are installable modules.+adding a jurisdiction adds a pack/,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByLabelText("Jurisdiction rule summaries")).getAllByRole(
+        "listitem",
+      ),
+    ).toHaveLength(6);
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "/api/jurisdiction/pack",
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
   it("uploads a replacement logo and updates the header logo", async () => {
     const user = userEvent.setup();
     const logoUrl = "/api/identity/assets/17830098-8109-4a00-8b00-000000000002";
@@ -350,12 +386,62 @@ function authenticatedFetch() {
     if (path === "/api/invoicing/clients") {
       return jsonResponse({ clients: [contosoClient(), fabrikamClient()] });
     }
+    if (path === "/api/jurisdiction/pack") {
+      return jsonResponse(jurisdictionPack());
+    }
     return jsonResponse(
       { status: 404, title: "Not Found", type: "about:blank" },
       404,
       "application/problem+json",
     );
   });
+}
+
+function jurisdictionPack() {
+  return {
+    meta: {
+      id: "isle-of-man",
+      name: "Isle of Man",
+      version: "1.0",
+    },
+    rule_summaries: [
+      {
+        id: "corporate_income_tax",
+        label: "Corporate income tax",
+        summary: "0% CIT (2025-26)",
+      },
+      {
+        id: "personal_tax_dividends",
+        label: "Personal tax and dividends",
+        summary:
+          "no dividend WHT; personal allowance GBP 14,750; bands 10% to GBP 6,500, then 21% (2025-26/2025-26)",
+      },
+      {
+        id: "vat",
+        label: "VAT",
+        summary:
+          "VAT 20% via Isle of Man Customs & Excise; reverse charge via Article 196, Directive 2006/112/EC (2025-26)",
+      },
+      {
+        id: "annual_return",
+        label: "Annual return",
+        summary:
+          "due incorporation anniversary + 1 month with IoM Companies Registry",
+      },
+      {
+        id: "company_tax_return",
+        label: "Company tax return",
+        summary:
+          "due accounting year end + 12 months + 1 day; required at zero rate",
+      },
+      {
+        id: "director_loan",
+        label: "Director loan account",
+        summary:
+          "no s455 charge; overdrawn warning: benefit in kind interest free; remedy: clear with dividend",
+      },
+    ],
+  };
 }
 
 function identityProfile(): IdentityProfile {

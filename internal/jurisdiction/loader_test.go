@@ -197,6 +197,30 @@ func TestValidationFailuresNameFilePathAndField(t *testing.T) {
 			wantText:  "unknown deadline offset unit",
 		},
 		{
+			name: "missing annual return filing",
+			pack: strings.Replace(
+				valid,
+				"  annual_return:\n    due: incorporation_anniversary + 1 month\n    authority: Testland Companies Office\n",
+				"",
+				1,
+			),
+			wantPath:  "filings.annual_return",
+			wantField: "annual_return",
+			wantText:  "required for pack summaries",
+		},
+		{
+			name: "missing company tax return filing",
+			pack: strings.Replace(
+				valid,
+				"  company_tax_return:\n    due: accounting_year_end + 12 months + 1 day\n    authority: Testland Revenue\n    required_at_zero_rate: true\n",
+				"",
+				1,
+			),
+			wantPath:  "filings.company_tax_return",
+			wantField: "company_tax_return",
+			wantText:  "required for pack summaries",
+		},
+		{
 			name:      "empty wording",
 			pack:      strings.Replace(valid, "invoice_wording: Testland reverse charge applies", "invoice_wording: \"\"", 1),
 			wantPath:  "tax.vat.reverse_charge.b2b_services_eu.invoice_wording",
