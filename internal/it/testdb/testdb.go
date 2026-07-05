@@ -38,8 +38,6 @@ const (
 	cleanupTimeout          = 20 * time.Second
 
 	cloneBudget = 500 * time.Millisecond
-
-	templateBuildAdvisoryLockKey int64 = 0x6c65646765726c79
 )
 
 var defaultManager = newManager()
@@ -302,28 +300,11 @@ func (e unavailableError) Error() string {
 	return e.err.Error()
 }
 
-func (m *manager) ensureTemplate(ctx context.Context, env *environment, migrationsDir string) (info templateInfo, err error) {
+func (m *manager) ensureTemplate(ctx context.Context, env *environment, migrationsDir string) (templateInfo, error) {
 	hash, err := migrationHash(migrationsDir)
 	if err != nil {
 		return templateInfo{}, err
 	}
-
-	m.mu.Lock()
-	if m.templateName != "" && m.templateHash == hash {
-		m.mu.Unlock()
-		return templateInfo{name: m.templateName, hash: m.templateHash}, nil
-	}
-	m.mu.Unlock()
-
-	lockConn, err := acquireTemplateBuildLock(ctx, env.adminPool)
-	if err != nil {
-		return templateInfo{}, err
-	}
-	defer func() {
-		if unlockErr := releaseTemplateBuildLock(lockConn); err == nil && unlockErr != nil {
-			err = unlockErr
-		}
-	}()
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -375,34 +356,6 @@ func (m *manager) ensureTemplate(ctx context.Context, env *environment, migratio
 	}
 
 	return templateInfo{name: templateName, hash: hash}, nil
-}
-
-func acquireTemplateBuildLock(ctx context.Context, pool *pgxpool.Pool) (*pgxpool.Conn, error) {
-	conn, err := pool.Acquire(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("acquire template build lock connection: %w", err)
-	}
-	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", templateBuildAdvisoryLockKey); err != nil {
-		conn.Release()
-		return nil, fmt.Errorf("acquire template build advisory lock: %w", err)
-	}
-	return conn, nil
-}
-
-func releaseTemplateBuildLock(conn *pgxpool.Conn) error {
-	defer conn.Release()
-
-	ctx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
-	defer cancel()
-
-	var unlocked bool
-	if err := conn.QueryRow(ctx, "SELECT pg_advisory_unlock($1)", templateBuildAdvisoryLockKey).Scan(&unlocked); err != nil {
-		return fmt.Errorf("release template build advisory lock: %w", err)
-	}
-	if !unlocked {
-		return errors.New("release template build advisory lock: lock was not held")
-	}
-	return nil
 }
 
 type templateInfo struct {
