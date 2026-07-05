@@ -12,6 +12,9 @@ func validatePack(file, id, version string, pack *Pack) error {
 		return err
 	}
 
+	if err := validateYearEnd(pack.Tax.YearEnd); err != nil {
+		return fieldError(file, "tax.year_end", "year_end", err.Error())
+	}
 	if err := validateYearMap(file, "tax.corporate_income", "corporate_income", pack.Tax.CorporateIncome, validateCorporateIncomeYear); err != nil {
 		return err
 	}

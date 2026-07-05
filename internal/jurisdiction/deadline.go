@@ -13,8 +13,8 @@ type Clock interface {
 	Now() time.Time
 }
 
-// YearEnd stores an accounting year end as month and day. It mirrors the
-// identity fact shape without importing identity into this leaf package.
+// YearEnd stores a month/day year-end date. Company accounting year ends mirror
+// identity facts without importing identity into this leaf package.
 type YearEnd struct {
 	Month time.Month
 	Day   int
@@ -90,7 +90,7 @@ func resolveFilingDeadlines(pack *Pack, facts CompanyFacts, reference time.Time)
 			dueExpression = parsed
 		}
 
-		dueDate, err := dueExpression.nextDueDate(facts, reference)
+		dueDate, err := dueExpression.nextDueDate(facts, reference, pack.Tax.YearEnd)
 		if err != nil {
 			return nil, fmt.Errorf("jurisdiction: filing %s due date: %w", key, err)
 		}
@@ -220,21 +220,24 @@ func parseDeadlineUnit(value string) (deadlineUnit, error) {
 	}
 }
 
-func (e *deadlineExpression) nextDueDate(facts CompanyFacts, reference time.Time) (time.Time, error) {
+func (e *deadlineExpression) nextDueDate(facts CompanyFacts, reference time.Time, taxYearEnd YearEnd) (time.Time, error) {
+	incorporated := dateOnly(facts.IncorporationDate)
 	switch e.anchor {
 	case deadlineAnchorIncorporationAnniversary:
-		incorporated := dateOnly(facts.IncorporationDate)
-		return e.nextYearlyDueDate(reference, func(year int) (time.Time, error) {
+		return e.nextYearlyDueDate(reference, incorporated, func(year int) (time.Time, error) {
 			_, month, day := incorporated.Date()
 			return clampedDate(year, month, day)
 		})
 	case deadlineAnchorAccountingYearEnd:
-		return e.nextYearlyDueDate(reference, func(year int) (time.Time, error) {
+		return e.nextYearlyDueDate(reference, incorporated, func(year int) (time.Time, error) {
 			return clampedDate(year, facts.YearEnd.Month, facts.YearEnd.Day)
 		})
 	case deadlineAnchorTaxYearEnd:
-		return e.nextYearlyDueDate(reference, func(year int) (time.Time, error) {
-			return clampedDate(year, time.April, 5)
+		if err := validateYearEnd(taxYearEnd); err != nil {
+			return time.Time{}, fmt.Errorf("tax year end: %w", err)
+		}
+		return e.nextYearlyDueDate(reference, incorporated, func(year int) (time.Time, error) {
+			return clampedDate(year, taxYearEnd.Month, taxYearEnd.Day)
 		})
 	case deadlineAnchorQuarterEnd:
 		return e.nextQuarterlyDueDate(reference)
@@ -243,48 +246,26 @@ func (e *deadlineExpression) nextDueDate(facts CompanyFacts, reference time.Time
 	}
 }
 
-func (e *deadlineExpression) nextYearlyDueDate(reference time.Time, baseDate func(int) (time.Time, error)) (time.Time, error) {
+func (e *deadlineExpression) nextYearlyDueDate(reference, earliestBase time.Time, baseDate func(int) (time.Time, error)) (time.Time, error) {
 	span := e.yearSearchSpan()
-	low := reference.Year() - span
-	high := reference.Year() + 2
+	startYear := reference.Year() - span
+	if !earliestBase.IsZero() && startYear < earliestBase.Year()-1 {
+		startYear = earliestBase.Year() - 1
+	}
 
-	for {
-		due, err := e.dueFromBaseDate(high, baseDate)
+	for year := startYear; ; year++ {
+		base, err := baseDate(year)
 		if err != nil {
 			return time.Time{}, err
 		}
+		if !earliestBase.IsZero() && base.Before(earliestBase) {
+			continue
+		}
+		due := e.applyOffsets(base)
 		if !due.Before(reference) {
-			break
-		}
-		low = high + 1
-		high += span
-	}
-
-	for {
-		due, err := e.dueFromBaseDate(low, baseDate)
-		if err != nil {
-			return time.Time{}, err
-		}
-		if due.Before(reference) {
-			break
-		}
-		high = low
-		low -= span
-	}
-
-	for low < high {
-		mid := low + (high-low)/2
-		due, err := e.dueFromBaseDate(mid, baseDate)
-		if err != nil {
-			return time.Time{}, err
-		}
-		if due.Before(reference) {
-			low = mid + 1
-		} else {
-			high = mid
+			return due, nil
 		}
 	}
-	return e.dueFromBaseDate(low, baseDate)
 }
 
 func (e *deadlineExpression) nextQuarterlyDueDate(reference time.Time) (time.Time, error) {
@@ -311,14 +292,6 @@ func (e *deadlineExpression) nextQuarterlyDueDate(reference time.Time) (time.Tim
 		}
 	}
 	return e.dueFromQuarterIndex(low), nil
-}
-
-func (e *deadlineExpression) dueFromBaseDate(year int, baseDate func(int) (time.Time, error)) (time.Time, error) {
-	base, err := baseDate(year)
-	if err != nil {
-		return time.Time{}, err
-	}
-	return e.applyOffsets(base), nil
 }
 
 func (e *deadlineExpression) dueFromQuarterIndex(index int) time.Time {
@@ -387,7 +360,7 @@ func (e *deadlineExpression) totalOffsets() (months int64, days int64) {
 }
 
 func dateOnly(value time.Time) time.Time {
-	year, month, day := value.UTC().Date()
+	year, month, day := value.Date()
 	return time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
 }
 

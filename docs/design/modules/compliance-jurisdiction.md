@@ -13,6 +13,7 @@ Versioned YAML under `packs/<jurisdiction>/<version>/`, embedded via `go:embed`,
 ```yaml
 meta: { id: isle-of-man, version: "1.0", name: Isle of Man, currency: GBP }
 tax:
+  year_end: { month: 4, day: 5 }                 # pack-owned tax_year_end anchor
   corporate_income:
     "2025-26": { standard_rate: "0.0" }        # 0% — no CT provision anywhere
   personal_income:                              # for dividend set-aside estimate
@@ -37,7 +38,7 @@ director_loans:
 advisor_rules: [ ... ]                          # rule defs consumed by advisor module
 ```
 
-Rates/allowances are **year-versioned data** keyed by tax year, not constants. Money amounts use integer GBP minor units (pence); rates use quoted decimal strings so pack data is not decoded through binary floating point. Deadline expressions are a tiny declarative grammar (`anchor + offset`) evaluated against company facts (incorporation date, year end) supplied by the caller.
+Rates/allowances are **year-versioned data** keyed by tax year, not constants. Money amounts use integer GBP minor units (pence); rates use quoted decimal strings so pack data is not decoded through binary floating point. Deadline expressions are a tiny declarative grammar (`anchor + offset`) evaluated against company facts (incorporation date, year end) supplied by the caller. The `tax_year_end` anchor is resolved from the pack's `tax.year_end` data.
 
 Deadline month arithmetic is deliberately calendar-based and applied left-to-right. Month offsets clamp overflow days to the destination month end (`31 Jan + 1 month` becomes `28 Feb` or `29 Feb` in a leap year). Leap-day anniversaries clamp to `28 Feb` in non-leap years and remain `29 Feb` in leap years. Compound offsets apply in order, so `accounting_year_end + 12 months + 1 day` first resolves the 12-month calendar shift, then adds one day.
 

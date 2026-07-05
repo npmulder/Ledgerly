@@ -83,6 +83,19 @@ func TestFilingDeadlinesResolvesNextOccurrences(t *testing.T) {
 			wantAuthority:  "Testland Customs",
 			wantRecurrence: "quarterly",
 		},
+		{
+			name: "accounting year end ignores periods before incorporation",
+			facts: CompanyFacts{
+				IncorporationDate: testDate(2020, time.January, 30),
+				YearEnd:           YearEnd{Month: time.March, Day: 31},
+			},
+			reference:      testDate(2020, time.February, 1),
+			key:            "company_tax_return",
+			wantDue:        testDate(2021, time.April, 1),
+			wantLabel:      "Company tax return",
+			wantAuthority:  "Testland Revenue",
+			wantRecurrence: "annual",
+		},
 	}
 
 	for _, tt := range tests {
@@ -108,6 +121,64 @@ func TestFilingDeadlinesResolvesNextOccurrences(t *testing.T) {
 				t.Fatalf("%s Recurrence = %q, want %q", tt.key, got.Recurrence, tt.wantRecurrence)
 			}
 		})
+	}
+}
+
+func TestFilingDeadlinesPreservesReferenceLocationDate(t *testing.T) {
+	pack := loadTestPack(t)
+	referenceLocation := time.FixedZone("ahead-of-utc", 60*60)
+	deadlines, err := resolveFilingDeadlines(
+		pack,
+		CompanyFacts{
+			IncorporationDate: testDate(2020, time.January, 30),
+			YearEnd:           YearEnd{Month: time.March, Day: 31},
+		},
+		time.Date(2027, time.March, 1, 0, 30, 0, 0, referenceLocation),
+	)
+	if err != nil {
+		t.Fatalf("resolveFilingDeadlines() error = %v", err)
+	}
+
+	got, ok := deadlineByKey(deadlines, "annual_return")
+	if !ok {
+		t.Fatalf("annual_return missing from %#v", deadlines)
+	}
+	if want := testDate(2028, time.February, 29); !got.DueDate.Equal(want) {
+		t.Fatalf("annual_return DueDate = %s, want %s", got.DueDate.Format(time.DateOnly), want.Format(time.DateOnly))
+	}
+}
+
+func TestDeadlineTaxYearEndUsesPackYearEnd(t *testing.T) {
+	pack := &Pack{
+		Tax: Tax{
+			YearEnd: YearEnd{Month: time.June, Day: 30},
+		},
+		Filings: map[string]Filing{
+			"tax_return": {
+				Due:       "tax_year_end + 1 month",
+				Authority: "Testland Revenue",
+			},
+		},
+	}
+
+	deadlines, err := resolveFilingDeadlines(
+		pack,
+		CompanyFacts{
+			IncorporationDate: testDate(2020, time.January, 1),
+			YearEnd:           YearEnd{Month: time.March, Day: 31},
+		},
+		testDate(2026, time.January, 1),
+	)
+	if err != nil {
+		t.Fatalf("resolveFilingDeadlines() error = %v", err)
+	}
+
+	got, ok := deadlineByKey(deadlines, "tax_return")
+	if !ok {
+		t.Fatalf("tax_return missing from %#v", deadlines)
+	}
+	if want := testDate(2026, time.July, 30); !got.DueDate.Equal(want) {
+		t.Fatalf("tax_return DueDate = %s, want %s", got.DueDate.Format(time.DateOnly), want.Format(time.DateOnly))
 	}
 }
 
@@ -201,7 +272,7 @@ func TestDeadlineExpressionLeapDayAnniversary(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := expr.nextDueDate(facts, tt.reference)
+			got, err := expr.nextDueDate(facts, tt.reference, testTaxYearEnd())
 			if err != nil {
 				t.Fatalf("nextDueDate() error = %v", err)
 			}
@@ -223,6 +294,7 @@ func TestDeadlineExpressionCompoundOffset(t *testing.T) {
 			YearEnd:           YearEnd{Month: time.March, Day: 31},
 		},
 		testDate(2026, time.April, 2),
+		testTaxYearEnd(),
 	)
 	if err != nil {
 		t.Fatalf("nextDueDate() error = %v", err)
@@ -288,6 +360,10 @@ func deadlineByKey(deadlines []Deadline, key string) (Deadline, bool) {
 
 func testDate(year int, month time.Month, day int) time.Time {
 	return time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
+}
+
+func testTaxYearEnd() YearEnd {
+	return YearEnd{Month: time.April, Day: 5}
 }
 
 type fixedClock struct {

@@ -29,6 +29,9 @@ func TestLoadFromFSEmbeddedFixture(t *testing.T) {
 	if pack.Tax.CorporateIncome["2025-26"].StandardRate != "0.19" {
 		t.Fatalf("corporate standard rate not loaded: %#v", pack.Tax.CorporateIncome)
 	}
+	if pack.Tax.YearEnd.Month != 6 || pack.Tax.YearEnd.Day != 30 {
+		t.Fatalf("tax year end = %#v, want 30 June", pack.Tax.YearEnd)
+	}
 	if pack.Tax.PersonalIncome["2025-26"].PersonalAllowanceMinorUnits != 1234 {
 		t.Fatalf("personal allowance not loaded: %#v", pack.Tax.PersonalIncome)
 	}
