@@ -188,6 +188,38 @@ func TestModuleRoutesAreNamespaced(t *testing.T) {
 	}
 }
 
+func TestAPIAuthMiddlewareWrapsModuleRoutes(t *testing.T) {
+	router := NewRouter(Config{
+		DB: pingerFunc(func(context.Context) error { return nil }),
+		APIAuth: func(next nethttp.Handler) nethttp.Handler {
+			return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+				w.Header().Set("X-API-Auth", "checked")
+				next.ServeHTTP(w, r)
+			})
+		},
+		Modules: []Module{
+			{
+				Name: "banking",
+				RegisterRoutes: func(r chi.Router) {
+					r.Get("/transactions", func(w nethttp.ResponseWriter, _ *nethttp.Request) {
+						w.WriteHeader(nethttp.StatusAccepted)
+					})
+				},
+			},
+		},
+	})
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(nethttp.MethodGet, "/api/banking/transactions", nil))
+
+	if response.Code != nethttp.StatusAccepted {
+		t.Fatalf("status = %d, want %d", response.Code, nethttp.StatusAccepted)
+	}
+	if got := response.Header().Get("X-API-Auth"); got != "checked" {
+		t.Fatalf("X-API-Auth = %q, want checked", got)
+	}
+}
+
 func TestOpenAPISkeletonIncludesFragments(t *testing.T) {
 	router := NewRouter(Config{
 		Version: "test-version",
