@@ -7,6 +7,7 @@
 Multi-currency invoicing · double-entry ledger · bank reconciliation · dividend paperwork · a compliance advisor that never guesses — all in one small, self-hostable binary.
 
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
+[![CI](https://github.com/npmulder/Ledgerly/actions/workflows/ci.yml/badge.svg)](https://github.com/npmulder/Ledgerly/actions/workflows/ci.yml)
 [![Status: Design Phase](https://img.shields.io/badge/Status-design_phase-orange.svg)](docs/design/hld.md)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
@@ -108,10 +109,16 @@ Current `task --list` output:
 
 ```text
 task: Available tasks for this project:
-* build:       Build the ledgerly binary
-* lint:        Run Go formatting and vet checks
-* run:         Run the ledgerly skeleton
-* test:        Run Go tests
+* build:                  Build and vet all Go packages
+* ci:                     Run the same checks as CI
+* lint:                   Run all lint checks
+* run:                    Run the ledgerly skeleton
+* test:                   Run unit tests
+* lint:arch:              Enforce internal module import boundaries
+* lint:fmt:               Check Go formatting
+* lint:golangci:          Run golangci-lint
+* lint:rates:             Prevent compliance literals outside jurisdiction packs
+* test:integration:       Run integration tests when LEDGERLY_TEST_DB is configured
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full development guide, including the module-boundary rules every PR is held to.
