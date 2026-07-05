@@ -29,6 +29,7 @@ func jurisdictionOpenAPIFragment() httpserver.OpenAPIFragment {
 					"responses": map[string]any{
 						"200": jsonResponseRef("Resolved filing deadlines", "JurisdictionFilingDeadlines"),
 						"401": problemResponse("Authentication required"),
+						"404": problemResponse("Company profile not initialized"),
 					},
 				},
 			},
