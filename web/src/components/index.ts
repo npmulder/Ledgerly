@@ -25,6 +25,8 @@ export type {
   LockedFieldProps,
   SelectProps,
 } from "@/components/FormControls";
+export { PageTitle, Screen, SplitMain } from "@/components/layout";
+export type { PageTitleProps } from "@/components/layout";
 export { StatCard } from "@/components/StatCard";
 export type { StatCardProps } from "@/components/StatCard";
 export {
