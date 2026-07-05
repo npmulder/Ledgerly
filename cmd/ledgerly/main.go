@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	nethttp "net/http"
 	"os"
 	"os/signal"
@@ -17,6 +18,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/lib/pq"
 
+	"github.com/npmulder/ledgerly/internal/demo"
+	"github.com/npmulder/ledgerly/internal/platform/bus"
 	"github.com/npmulder/ledgerly/internal/platform/chrome"
 	"github.com/npmulder/ledgerly/internal/platform/config"
 	"github.com/npmulder/ledgerly/internal/platform/db"
@@ -153,10 +156,10 @@ func findMigrationsDirFrom(start string) (string, bool) {
 	}
 }
 
-func openPoolWithRetry(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
+func openPoolWithRetry(ctx context.Context, databaseURL string, opts ...db.PoolOption) (*pgxpool.Pool, error) {
 	var lastErr error
 	for {
-		pool, err := db.OpenURL(ctx, databaseURL)
+		pool, err := db.OpenURL(ctx, databaseURL, opts...)
 		if err == nil {
 			return pool, nil
 		}
@@ -168,6 +171,43 @@ func openPoolWithRetry(ctx context.Context, databaseURL string) (*pgxpool.Pool, 
 		case <-time.After(500 * time.Millisecond):
 		}
 	}
+}
+
+type applicationWiring struct {
+	Version          string
+	Logger           *slog.Logger
+	HealthDB         httpserver.Pinger
+	DemoPool         *pgxpool.Pool
+	DemoAuditFailure demo.AuditFailure
+}
+
+func buildApplicationRouter(cfg applicationWiring) (nethttp.Handler, error) {
+	if cfg.DemoPool == nil {
+		return nil, fmt.Errorf("demo database pool is required")
+	}
+
+	eventBus := bus.New(bus.WithLogger(cfg.Logger))
+	demoModule, err := demo.New(demo.Config{
+		Pool:         cfg.DemoPool,
+		Bus:          eventBus,
+		AuditFailure: cfg.DemoAuditFailure,
+	})
+	if err != nil {
+		return nil, err
+	}
+	demoModule.SubscribeEvents(eventBus)
+
+	return httpserver.NewRouter(httpserver.Config{
+		Version: cfg.Version,
+		Logger:  cfg.Logger,
+		DB:      cfg.HealthDB,
+		Modules: []httpserver.Module{
+			demoModule.HTTPModule(),
+		},
+		OpenAPIFragments: []httpserver.OpenAPIFragment{
+			demoModule.OpenAPIFragment(),
+		},
+	}), nil
 }
 
 func runChromeSmoke(ctx context.Context, stdout io.Writer, outputPath string) error {
@@ -201,11 +241,24 @@ func runServe(ctx context.Context) (err error) {
 		}
 	}()
 
-	router := httpserver.NewRouter(httpserver.Config{
-		Version: version,
-		Logger:  logger,
-		DB:      sqlDB,
+	startupCtx, startupCancel := context.WithTimeout(ctx, 45*time.Second)
+	defer startupCancel()
+
+	demoPool, err := openPoolWithRetry(startupCtx, cfg.DatabaseURL, db.WithModule(demo.ModuleName))
+	if err != nil {
+		return fmt.Errorf("open demo database pool: %w", err)
+	}
+	defer demoPool.Close()
+
+	router, err := buildApplicationRouter(applicationWiring{
+		Version:  version,
+		Logger:   logger,
+		HealthDB: sqlDB,
+		DemoPool: demoPool,
 	})
+	if err != nil {
+		return err
+	}
 	server := httpserver.Server(cfg.HTTPAddr, router)
 
 	errc := make(chan error, 1)
