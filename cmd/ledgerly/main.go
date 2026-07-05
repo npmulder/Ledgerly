@@ -37,6 +37,7 @@ var version = "dev"
 var loadActiveJurisdiction = jurisdiction.LoadActive
 
 const migrationsDirEnv = "LEDGERLY_MIGRATIONS_DIR"
+const devSeedLogoPath = "docs/design_handoff_keel/uploads/invoice_brand-1783009881094.png"
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -295,6 +296,11 @@ func runServe(ctx context.Context) (err error) {
 		return fmt.Errorf("open identity store: %w", err)
 	}
 	defer identityPool.Close()
+	if cfg.Env == config.EnvDev {
+		if err := seedDevIdentityLogo(startupCtx, identityPool, cfg.DataDir); err != nil {
+			return fmt.Errorf("seed dev identity logo: %w", err)
+		}
+	}
 
 	demoPool, err := openPoolWithRetry(startupCtx, cfg.DatabaseURL, db.WithModule(demo.ModuleName))
 	if err != nil {
@@ -341,4 +347,66 @@ func runServe(ctx context.Context) (err error) {
 		}
 		return err
 	}
+}
+
+func seedDevIdentityLogo(ctx context.Context, pool *pgxpool.Pool, dataDir string) (err error) {
+	sourcePath, err := resolveRepoFile(devSeedLogoPath)
+	if err != nil {
+		return err
+	}
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin identity seed transaction: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	if _, err = identity.SeedDevLogoAsset(ctx, tx, dataDir, sourcePath); err != nil {
+		return err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit identity seed transaction: %w", err)
+	}
+	return nil
+}
+
+func resolveRepoFile(relativePath string) (string, error) {
+	var starts []string
+	if cwd, err := os.Getwd(); err == nil {
+		starts = append(starts, cwd)
+	}
+	if executable, err := os.Executable(); err == nil {
+		starts = append(starts, filepath.Dir(executable))
+	}
+
+	seen := make(map[string]struct{}, len(starts))
+	for _, start := range starts {
+		dir, err := filepath.Abs(start)
+		if err != nil {
+			continue
+		}
+		for {
+			if _, ok := seen[dir]; ok {
+				break
+			}
+			seen[dir] = struct{}{}
+
+			candidate := filepath.Join(dir, relativePath)
+			if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+				return candidate, nil
+			}
+
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+			dir = parent
+		}
+	}
+
+	return "", fmt.Errorf("locate %s: run ledgerly from a repository checkout", relativePath)
 }

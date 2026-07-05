@@ -60,12 +60,22 @@ type QueryParameters<Operation> = Operation extends {
   ? Query
   : never;
 
+type JsonRequestBody<Operation> = Operation extends {
+  requestBody: { content: { "application/json": infer Body } };
+}
+  ? Body
+  : never;
+
 export type ProblemDetails = components["schemas"]["Problem"] &
   Record<string, unknown>;
 
 export type ApiGetPath = PathWithMethod<"get">;
+export type ApiPatchPath = PathWithMethod<"patch">;
+export type ApiPostPath = PathWithMethod<"post">;
+export type ApiPutPath = PathWithMethod<"put">;
 
 export type ApiRequestOptions<Operation> = {
+  handleUnauthorized?: boolean;
   headers?: HeadersInit;
   query?: QueryParameters<Operation>;
   signal?: AbortSignal;
@@ -91,7 +101,9 @@ export class ApiError<
   readonly status: number;
 
   constructor(response: Response, problem: TProblem) {
-    super(problem.detail ? `${problem.title}: ${problem.detail}` : problem.title);
+    super(
+      problem.detail ? `${problem.title}: ${problem.detail}` : problem.title,
+    );
     this.problem = problem;
     this.response = response;
     this.status = response.status;
@@ -109,7 +121,8 @@ export class ApiClient {
 
   constructor(options: ApiClientOptions = {}) {
     this.baseUrl = options.baseUrl ?? "";
-    this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
+    this.fetchImpl =
+      options.fetchImpl ?? ((input, init) => globalThis.fetch(input, init));
     this.onUnauthorized = options.onUnauthorized ?? redirectToLogin;
   }
 
@@ -117,6 +130,42 @@ export class ApiClient {
     path: Path,
     options: ApiRequestOptions<OperationFor<Path, "get">> = {},
   ): Promise<SuccessBody<OperationFor<Path, "get">>> {
+    return this.request<Path, "get">(path, "GET", options);
+  }
+
+  async patch<Path extends ApiPatchPath>(
+    path: Path,
+    body?: JsonRequestBody<OperationFor<Path, "patch">>,
+    options: ApiRequestOptions<OperationFor<Path, "patch">> = {},
+  ): Promise<SuccessBody<OperationFor<Path, "patch">>> {
+    return this.request<Path, "patch">(path, "PATCH", options, body);
+  }
+
+  async post<Path extends ApiPostPath>(
+    path: Path,
+    body?: JsonRequestBody<OperationFor<Path, "post">>,
+    options: ApiRequestOptions<OperationFor<Path, "post">> = {},
+  ): Promise<SuccessBody<OperationFor<Path, "post">>> {
+    return this.request<Path, "post">(path, "POST", options, body);
+  }
+
+  async put<Path extends ApiPutPath>(
+    path: Path,
+    body?: FormData | JsonRequestBody<OperationFor<Path, "put">>,
+    options: ApiRequestOptions<OperationFor<Path, "put">> = {},
+  ): Promise<SuccessBody<OperationFor<Path, "put">>> {
+    return this.request<Path, "put">(path, "PUT", options, body);
+  }
+
+  private async request<
+    Path extends PathWithMethod<TMethod>,
+    TMethod extends string,
+  >(
+    path: Path,
+    method: string,
+    options: ApiRequestOptions<OperationFor<Path, TMethod>>,
+    body?: FormData | JsonRequestBody<OperationFor<Path, TMethod>>,
+  ): Promise<SuccessBody<OperationFor<Path, TMethod>>> {
     const response = await this.fetchImpl(
       buildUrl(
         this.baseUrl,
@@ -124,20 +173,22 @@ export class ApiClient {
         options.query as Record<string, unknown> | undefined,
       ),
       {
-        headers: buildHeaders(options.headers),
-        method: "GET",
+        body: buildBody(body),
+        credentials: "same-origin",
+        headers: buildHeaders(options.headers, body),
+        method,
         signal: options.signal,
       },
     );
 
     if (response.ok) {
       return (await readJson(response)) as SuccessBody<
-        OperationFor<Path, "get">
+        OperationFor<Path, TMethod>
       >;
     }
 
     const error = new ApiError(response, await readProblem(response));
-    if (error.status === 401) {
+    if (error.status === 401 && options.handleUnauthorized !== false) {
       this.onUnauthorized(error);
     }
     throw error;
@@ -194,10 +245,26 @@ function buildSearchParams(query: Record<string, unknown> | undefined) {
   return params;
 }
 
-function buildHeaders(headers: HeadersInit | undefined) {
+function buildBody(body: unknown) {
+  if (body === undefined) {
+    return undefined;
+  }
+
+  if (body instanceof FormData) {
+    return body;
+  }
+
+  return JSON.stringify(body);
+}
+
+function buildHeaders(headers: HeadersInit | undefined, body: unknown) {
   const nextHeaders = new Headers({
     Accept: "application/json, application/problem+json",
   });
+
+  if (body !== undefined && !(body instanceof FormData)) {
+    nextHeaders.set("Content-Type", "application/json");
+  }
 
   new Headers(headers).forEach((value, key) => {
     nextHeaders.set(key, value);

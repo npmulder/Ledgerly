@@ -1,0 +1,81 @@
+meta:
+  id: isle-of-man
+  version: "1.0"
+  name: Isle of Man
+  currency: GBP
+tax:
+  corporate_income:
+    "2025-26":
+      standard_rate: 0.0
+    "2026-27":
+      standard_rate: 0.0
+  personal_income:
+    "2025-26":
+      personal_allowance: 14750
+      bands:
+        - upto: 6500
+          rate: 0.10
+        - rate: 0.21
+    "2026-27":
+      personal_allowance: 14750
+      bands:
+        - upto: 6500
+          rate: 0.10
+        - rate: 0.21
+  dividends:
+    "2025-26":
+      withholding_rate: 0.0
+    "2026-27":
+      withholding_rate: 0.0
+  vat:
+    regime: uk-shared
+    "2025-26":
+      standard_rate: 0.20
+    "2026-27":
+      standard_rate: 0.20
+    reverse_charge:
+      b2b_services_eu:
+        article: Article 196, Directive 2006/112/EC
+        invoice_wording: VAT reverse charge applies
+filings:
+  annual_return:
+    due: incorporation_anniversary + 1 month
+    authority: Isle of Man Companies Registry
+  company_tax_return:
+    due: accounting_year_end + 12 months + 1 day
+    authority: Isle of Man Income Tax Division
+    required_at_zero_rate: true
+  vat_return:
+    due: vat_period_end + 1 month
+    cadence: quarterly
+    authority: Isle of Man Customs and Excise
+director_loans:
+  "2025-26":
+    s455_charge: false
+    overdrawn:
+      warn: benefit_in_kind_interest_free
+      remedy: clear_with_dividend_or_repayment
+  "2026-27":
+    s455_charge: false
+    overdrawn:
+      warn: benefit_in_kind_interest_free
+      remedy: clear_with_dividend_or_repayment
+advisor_rules:
+  - id: annual-return-due
+    severity: amber
+    fact_query: company.incorporation_anniversary
+    condition: due_within_30_days
+    text_template: Annual return due one month after incorporation anniversary
+    cta: open_settings_jurisdiction
+  - id: company-tax-return-due
+    severity: amber
+    fact_query: company.accounting_year_end
+    condition: due_within_60_days
+    text_template: Company income tax return due 12 months and 1 day after year end
+    cta: open_reports
+  - id: director-loan-overdrawn
+    severity: amber
+    fact_query: dla.balance
+    condition: overdrawn
+    text_template: Review benefit-in-kind exposure before the director loan remains overdrawn
+    cta: open_dla

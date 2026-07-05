@@ -1,11 +1,13 @@
 import { cleanup, render, screen, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "@/app/App";
 
 afterEach(() => {
   cleanup();
+  vi.unstubAllGlobals();
 });
 
 const topLevelRoutes = [
@@ -33,9 +35,37 @@ const settingsRoutes = [
 ] as const;
 
 function renderAt(path: string) {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      mutations: { retry: false },
+      queries: { retry: false },
+    },
+  });
+  vi.stubGlobal("fetch", authenticatedFetch());
+
   render(
     <MemoryRouter initialEntries={[path]}>
-      <App />
+      <QueryClientProvider client={queryClient}>
+        <App />
+      </QueryClientProvider>
+    </MemoryRouter>,
+  );
+}
+
+function renderAtUnauthenticated(path: string) {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      mutations: { retry: false },
+      queries: { retry: false },
+    },
+  });
+  vi.stubGlobal("fetch", unauthenticatedFetch());
+
+  render(
+    <MemoryRouter initialEntries={[path]}>
+      <QueryClientProvider client={queryClient}>
+        <App />
+      </QueryClientProvider>
     </MemoryRouter>,
   );
 }
@@ -77,11 +107,20 @@ describe("App routing shell", () => {
       expect(
         within(settingsNav).getByRole("link", { name: title }),
       ).toHaveClass("settings-shell__link--active");
-      expect(
-        screen.getByRole("link", { name: "Settings" }),
-      ).toHaveClass("app-shell-nav__link--active");
+      expect(screen.getByRole("link", { name: "Settings" })).toHaveClass(
+        "app-shell-nav__link--active",
+      );
     },
   );
+
+  it("redirects protected routes to login when the session is missing", async () => {
+    renderAtUnauthenticated("/settings/company");
+
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Login" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("banner")).not.toBeInTheDocument();
+  });
 
   it("renders a shell 404 for unknown app routes", async () => {
     renderAt("/missing-screen");
@@ -110,3 +149,94 @@ describe("App routing shell", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+function authenticatedFetch() {
+  return vi.fn(async (input: RequestInfo | URL) => {
+    const path = pathFromRequest(input);
+    if (path === "/api/identity/me") {
+      return jsonResponse({
+        created_at: "2026-07-05T12:00:00Z",
+        email: "owner@example.com",
+        id: 1,
+        name: "N. Meyer",
+      });
+    }
+    if (path === "/api/identity/profile") {
+      return jsonResponse(identityProfile());
+    }
+    return jsonResponse(
+      {
+        status: 404,
+        title: "Not Found",
+        type: "about:blank",
+      },
+      404,
+      "application/problem+json",
+    );
+  });
+}
+
+function unauthenticatedFetch() {
+  return vi.fn(async () =>
+    jsonResponse(
+      {
+        detail: "authentication required",
+        status: 401,
+        title: "Unauthorized",
+        type: "about:blank",
+      },
+      401,
+      "application/problem+json",
+    ),
+  );
+}
+
+function identityProfile() {
+  return {
+    bank_details: { bank_name: "", bic: "", iban: "" },
+    company_number: "137792C",
+    incorporation_date: "2020-07-14",
+    legal_name: "NPM Limited",
+    logo_asset_id: null,
+    logo_asset_url: null,
+    registered_office: {
+      country: "IM",
+      line1: "18 Athol St",
+      line2: "",
+      locality: "Douglas",
+      postal_code: "",
+      region: "",
+    },
+    shareholders: [
+      {
+        class: "ordinary £1",
+        name: "N. Meyer",
+        shares: 100,
+      },
+    ],
+    trading_name: "NPM Limited",
+    vat_number: null,
+    year_end: { day: 31, month: 3 },
+  };
+}
+
+function pathFromRequest(input: RequestInfo | URL) {
+  if (input instanceof Request) {
+    return new URL(input.url, "http://localhost").pathname;
+  }
+
+  return new URL(String(input), "http://localhost").pathname;
+}
+
+function jsonResponse(
+  body: unknown,
+  status = 200,
+  contentType = "application/json",
+) {
+  return new Response(JSON.stringify(body), {
+    headers: {
+      "Content-Type": contentType,
+    },
+    status,
+  });
+}
