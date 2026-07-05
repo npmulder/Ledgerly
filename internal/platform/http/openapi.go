@@ -36,10 +36,11 @@ func OpenAPIDocument(version string, fragments ...OpenAPIFragment) map[string]an
 			},
 			"HealthResponse": map[string]any{
 				"type":     "object",
-				"required": []string{"status", "version", "checks"},
+				"required": []string{"status", "version", "checked_at", "checks"},
 				"properties": map[string]any{
-					"status":  map[string]any{"type": "string"},
-					"version": map[string]any{"type": "string"},
+					"status":     map[string]any{"type": "string"},
+					"version":    map[string]any{"type": "string"},
+					"checked_at": map[string]any{"type": "string", "format": "date-time"},
 					"checks": map[string]any{
 						"type": "object",
 						"additionalProperties": map[string]any{

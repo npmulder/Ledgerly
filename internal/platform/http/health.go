@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	nethttp "net/http"
+	"time"
 )
 
 type healthResponse struct {
-	Status  string                 `json:"status"`
-	Version string                 `json:"version"`
-	Checks  map[string]healthCheck `json:"checks"`
+	Status    string                 `json:"status"`
+	Version   string                 `json:"version"`
+	CheckedAt string                 `json:"checked_at"`
+	Checks    map[string]healthCheck `json:"checks"`
 }
 
 type healthCheck struct {
@@ -39,9 +41,10 @@ func healthHandler(cfg Config) nethttp.HandlerFunc {
 
 		checks["db"] = healthCheck{Status: "ok"}
 		writeJSON(w, nethttp.StatusOK, healthResponse{
-			Status:  "ok",
-			Version: cfg.Version,
-			Checks:  checks,
+			Status:    "ok",
+			Version:   cfg.Version,
+			CheckedAt: cfg.Clock.Now().UTC().Format(time.RFC3339Nano),
+			Checks:    checks,
 		})
 	}
 }

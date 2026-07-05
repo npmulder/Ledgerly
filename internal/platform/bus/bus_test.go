@@ -81,6 +81,42 @@ func TestPublishPropagatesHandlerError(t *testing.T) {
 	}
 }
 
+func TestMiddlewareWrapsSubscribers(t *testing.T) {
+	var calls []string
+	sentinel := errors.New("middleware failure")
+	b := bus.New(
+		bus.WithLogger(discardLogger()),
+		bus.WithMiddleware(func(eventName string, next bus.Handler) bus.Handler {
+			return func(ctx context.Context, tx db.Tx, evt bus.Event) error {
+				calls = append(calls, "before:"+eventName)
+				if err := next(ctx, tx, evt); err != nil {
+					return err
+				}
+				calls = append(calls, "after:"+eventName)
+				return sentinel
+			}
+		}),
+	)
+	b.Subscribe(invoiceSettledName, func(context.Context, db.Tx, bus.Event) error {
+		calls = append(calls, "handler")
+		return nil
+	})
+
+	err := b.Publish(context.Background(), &fakeTx{}, testEvent{id: "inv_123"})
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("Publish() error = %v, want sentinel %v", err, sentinel)
+	}
+
+	want := []string{
+		"before:" + invoiceSettledName,
+		"handler",
+		"after:" + invoiceSettledName,
+	}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls = %v, want %v", calls, want)
+	}
+}
+
 func TestPublishRejectsUnknownEventModule(t *testing.T) {
 	b := bus.New(bus.WithLogger(discardLogger()))
 	called := false

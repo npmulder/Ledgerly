@@ -11,12 +11,16 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+
+	"github.com/npmulder/ledgerly/internal/platform/clock"
 )
 
 func TestHealthzReturnsVersionWhenDatabasePingSucceeds(t *testing.T) {
+	now := time.Date(2030, 2, 3, 4, 5, 6, 7, time.UTC)
 	router := NewRouter(Config{
 		Version: "test-version",
 		DB:      pingerFunc(func(context.Context) error { return nil }),
+		Clock:   clock.NewFake(now),
 	})
 
 	response := httptest.NewRecorder()
@@ -38,6 +42,9 @@ func TestHealthzReturnsVersionWhenDatabasePingSucceeds(t *testing.T) {
 	}
 	if body.Status != "ok" {
 		t.Fatalf("status = %q, want ok", body.Status)
+	}
+	if body.CheckedAt != now.Format(time.RFC3339Nano) {
+		t.Fatalf("checked_at = %q, want %q", body.CheckedAt, now.Format(time.RFC3339Nano))
 	}
 	if body.Checks["db"].Status != "ok" {
 		t.Fatalf("db status = %q, want ok", body.Checks["db"].Status)
