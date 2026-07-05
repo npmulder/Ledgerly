@@ -5,6 +5,10 @@ export type ApiQueryKey = readonly [
 ];
 
 export const queryKeys = {
+  identity: {
+    me: (): ApiQueryKey => ["identity", "me", {}],
+    profile: (): ApiQueryKey => ["identity", "profile", {}],
+  },
   platform: {
     health: (): ApiQueryKey => ["platform", "healthz", {}],
   },

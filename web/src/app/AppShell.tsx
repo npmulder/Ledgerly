@@ -1,6 +1,14 @@
-import { Suspense } from "react";
-import { NavLink, Outlet } from "react-router-dom";
+import { Suspense, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { NavLink, Outlet, useNavigate } from "react-router-dom";
 
+import { isApiError } from "@/api/client";
+import {
+  getIdentityProfile,
+  logoutIdentity,
+  type IdentityUser,
+} from "@/api/identity";
+import { queryKeys } from "@/api/queryKeys";
 import { PageTitle, Screen } from "@/components";
 
 const primaryNavItems = [
@@ -13,16 +21,58 @@ const primaryNavItems = [
   { end: false, label: "Settings", to: "/settings" },
 ] as const;
 
-export function AppShell() {
+export type AppShellProps = {
+  readonly user: IdentityUser;
+};
+
+export function AppShell({ user }: AppShellProps) {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [failedLogoUrl, setFailedLogoUrl] = useState<string | null>(null);
+  const profileQuery = useQuery({
+    queryFn: getIdentityProfile,
+    queryKey: queryKeys.identity.profile(),
+  });
+  const profile = profileQuery.data;
+  const companyName = profile?.trading_name ?? "Ledgerly";
+  const logoUrl = profile?.logo_asset_url ?? undefined;
+  const showLogo = !!logoUrl && failedLogoUrl !== logoUrl;
+  const companyInitial = initialFor(companyName);
+  const userInitial = initialFor(user.name || user.email);
+  const logoutMutation = useMutation({
+    mutationFn: logoutIdentity,
+    onSuccess: () => {
+      queryClient.removeQueries({ queryKey: ["identity"] });
+      navigate("/login", { replace: true });
+    },
+  });
+  const logoutProblem = isApiError(logoutMutation.error)
+    ? logoutMutation.error.problem
+    : null;
+
   return (
     <div className="app-shell">
       <div className="app-shell__frame">
         <header className="app-shell__header">
           <div className="app-shell__brand" aria-label="Company identity">
-            <span className="app-shell__logo" aria-hidden="true">
-              K
-            </span>
-            <span className="app-shell__company">NPM Limited</span>
+            {showLogo ? (
+              <img
+                alt=""
+                className="app-shell__logo-img"
+                onError={() => {
+                  if (logoUrl) {
+                    setFailedLogoUrl(logoUrl);
+                  }
+                }}
+                src={logoUrl}
+              />
+            ) : (
+              <span className="app-shell__logo" aria-hidden="true">
+                {companyInitial}
+              </span>
+            )}
+            <span className="app-shell__company">{companyName}</span>
           </div>
           <nav className="app-shell-nav" aria-label="Primary">
             {primaryNavItems.map((item) => (
@@ -40,6 +90,43 @@ export function AppShell() {
               </NavLink>
             ))}
           </nav>
+          <div className="app-shell-user">
+            <span className="app-shell-user__context">IM · FY 2026-27</span>
+            <button
+              aria-expanded={menuOpen}
+              aria-haspopup="menu"
+              aria-label="Open account menu"
+              className="app-shell-user__trigger"
+              onClick={() => setMenuOpen((open) => !open)}
+              type="button"
+            >
+              {userInitial}
+            </button>
+            {menuOpen ? (
+              <div className="app-shell-user__menu" role="menu">
+                <div className="app-shell-user__identity">
+                  <strong>{user.name}</strong>
+                  <span>{user.email}</span>
+                </div>
+                <button
+                  disabled={logoutMutation.isPending}
+                  onClick={() => logoutMutation.mutate()}
+                  role="menuitem"
+                  type="button"
+                >
+                  Logout
+                </button>
+                {logoutProblem ? (
+                  <div className="problem-alert" role="alert">
+                    <strong>{logoutProblem.title}</strong>
+                    {logoutProblem.detail ? (
+                      <span>{logoutProblem.detail}</span>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
         </header>
         <Screen>
           <Suspense fallback={<PageTitle>Loading</PageTitle>}>
@@ -49,4 +136,9 @@ export function AppShell() {
       </div>
     </div>
   );
+}
+
+function initialFor(value: string) {
+  const trimmed = value.trim();
+  return (trimmed[0] ?? "L").toUpperCase();
 }
