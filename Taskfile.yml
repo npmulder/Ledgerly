@@ -1,21 +1,65 @@
 version: "3"
 
+vars:
+  GOLANGCI_LINT_VERSION: v2.8.0
+
 tasks:
   build:
-    desc: Build the ledgerly binary
+    desc: Build and vet all Go packages
     cmds:
-      - go build -o ledgerly ./cmd/ledgerly
+      - go build ./...
+      - go vet ./...
 
   test:
-    desc: Run Go tests
+    desc: Run unit tests
     cmds:
       - go test ./...
 
-  lint:
-    desc: Run Go formatting and vet checks
+  test:integration:
+    desc: Run integration tests when LEDGERLY_TEST_DB is configured
     cmds:
-      - test -z "$(gofmt -l cmd internal)"
-      - go vet ./...
+      - |
+        if [ -z "${LEDGERLY_TEST_DB:-}" ]; then
+          echo "LEDGERLY_TEST_DB not set; skipping integration tests."
+          exit 0
+        fi
+        go test -tags=integration ./...
+
+  lint:
+    desc: Run all lint checks
+    deps:
+      - lint:fmt
+      - lint:golangci
+      - lint:arch
+      - lint:rates
+
+  lint:fmt:
+    desc: Check Go formatting
+    cmds:
+      - test -z "$(gofmt -l cmd internal tools)"
+
+  lint:golangci:
+    desc: Run golangci-lint
+    cmds:
+      - go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@{{.GOLANGCI_LINT_VERSION}} run --config .golangci.yml
+
+  lint:arch:
+    desc: Enforce internal module import boundaries
+    cmds:
+      - go run ./tools/archcheck arch
+
+  lint:rates:
+    desc: Prevent compliance literals outside jurisdiction packs
+    cmds:
+      - go run ./tools/archcheck rates
+
+  ci:
+    desc: Run the same checks as CI
+    deps:
+      - build
+      - test
+      - test:integration
+      - lint
 
   run:
     desc: Run the ledgerly skeleton
