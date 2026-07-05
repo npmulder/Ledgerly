@@ -161,6 +161,47 @@ Do not use wall-clock sleeps in integration suites. Advance `h.Clock` for time
 dependent behavior and drive background work through `h.RunJob` or module-level
 `RunNow` helpers.
 
+## Document Golden Snapshots
+
+Rendered document tests use `internal/it/golden` to compare both content and
+layout. A document test renders the document PDF bytes, then calls:
+
+```go
+golden.PDF(t, "invoice-paid", pdfBytes,
+	golden.WithMasks(`20[0-9]{2}-[0-9]{2}-[0-9]{2}T[0-9:]+Z`),
+)
+```
+
+Goldens live under the calling package's `testdata/golden` directory:
+
+- `<name>.txt` is extracted PDF text for wording, amounts, company names, and
+  other content assertions.
+- `<name>.hash` is the fixed-DPI raster hash for layout drift detection.
+- `<name>.png` is the baseline raster image kept only so failures can write both
+  `got.png` and `want.png` artifacts.
+
+Use masks only for volatile fields such as generation timestamps or generated
+IDs. Do not mask locked-rate values, document amounts, company names, legal
+wording, or other business facts that the golden is meant to protect.
+
+To add a golden for a new document type:
+
+1. Render a deterministic fixture PDF with stable business inputs.
+2. Call `golden.PDF(t, "<document-name>", pdfBytes)` from the document package's
+   test, adding `golden.WithMasks(...)` only for volatile text.
+3. Run `task golden:update` to regenerate the self-test snapshots, or run the
+   package-specific command with `-update` for document module goldens.
+4. Review the committed `.txt`, `.hash`, and `.png` files. The text file should
+   read like the business assertion; the PNG is for visual diagnostics.
+5. Run `task golden:docker` when local Chrome/fonts differ from CI. The Docker
+   wrapper uses the same headless-shell binary and font environment expected by
+   the golden suite.
+
+`-update` is rejected when `CI=true`, so CI can never rewrite snapshots. Raster
+mismatches write artifacts under `GOLDEN_ARTIFACT_DIR` when it is set; otherwise
+they fall back to a temporary artifact directory and include the exact paths in
+the test failure.
+
 ## Guardrails
 
 When adding a module, update these checks in the same PR:
