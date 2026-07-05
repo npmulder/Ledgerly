@@ -70,3 +70,18 @@ tasks:
     desc: Run the ledgerly skeleton
     cmds:
       - go run ./cmd/ledgerly {{.CLI_ARGS}}
+
+  api:generate:
+    desc: Generate the committed TypeScript API client from the running server OpenAPI spec
+    cmds:
+      - task: web:api:generate
+
+  api:drift-check:
+    desc: Regenerate the API client and fail when committed output is stale
+    cmds:
+      - task: api:generate
+      - |
+        if [ -n "$(git status --porcelain -- web/src/api/generated)" ]; then
+          git status --short -- web/src/api/generated
+          exit 1
+        fi

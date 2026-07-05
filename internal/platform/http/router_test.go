@@ -231,8 +231,30 @@ func TestOpenAPISkeletonIncludesFragments(t *testing.T) {
 	}
 
 	paths := document["paths"].(map[string]any)
+	healthz, ok := paths["/healthz"].(map[string]any)
+	if !ok {
+		t.Fatalf("/healthz missing from OpenAPI document: %v", paths)
+	}
+	healthzGet, ok := healthz["get"].(map[string]any)
+	if !ok {
+		t.Fatalf("/healthz get operation missing from OpenAPI document: %v", healthz)
+	}
+	responses := healthzGet["responses"].(map[string]any)
+	if _, ok := responses["200"]; !ok {
+		t.Fatalf("/healthz 200 response missing from OpenAPI document: %v", responses)
+	}
+	if _, ok := responses["503"]; !ok {
+		t.Fatalf("/healthz 503 response missing from OpenAPI document: %v", responses)
+	}
+
 	if _, ok := paths["/api/banking/transactions"]; !ok {
 		t.Fatalf("fragment path missing from OpenAPI document: %v", paths)
+	}
+
+	components := document["components"].(map[string]any)
+	schemas := components["schemas"].(map[string]any)
+	if _, ok := schemas["HealthResponse"]; !ok {
+		t.Fatalf("HealthResponse schema missing from OpenAPI document: %v", schemas)
 	}
 }
 
