@@ -10,6 +10,7 @@ require (
 	github.com/go-chi/chi/v5 v5.3.0
 	github.com/jackc/pgx/v5 v5.8.0
 	github.com/lib/pq v1.12.3
+	golang.org/x/crypto v0.39.0
 )
 
 require (
