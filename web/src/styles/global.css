@@ -1,27 +1,5 @@
-:root {
-  color: #182027;
-  background: #f6f8fa;
-  font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    sans-serif;
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-}
-
-* {
-  box-sizing: border-box;
-}
-
-body {
-  min-width: 320px;
-  margin: 0;
-}
-
-button {
-  font: inherit;
-}
-
-main {
+.dev-api-screen,
+.login-screen {
   width: min(960px, calc(100vw - 32px));
   margin: 0 auto;
   padding: 48px 0;
@@ -29,7 +7,7 @@ main {
 
 .eyebrow {
   margin: 0 0 8px;
-  color: #5c6b73;
+  color: var(--color-text-secondary);
   font-size: 0.78rem;
   font-weight: 700;
   letter-spacing: 0;
@@ -46,8 +24,8 @@ main {
   justify-content: space-between;
   width: 100%;
   padding: 12px 20px;
-  color: #ffffff;
-  background: #9f2337;
+  color: var(--color-card);
+  background: var(--color-danger);
   box-shadow: 0 1px 0 rgb(0 0 0 / 16%);
 }
 
@@ -57,7 +35,7 @@ main {
 }
 
 .api-error-banner span {
-  color: #ffe7eb;
+  color: var(--color-danger-bg);
   font-size: 0.9rem;
 }
 
@@ -71,7 +49,7 @@ main {
 }
 
 .api-error-banner button {
-  color: #ffffff;
+  color: var(--color-card);
   background: rgb(255 255 255 / 14%);
 }
 
@@ -90,7 +68,7 @@ main {
 .dev-api-header h1,
 .login-screen h1 {
   margin: 0;
-  color: #101820;
+  color: var(--color-text);
   font-size: 2.25rem;
   line-height: 1.1;
 }
@@ -98,13 +76,13 @@ main {
 .secondary-action {
   flex: 0 0 auto;
   padding: 0 16px;
-  color: #102733;
-  background: #ffffff;
-  border-color: #c6d2d9;
+  color: var(--color-navy);
+  background: var(--color-card);
+  border-color: var(--color-border-input);
 }
 
 .secondary-action:hover {
-  background: #edf4f7;
+  background: var(--color-panel);
 }
 
 .secondary-action:disabled {
@@ -121,9 +99,9 @@ main {
 
 .health-summary div,
 .checks-section {
-  border: 1px solid #d7e0e5;
+  border: 1px solid var(--color-border-hairline);
   border-radius: 8px;
-  background: #ffffff;
+  background: var(--color-card);
 }
 
 .health-summary div {
@@ -134,7 +112,7 @@ main {
 }
 
 .health-summary span {
-  color: #647781;
+  color: var(--color-text-secondary);
   font-size: 0.88rem;
 }
 
@@ -147,9 +125,9 @@ main {
 .health-message {
   margin: 0 0 20px;
   padding: 12px 14px;
-  border-left: 4px solid #9f2337;
-  color: #6f1b2b;
-  background: #fff1f3;
+  border-left: 4px solid var(--color-danger);
+  color: var(--color-danger);
+  background: var(--color-danger-bg);
 }
 
 .checks-section {
@@ -162,38 +140,39 @@ main {
   font-size: 1.1rem;
 }
 
-table {
+.checks-section table {
   width: 100%;
   min-width: 100%;
   border-collapse: collapse;
 }
 
-th,
-td {
+.checks-section th,
+.checks-section td {
   padding: 14px 20px;
-  border-bottom: 1px solid #e5ecef;
+  border-bottom: 1px solid var(--color-border-hairline);
   text-align: left;
   vertical-align: top;
 }
 
-th {
-  color: #4f6068;
+.checks-section th {
+  color: var(--color-text-secondary);
   font-size: 0.82rem;
   text-transform: uppercase;
 }
 
-tbody tr:last-child td {
+.checks-section tbody tr:last-child td {
   border-bottom: 0;
 }
 
 .login-screen p:last-child {
   max-width: 560px;
-  color: #4c5960;
+  color: var(--color-text-secondary);
   font-size: 1.05rem;
 }
 
 @media (max-width: 640px) {
-  main {
+  .dev-api-screen,
+  .login-screen {
     width: min(100vw - 24px, 960px);
     padding: 32px 0;
   }
@@ -210,8 +189,8 @@ tbody tr:last-child td {
     flex-direction: column;
   }
 
-  th,
-  td {
+  .checks-section th,
+  .checks-section td {
     padding: 12px;
   }
 }
