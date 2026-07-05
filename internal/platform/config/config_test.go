@@ -21,6 +21,7 @@ func TestLoadFromReportsMissingRequiredKeys(t *testing.T) {
 
 	wantKeys := []string{
 		"LEDGERLY_DATABASE_URL",
+		"LEDGERLY_DATA_DIR",
 		"LEDGERLY_ENV",
 		"LEDGERLY_LOG_LEVEL",
 	}
@@ -46,6 +47,7 @@ func TestLoadFromReportsMissingRequiredKeys(t *testing.T) {
 func TestLoadFromAppliesDefaults(t *testing.T) {
 	cfg, err := LoadFrom(mapLookup(map[string]string{
 		"LEDGERLY_DATABASE_URL": "postgres://ledgerly@example/ledgerly",
+		"LEDGERLY_DATA_DIR":     "/var/lib/ledgerly",
 		"LEDGERLY_ENV":          "dev",
 		"LEDGERLY_LOG_LEVEL":    "info",
 	}))
@@ -55,6 +57,9 @@ func TestLoadFromAppliesDefaults(t *testing.T) {
 
 	if cfg.DatabaseURL != "postgres://ledgerly@example/ledgerly" {
 		t.Fatalf("DatabaseURL = %q", cfg.DatabaseURL)
+	}
+	if cfg.DataDir != "/var/lib/ledgerly" {
+		t.Fatalf("DataDir = %q, want /var/lib/ledgerly", cfg.DataDir)
 	}
 	if cfg.HTTPAddr != DefaultHTTPAddr {
 		t.Fatalf("HTTPAddr = %q, want %q", cfg.HTTPAddr, DefaultHTTPAddr)
@@ -73,6 +78,7 @@ func TestLoadFromAppliesDefaults(t *testing.T) {
 func TestLoadFromReadsJurisdiction(t *testing.T) {
 	cfg, err := LoadFrom(mapLookup(map[string]string{
 		"LEDGERLY_DATABASE_URL": "postgres://ledgerly@example/ledgerly",
+		"LEDGERLY_DATA_DIR":     "/var/lib/ledgerly",
 		"LEDGERLY_ENV":          "dev",
 		"LEDGERLY_LOG_LEVEL":    "info",
 		"LEDGERLY_JURISDICTION": "testland@0.1",
