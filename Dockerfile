@@ -1,3 +1,5 @@
+FROM golang:1.24-bookworm AS go-toolchain
+
 FROM node:22-bookworm-slim AS web-build
 
 WORKDIR /src/web
@@ -8,7 +10,7 @@ RUN npm ci
 COPY web ./
 RUN npm run build && mkdir -p dist && touch dist/.ledgerly-embed
 
-FROM golang:1.24-bookworm AS build
+FROM go-toolchain AS build
 
 WORKDIR /src
 
@@ -27,6 +29,30 @@ RUN set -eux; \
 	export GOOS CGO_ENABLED=0; \
 	if [ -n "${TARGETARCH:-}" ]; then export GOARCH="${TARGETARCH}"; fi; \
 	go build -trimpath -ldflags="-s -w -X main.version=${GIT_SHA}" -o /out/ledgerly ./cmd/ledgerly
+
+FROM chromedp/headless-shell@sha256:6b48adef158c57ef401977e1d18e4100c605b0407162e3d12f7c80b1b9bfdaaa AS golden-test
+
+USER root
+
+RUN apt-get update \
+	&& apt-get install -y --no-install-recommends gcc libc6-dev \
+	&& rm -rf /var/lib/apt/lists/*
+
+COPY --from=go-toolchain /usr/local/go /usr/local/go
+COPY --from=go-toolchain /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+
+ENV CHROME_BIN=/headless-shell/headless-shell \
+	CGO_ENABLED=1 \
+	HOME=/tmp \
+	XDG_CACHE_HOME=/tmp/.cache \
+	XDG_CONFIG_HOME=/tmp/.config \
+	GOCACHE=/tmp/go-build \
+	GOMODCACHE=/tmp/go/pkg/mod \
+	PATH=/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+WORKDIR /src
+
+ENTRYPOINT []
 
 FROM chromedp/headless-shell:latest AS runtime
 

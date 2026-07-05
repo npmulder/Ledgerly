@@ -9,6 +9,9 @@ export const queryKeys = {
     me: (): ApiQueryKey => ["identity", "me", {}],
     profile: (): ApiQueryKey => ["identity", "profile", {}],
   },
+  jurisdiction: {
+    pack: (): ApiQueryKey => ["jurisdiction", "pack", {}],
+  },
   platform: {
     health: (): ApiQueryKey => ["platform", "healthz", {}],
   },

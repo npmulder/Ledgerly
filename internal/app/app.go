@@ -21,6 +21,7 @@ import (
 
 	"github.com/npmulder/ledgerly/internal/demo"
 	"github.com/npmulder/ledgerly/internal/identity"
+	"github.com/npmulder/ledgerly/internal/jurisdiction"
 	"github.com/npmulder/ledgerly/internal/platform/bus"
 	"github.com/npmulder/ledgerly/internal/platform/clock"
 	"github.com/npmulder/ledgerly/internal/platform/config"
@@ -85,6 +86,8 @@ type Dependencies struct {
 	IdentityHTTPOptions    []identity.HTTPOption
 	IdentityProfileOptions []identity.ProfileOption
 
+	JurisdictionLoader func(string) error
+
 	ModuleBuilders map[string]ModuleBuilder
 
 	Jobs map[string]Job
@@ -118,6 +121,14 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 	clk := deps.Clock
 	if clk == nil {
 		clk = clock.New()
+	}
+
+	loadJurisdiction := deps.JurisdictionLoader
+	if loadJurisdiction == nil {
+		loadJurisdiction = jurisdiction.LoadActive
+	}
+	if err := loadJurisdiction(cfg.Runtime.Jurisdiction); err != nil {
+		return nil, fmt.Errorf("load jurisdiction pack: %w", err)
 	}
 
 	var closeFuncs []func() error
@@ -171,8 +182,28 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 	identityHTTPOptions = append(identityHTTPOptions, deps.IdentityHTTPOptions...)
 	identityHandler := identity.NewHTTPHandler(identityService, identityHTTPOptions...)
 
-	modules := []httpserver.Module{identity.HTTPModule(identityHandler)}
-	fragments := []httpserver.OpenAPIFragment{identity.OpenAPIFragment()}
+	jurisdictionFacts := func(ctx context.Context) (jurisdiction.CompanyFacts, error) {
+		facts, err := identityProfile.CompanyFacts(ctx)
+		if err != nil {
+			return jurisdiction.CompanyFacts{}, err
+		}
+		return jurisdiction.CompanyFacts{
+			IncorporationDate: facts.IncorporationDate,
+			YearEnd: jurisdiction.YearEnd{
+				Month: facts.YearEnd.Month,
+				Day:   facts.YearEnd.Day,
+			},
+		}, nil
+	}
+
+	modules := []httpserver.Module{
+		identity.HTTPModule(identityHandler),
+		jurisdictionHTTPModule(jurisdictionFacts, clk),
+	}
+	fragments := []httpserver.OpenAPIFragment{
+		identity.OpenAPIFragment(),
+		jurisdictionOpenAPIFragment(),
+	}
 
 	demoBuilder := buildDemoModule
 	if deps.ModuleBuilders != nil && deps.ModuleBuilders[demo.ModuleName] != nil {
@@ -233,6 +264,7 @@ func OpenAPIDocument(version string) map[string]any {
 	return httpserver.OpenAPIDocument(
 		version,
 		identity.OpenAPIFragment(),
+		jurisdictionOpenAPIFragment(),
 		demo.OpenAPIFragment(),
 	)
 }

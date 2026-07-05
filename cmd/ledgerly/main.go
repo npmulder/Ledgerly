@@ -147,10 +147,6 @@ func runServe(ctx context.Context) (err error) {
 		Level: cfg.LogLevel,
 	})
 
-	if err := loadActiveJurisdiction(cfg.Jurisdiction); err != nil {
-		return fmt.Errorf("load jurisdiction pack: %w", err)
-	}
-
 	startupCtx, startupCancel := context.WithTimeout(ctx, 45*time.Second)
 	defer startupCancel()
 
@@ -158,8 +154,9 @@ func runServe(ctx context.Context) (err error) {
 		Runtime: cfg,
 		Version: version,
 	}, app.Dependencies{
-		Logger:        logger,
-		CronAutostart: true,
+		Logger:             logger,
+		JurisdictionLoader: loadActiveJurisdiction,
+		CronAutostart:      true,
 	})
 	if err != nil {
 		return err

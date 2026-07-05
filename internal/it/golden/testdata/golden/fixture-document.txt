@@ -1,0 +1,6 @@
+Golden Document Snapshot
+Company: Ledgerly Services Limited
+Amount: GBP 1,234.56
+Rate lock: GBP/EUR 1.1729
+<masked>
+Fixed wording for raster layout proof.
