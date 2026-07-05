@@ -2,7 +2,7 @@ package jurisdiction
 
 import (
 	"fmt"
-	"math"
+	"math/big"
 	"sort"
 	"strings"
 )
@@ -27,7 +27,7 @@ func validatePack(file, id, version string, pack *Pack) error {
 	if err := validateFilings(file, pack.Filings); err != nil {
 		return err
 	}
-	if err := validateYearMap(file, "director_loans", "director_loans", pack.DirectorLoans, validateDirectorLoanYear); err != nil {
+	if err := validateDLAPolicy(file, pack.DirectorLoans); err != nil {
 		return err
 	}
 	if err := validateAdvisorRules(file, pack.AdvisorRules); err != nil {
@@ -88,8 +88,8 @@ func validateCorporateIncomeYear(file, year string, value CorporateIncomeYear) e
 
 func validatePersonalIncomeYear(file, year string, value PersonalIncomeYear) error {
 	path := "tax.personal_income." + year
-	if value.PersonalAllowance < 0 {
-		return fieldError(file, path+".personal_allowance", "personal_allowance", "must be greater than or equal to 0")
+	if value.PersonalAllowanceMinorUnits < 0 {
+		return fieldError(file, path+".personal_allowance_minor_units", "personal_allowance_minor_units", "must be greater than or equal to 0")
 	}
 	if len(value.Bands) == 0 {
 		return fieldError(file, path+".bands", "bands", "must contain at least one band")
@@ -101,19 +101,19 @@ func validatePersonalIncomeYear(file, year string, value PersonalIncomeYear) err
 		if err := validateRate(file, bandPath+".rate", "rate", band.Rate); err != nil {
 			return err
 		}
-		if band.UpTo == nil {
+		if band.UpToMinorUnits == nil {
 			if index != len(value.Bands)-1 {
-				return fieldError(file, bandPath+".upto", "upto", "open-ended band must be last")
+				return fieldError(file, bandPath+".upto_minor_units", "upto_minor_units", "open-ended band must be last")
 			}
 			continue
 		}
-		if *band.UpTo < 0 {
-			return fieldError(file, bandPath+".upto", "upto", "must be greater than or equal to 0")
+		if *band.UpToMinorUnits < 0 {
+			return fieldError(file, bandPath+".upto_minor_units", "upto_minor_units", "must be greater than or equal to 0")
 		}
-		if previousUpTo != nil && *band.UpTo <= *previousUpTo {
-			return fieldError(file, bandPath+".upto", "upto", "bands must be ordered by increasing upto")
+		if previousUpTo != nil && *band.UpToMinorUnits <= *previousUpTo {
+			return fieldError(file, bandPath+".upto_minor_units", "upto_minor_units", "bands must be ordered by increasing upto_minor_units")
 		}
-		upTo := *band.UpTo
+		upTo := *band.UpToMinorUnits
 		previousUpTo = &upTo
 	}
 
@@ -121,12 +121,18 @@ func validatePersonalIncomeYear(file, year string, value PersonalIncomeYear) err
 }
 
 func validateDividendYear(file, year string, value DividendYear) error {
-	return validateRate(file, "tax.dividends."+year+".withholding_rate", "withholding_rate", value.WithholdingRate)
+	if strings.TrimSpace(value.Withholding) == "" {
+		return fieldError(file, "tax.dividends."+year+".withholding", "withholding", "must not be empty")
+	}
+	return nil
 }
 
 func validateVAT(file string, vat VAT) error {
 	if strings.TrimSpace(vat.Regime) == "" {
 		return fieldError(file, "tax.vat.regime", "regime", "must not be empty")
+	}
+	if strings.TrimSpace(vat.Authority) == "" {
+		return fieldError(file, "tax.vat.authority", "authority", "must not be empty")
 	}
 	if err := validateYearMap(file, "tax.vat", "vat", vat.Years, validateVATYear); err != nil {
 		return err
@@ -171,21 +177,27 @@ func validateFilings(file string, filings map[string]Filing) error {
 	for _, key := range keys {
 		filing := filings[key]
 		path := "filings." + key
-		dueExpression, err := parseDeadlineExpression(filing.Due)
-		if err != nil {
-			return fieldError(file, path+".due", "due", err.Error())
+		if strings.TrimSpace(filing.Due) == "" {
+			if strings.TrimSpace(filing.Cadence) == "" {
+				return fieldError(file, path+".due", "due", "must have a due expression or cadence")
+			}
+		} else {
+			dueExpression, err := parseDeadlineExpression(filing.Due)
+			if err != nil {
+				return fieldError(file, path+".due", "due", err.Error())
+			}
+			filing.dueExpression = dueExpression
 		}
-		filing.dueExpression = dueExpression
+		if filing.Authority != "" && strings.TrimSpace(filing.Authority) == "" {
+			return fieldError(file, path+".authority", "authority", "must not be blank")
+		}
 		filings[key] = filing
-		if strings.TrimSpace(filing.Authority) == "" {
-			return fieldError(file, path+".authority", "authority", "must not be empty")
-		}
 	}
 	return nil
 }
 
-func validateDirectorLoanYear(file, year string, value DirectorLoanYear) error {
-	path := "director_loans." + year + ".overdrawn"
+func validateDLAPolicy(file string, value DLAPolicy) error {
+	path := "director_loans.overdrawn"
 	if strings.TrimSpace(value.Overdrawn.Warn) == "" {
 		return fieldError(file, path+".warn", "warn", "must not be empty")
 	}
@@ -223,8 +235,12 @@ func validateAdvisorRules(file string, rules []AdvisorRule) error {
 	return nil
 }
 
-func validateRate(file, path, field string, rate float64) error {
-	if math.IsNaN(rate) || math.IsInf(rate, 0) || rate < 0 || rate > 1 {
+func validateRate(file, path, field string, rate Rate) error {
+	parsed, ok := new(big.Rat).SetString(strings.TrimSpace(string(rate)))
+	if !ok {
+		return fieldError(file, path, field, "rate must be a decimal string")
+	}
+	if parsed.Sign() < 0 || parsed.Cmp(big.NewRat(1, 1)) > 0 {
 		return fieldError(file, path, field, "rate must be between 0 and 1")
 	}
 	return nil

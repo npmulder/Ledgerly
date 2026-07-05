@@ -26,22 +26,25 @@ func TestLoadFromFSEmbeddedFixture(t *testing.T) {
 	if pack.Meta.Version != "0.1" {
 		t.Fatalf("Meta.Version = %q, want 0.1", pack.Meta.Version)
 	}
-	if pack.Tax.CorporateIncome["2025-26"].StandardRate != 0.19 {
+	if pack.Tax.CorporateIncome["2025-26"].StandardRate != "0.19" {
 		t.Fatalf("corporate standard rate not loaded: %#v", pack.Tax.CorporateIncome)
 	}
-	if pack.Tax.PersonalIncome["2025-26"].PersonalAllowance != 1234 {
+	if pack.Tax.PersonalIncome["2025-26"].PersonalAllowanceMinorUnits != 1234 {
 		t.Fatalf("personal allowance not loaded: %#v", pack.Tax.PersonalIncome)
 	}
 	if len(pack.Tax.PersonalIncome["2025-26"].Bands) != 3 {
 		t.Fatalf("personal bands length = %d, want 3", len(pack.Tax.PersonalIncome["2025-26"].Bands))
 	}
-	if pack.Tax.Dividends["2025-26"].WithholdingRate != 0.04 {
-		t.Fatalf("dividend withholding rate not loaded: %#v", pack.Tax.Dividends)
+	if pack.Tax.Dividends["2025-26"].Withholding != "test-withholding" {
+		t.Fatalf("dividend withholding not loaded: %#v", pack.Tax.Dividends)
 	}
 	if pack.Tax.VAT.Regime != "test-shared" {
 		t.Fatalf("VAT regime = %q, want test-shared", pack.Tax.VAT.Regime)
 	}
-	if pack.Tax.VAT.Years["2025-26"].StandardRate != 0.17 {
+	if pack.Tax.VAT.Authority != "Testland Customs" {
+		t.Fatalf("VAT authority = %q, want Testland Customs", pack.Tax.VAT.Authority)
+	}
+	if pack.Tax.VAT.Years["2025-26"].StandardRate != "0.17" {
 		t.Fatalf("VAT standard rate not loaded: %#v", pack.Tax.VAT.Years)
 	}
 	if pack.Tax.VAT.ReverseCharge["b2b_services_eu"].InvoiceWording == "" {
@@ -50,7 +53,7 @@ func TestLoadFromFSEmbeddedFixture(t *testing.T) {
 	if len(pack.Filings) != 3 {
 		t.Fatalf("filings length = %d, want 3", len(pack.Filings))
 	}
-	if !pack.DirectorLoans["2025-26"].S455Charge {
+	if !pack.DirectorLoans.S455Charge {
 		t.Fatalf("director loan policy not loaded: %#v", pack.DirectorLoans)
 	}
 	if len(pack.AdvisorRules) != 1 {
@@ -66,6 +69,20 @@ func TestLoadActiveInstallsActivePackMeta(t *testing.T) {
 	meta := ActivePack()
 	if meta.ID != "testland" || meta.Version != "0.1" || meta.Name != "Testland" || meta.Currency != "TST" {
 		t.Fatalf("ActivePack() = %#v, want testland metadata", meta)
+	}
+}
+
+func TestLoadFromFSEmbeddedIsleOfManPack(t *testing.T) {
+	pack, err := LoadFromFS(embeddedPacks, DefaultSelector)
+	if err != nil {
+		t.Fatalf("LoadFromFS(%q) error = %v", DefaultSelector, err)
+	}
+
+	if pack.Meta.ID != "isle-of-man" || pack.Meta.Version != "1.0" {
+		t.Fatalf("Meta = %#v, want isle-of-man@1.0", pack.Meta)
+	}
+	if pack.Tax.VAT.Authority != "Isle of Man Customs & Excise" {
+		t.Fatalf("VAT authority = %q, want Isle of Man Customs & Excise", pack.Tax.VAT.Authority)
 	}
 }
 
@@ -99,6 +116,21 @@ func TestTopLevelFixtureMatchesEmbeddedFixture(t *testing.T) {
 	}
 }
 
+func TestTopLevelIsleOfManPackMatchesEmbeddedPack(t *testing.T) {
+	embedded, err := fs.ReadFile(embeddedPacks, PackPath("isle-of-man", "1.0"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	topLevel, err := os.ReadFile(filepath.Join("..", "..", "packs", "isle-of-man", "1.0", "pack.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if string(topLevel) != string(embedded) {
+		t.Fatal("top-level packs/isle-of-man/1.0/pack.yaml differs from embedded pack")
+	}
+}
+
 func TestValidationFailuresNameFilePathAndField(t *testing.T) {
 	valid := readEmbeddedFixture(t)
 
@@ -113,7 +145,7 @@ func TestValidationFailuresNameFilePathAndField(t *testing.T) {
 			name: "missing year",
 			pack: strings.Replace(
 				valid,
-				"  corporate_income:\n    \"2025-26\":\n      standard_rate: 0.19",
+				"  corporate_income:\n    \"2025-26\":\n      standard_rate: \"0.19\"",
 				"  corporate_income: {}",
 				1,
 			),
@@ -123,7 +155,7 @@ func TestValidationFailuresNameFilePathAndField(t *testing.T) {
 		},
 		{
 			name:      "rate greater than one",
-			pack:      strings.Replace(valid, "standard_rate: 0.19", "standard_rate: 1.2", 1),
+			pack:      strings.Replace(valid, "standard_rate: \"0.19\"", "standard_rate: \"1.2\"", 1),
 			wantPath:  "tax.corporate_income.2025-26.standard_rate",
 			wantField: "standard_rate",
 			wantText:  "between 0 and 1",
@@ -132,12 +164,12 @@ func TestValidationFailuresNameFilePathAndField(t *testing.T) {
 			name: "unordered bands",
 			pack: strings.Replace(
 				valid,
-				"        - upto: 1000\n          rate: 0.05\n        - upto: 2000",
-				"        - upto: 2000\n          rate: 0.05\n        - upto: 1000",
+				"        - upto_minor_units: 1000\n          rate: \"0.05\"\n        - upto_minor_units: 2000",
+				"        - upto_minor_units: 2000\n          rate: \"0.05\"\n        - upto_minor_units: 1000",
 				1,
 			),
-			wantPath:  "tax.personal_income.2025-26.bands[1].upto",
-			wantField: "upto",
+			wantPath:  "tax.personal_income.2025-26.bands[1].upto_minor_units",
+			wantField: "upto_minor_units",
 			wantText:  "ordered",
 		},
 		{
@@ -199,7 +231,7 @@ func TestValidationFailuresNameFilePathAndField(t *testing.T) {
 
 func TestLoadFromFSRejectsUnknownVATYearField(t *testing.T) {
 	valid := readEmbeddedFixture(t)
-	pack := strings.Replace(valid, "standard_rate: 0.17", "standard_ratee: 0.17", 1)
+	pack := strings.Replace(valid, "standard_rate: \"0.17\"", "standard_ratee: \"0.17\"", 1)
 
 	_, err := LoadFromFS(mapPack(pack), "testland@0.1")
 	if err == nil {
