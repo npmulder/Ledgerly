@@ -96,18 +96,35 @@ Dig deeper:
 
 ## Getting started (contributors)
 
-Ledgerly pins its entire toolchain with [mise](https://mise.jdx.dev) and automates chores with [Task](https://taskfile.dev):
+Ledgerly pins its toolchain with [mise](https://mise.jdx.dev) and automates chores with [Task](https://taskfile.dev).
+
+Install go-task with:
 
 ```sh
-git clone https://github.com/npmulder/Ledgerly.git
-cd Ledgerly
-mise install     # Go, Node, Python (+ venv), Task, golangci-lint, uv
-task setup       # one-time project setup
-task db:start    # PostgreSQL 16 via docker compose
-task --list      # see what's automated
+go install github.com/go-task/task/v3/cmd/task@latest
+```
+
+Current `task --list` output:
+
+```text
+task: Available tasks for this project:
+* build:       Build the ledgerly binary
+* lint:        Run Go formatting and vet checks
+* run:         Run the ledgerly skeleton
+* test:        Run Go tests
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full development guide, including the module-boundary rules every PR is held to.
+
+## Module directory convention
+
+Each module under `internal/<module>/` will use:
+
+- `api.go` for the public interface other modules may import
+- `events.go` for published event types
+- `service.go` for module orchestration
+- `store.go` for private persistence
+- `http.go` for REST handlers
 
 ## Contributing
 
