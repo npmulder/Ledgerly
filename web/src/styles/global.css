@@ -333,6 +333,51 @@
   font-size: 12px;
 }
 
+.clients-settings,
+.client-form {
+  display: grid;
+  gap: 14px;
+}
+
+.clients-table .ui-table {
+  min-width: 820px;
+}
+
+.client-list-name,
+.client-billing-summary {
+  display: grid;
+  gap: 3px;
+}
+
+.client-list-name span,
+.client-billing-summary {
+  color: var(--color-text-secondary);
+  font-size: var(--type-secondary-size);
+}
+
+.client-row-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.client-field-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.client-field-grid__wide {
+  grid-column: 1 / -1;
+}
+
+.client-address-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
 .problem-alert {
   display: grid;
   gap: 2px;
@@ -580,6 +625,8 @@
   }
 
   .company-field-grid,
+  .client-address-grid,
+  .client-field-grid,
   .registered-office-grid,
   .year-end-fields {
     grid-template-columns: 1fr;

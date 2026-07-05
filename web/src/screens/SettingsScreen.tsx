@@ -18,8 +18,19 @@ import {
   type IdentityProfile,
   type IdentityProfilePatch,
 } from "@/api/identity";
+import {
+  archiveInvoicingClient,
+  createInvoicingClient,
+  getInvoicingClients,
+  patchInvoicingClient,
+  type InvoicingClient,
+  type InvoicingClientRequest,
+  type InvoicingMoneyAmount,
+} from "@/api/invoicing";
 import { queryKeys } from "@/api/queryKeys";
 import {
+  AmountText,
+  Badge,
   Button,
   Card,
   EmptyState,
@@ -27,6 +38,12 @@ import {
   Input,
   PageTitle,
   Select,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeaderCell,
+  TableRow,
 } from "@/components";
 
 const settingsItems = [
@@ -81,6 +98,25 @@ type CompanyFormState = {
   yearEndMonth: string;
 };
 
+type ClientCurrency = InvoicingClient["default_currency"];
+type ClientVATTreatment = InvoicingClient["vat_treatment"];
+
+type ClientFormState = {
+  country: string;
+  dayRateAmount: string;
+  defaultCurrency: ClientCurrency;
+  line1: string;
+  line2: string;
+  locality: string;
+  name: string;
+  postalCode: string;
+  region: string;
+  retainerAmount: string;
+  termsDays: string;
+  vatNumber: string;
+  vatTreatment: ClientVATTreatment;
+};
+
 export function SettingsScreen() {
   return (
     <div className="settings-shell">
@@ -106,13 +142,17 @@ export function SettingsScreen() {
         <Routes>
           <Route index element={<Navigate replace to="company" />} />
           <Route path="company" element={<CompanySettings />} />
-          {settingsItems.slice(1).map((item) => (
-            <Route
-              element={<ComingSoonSettings title={item.title} />}
-              key={item.path}
-              path={item.path}
-            />
-          ))}
+          <Route path="clients" element={<ClientsSettings />} />
+          {settingsItems
+            .slice(1)
+            .filter((item) => item.path !== "clients")
+            .map((item) => (
+              <Route
+                element={<ComingSoonSettings title={item.title} />}
+                key={item.path}
+                path={item.path}
+              />
+            ))}
           <Route
             path="*"
             element={<ComingSoonSettings title="Settings not found" />}
@@ -473,6 +513,308 @@ function CompanySettings() {
   );
 }
 
+function ClientsSettings() {
+  const queryClient = useQueryClient();
+  const clientsQuery = useQuery({
+    queryFn: () => getInvoicingClients(false),
+    queryKey: queryKeys.invoicing.clients(false),
+  });
+  const clients = clientsQuery.data?.clients ?? [];
+  const [editingClientId, setEditingClientId] = useState<string | null>(null);
+  const [formDraft, setFormDraft] = useState<ClientFormState>(
+    emptyClientForm,
+  );
+
+  const saveMutation = useMutation({
+    mutationFn: (request: InvoicingClientRequest) =>
+      editingClientId
+        ? patchInvoicingClient(editingClientId, request)
+        : createInvoicingClient(request),
+    onSettled: () => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.invoicing.clients(false),
+      });
+    },
+    onSuccess: () => {
+      setEditingClientId(null);
+      setFormDraft(emptyClientForm());
+    },
+  });
+  const archiveMutation = useMutation({
+    mutationFn: archiveInvoicingClient,
+    onSettled: () => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.invoicing.clients(false),
+      });
+    },
+    onSuccess: (_result, id) => {
+      if (editingClientId === id) {
+        setEditingClientId(null);
+        setFormDraft(emptyClientForm());
+      }
+    },
+  });
+
+  const activeSaveProblem = isApiError(saveMutation.error)
+    ? saveMutation.error.problem
+    : null;
+  const activeArchiveProblem = isApiError(archiveMutation.error)
+    ? archiveMutation.error.problem
+    : null;
+
+  function handleAddClient() {
+    setEditingClientId(null);
+    setFormDraft(emptyClientForm());
+  }
+
+  function handleEditClient(client: InvoicingClient) {
+    setEditingClientId(client.id);
+    setFormDraft(clientToForm(client));
+  }
+
+  function handleClientFieldChange(field: keyof ClientFormState) {
+    return (event: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+      setFormDraft((current) => ({
+        ...current,
+        [field]: event.target.value,
+      }));
+    };
+  }
+
+  function handleClientSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    saveMutation.mutate(formToClientRequest(formDraft));
+  }
+
+  return (
+    <div className="settings-detail">
+      <PageTitle id="settings-page-title">Clients</PageTitle>
+      <Card
+        actions={
+          <Button onClick={handleAddClient} size="small" type="button">
+            + Add client
+          </Button>
+        }
+        title="Clients"
+      >
+        <div className="clients-settings">
+          {clientsQuery.isPending ? (
+            <p className="type-secondary">Loading clients.</p>
+          ) : null}
+          {clientsQuery.isError ? (
+            <ProblemAlert error={clientsQuery.error} />
+          ) : null}
+          {activeArchiveProblem ? (
+            <ProblemPanel problem={activeArchiveProblem} />
+          ) : null}
+          {!clientsQuery.isPending && clients.length === 0 ? (
+            <EmptyState icon="+" title="No clients">
+              Add a client before raising invoices.
+            </EmptyState>
+          ) : null}
+          {clients.length > 0 ? (
+            <Table className="clients-table">
+              <TableHead>
+                <TableRow>
+                  <TableHeaderCell>Client</TableHeaderCell>
+                  <TableHeaderCell>Currency</TableHeaderCell>
+                  <TableHeaderCell>Retainer / day-rate</TableHeaderCell>
+                  <TableHeaderCell>Terms + VAT</TableHeaderCell>
+                  <TableHeaderCell align="right">Actions</TableHeaderCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {clients.map((client) => (
+                  <TableRow key={client.id}>
+                    <TableCell>
+                      <div className="client-list-name">
+                        <strong>{client.name}</strong>
+                        <span>{clientAddressSummary(client)}</span>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <Badge
+                        variant={
+                          client.default_currency === "EUR" ? "paid" : "sent"
+                        }
+                      >
+                        {client.default_currency}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>{clientBillingSummary(client)}</TableCell>
+                    <TableCell>
+                      Net {client.terms_days} ·{" "}
+                      {vatTreatmentLabel(client.vat_treatment)}
+                    </TableCell>
+                    <TableCell align="right">
+                      <div className="client-row-actions">
+                        <Button
+                          onClick={() => handleEditClient(client)}
+                          size="small"
+                          type="button"
+                          variant="secondary"
+                        >
+                          Edit
+                        </Button>
+                        <Button
+                          disabled={archiveMutation.isPending}
+                          onClick={() => archiveMutation.mutate(client.id)}
+                          size="small"
+                          type="button"
+                          variant="secondary"
+                        >
+                          Archive
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          ) : null}
+        </div>
+      </Card>
+      <form className="settings-detail" onSubmit={handleClientSubmit}>
+        <Card
+          actions={
+            <Button disabled={saveMutation.isPending} size="small" type="submit">
+              {saveMutation.isPending ? "Saving" : "Save client"}
+            </Button>
+          }
+          title={editingClientId ? "Edit client" : "Add client"}
+        >
+          <div className="client-form">
+            {activeSaveProblem ? (
+              <ProblemPanel problem={activeSaveProblem} />
+            ) : null}
+            <div className="client-field-grid">
+              <Field label="Client name">
+                <Input
+                  name="name"
+                  onChange={handleClientFieldChange("name")}
+                  required
+                  value={formDraft.name}
+                />
+              </Field>
+              <Field label="Currency">
+                <Select
+                  name="default_currency"
+                  onChange={handleClientFieldChange("defaultCurrency")}
+                  value={formDraft.defaultCurrency}
+                >
+                  <option value="EUR">EUR</option>
+                  <option value="GBP">GBP</option>
+                </Select>
+              </Field>
+              <Field label="Terms">
+                <Select
+                  name="terms_days"
+                  onChange={handleClientFieldChange("termsDays")}
+                  value={formDraft.termsDays}
+                >
+                  <option value="14">Net 14</option>
+                  <option value="30">Net 30</option>
+                </Select>
+              </Field>
+              <Field label="VAT treatment">
+                <Select
+                  name="vat_treatment"
+                  onChange={handleClientFieldChange("vatTreatment")}
+                  value={formDraft.vatTreatment}
+                >
+                  <option value="domestic">Domestic</option>
+                  <option value="reverse-charge-eu-b2b">
+                    Reverse charge EU B2B
+                  </option>
+                </Select>
+              </Field>
+              <Field label="VAT number">
+                <Input
+                  name="vat_number"
+                  onChange={handleClientFieldChange("vatNumber")}
+                  value={formDraft.vatNumber}
+                />
+              </Field>
+              <Field label="Monthly retainer">
+                <Input
+                  inputMode="decimal"
+                  min="0"
+                  name="retainer_amount"
+                  onChange={handleClientFieldChange("retainerAmount")}
+                  step="0.01"
+                  type="number"
+                  value={formDraft.retainerAmount}
+                />
+              </Field>
+              <Field label="Day rate">
+                <Input
+                  inputMode="decimal"
+                  min="0"
+                  name="day_rate"
+                  onChange={handleClientFieldChange("dayRateAmount")}
+                  step="0.01"
+                  type="number"
+                  value={formDraft.dayRateAmount}
+                />
+              </Field>
+              <div className="ui-field client-field-grid__wide">
+                <span className="ui-field__label" id="client-address-label">
+                  Billing address
+                </span>
+                <div
+                  aria-labelledby="client-address-label"
+                  className="client-address-grid"
+                  role="group"
+                >
+                  <Input
+                    aria-label="Client address line 1"
+                    onChange={handleClientFieldChange("line1")}
+                    placeholder="Address line 1"
+                    required
+                    value={formDraft.line1}
+                  />
+                  <Input
+                    aria-label="Client address line 2"
+                    onChange={handleClientFieldChange("line2")}
+                    placeholder="Address line 2"
+                    value={formDraft.line2}
+                  />
+                  <Input
+                    aria-label="Client address locality"
+                    onChange={handleClientFieldChange("locality")}
+                    placeholder="Town or city"
+                    required
+                    value={formDraft.locality}
+                  />
+                  <Input
+                    aria-label="Client address region"
+                    onChange={handleClientFieldChange("region")}
+                    placeholder="Region"
+                    value={formDraft.region}
+                  />
+                  <Input
+                    aria-label="Client address postal code"
+                    onChange={handleClientFieldChange("postalCode")}
+                    placeholder="Postcode"
+                    value={formDraft.postalCode}
+                  />
+                  <Input
+                    aria-label="Client address country"
+                    onChange={handleClientFieldChange("country")}
+                    placeholder="Country code"
+                    required
+                    value={formDraft.country}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        </Card>
+      </form>
+    </div>
+  );
+}
+
 function ComingSoonSettings({ title }: { readonly title: string }) {
   return (
     <div className="settings-detail">
@@ -594,6 +936,179 @@ function formatYearEnd(profile: IdentityProfile | undefined) {
     monthOptions.find((option) => option.value === profile.year_end.month)
       ?.label ?? String(profile.year_end.month);
   return `Year end ${profile.year_end.day} ${month}`;
+}
+
+function emptyClientForm(): ClientFormState {
+  return {
+    country: "",
+    dayRateAmount: "",
+    defaultCurrency: "GBP",
+    line1: "",
+    line2: "",
+    locality: "",
+    name: "",
+    postalCode: "",
+    region: "",
+    retainerAmount: "",
+    termsDays: "30",
+    vatNumber: "",
+    vatTreatment: "domestic",
+  };
+}
+
+function clientToForm(client: InvoicingClient): ClientFormState {
+  return {
+    country: client.address.country,
+    dayRateAmount: moneyInputValue(client.day_rate),
+    defaultCurrency: client.default_currency,
+    line1: client.address.line1,
+    line2: client.address.line2,
+    locality: client.address.locality,
+    name: client.name,
+    postalCode: client.address.postal_code,
+    region: client.address.region,
+    retainerAmount: moneyInputValue(client.retainer_amount),
+    termsDays: String(client.terms_days),
+    vatNumber: client.vat_number ?? "",
+    vatTreatment: client.vat_treatment,
+  };
+}
+
+function formToClientRequest(form: ClientFormState): InvoicingClientRequest {
+  return {
+    address: {
+      country: form.country.trim(),
+      line1: form.line1.trim(),
+      line2: form.line2.trim(),
+      locality: form.locality.trim(),
+      postal_code: form.postalCode.trim(),
+      region: form.region.trim(),
+    },
+    day_rate: moneyFromInput(form.dayRateAmount, form.defaultCurrency),
+    default_currency: form.defaultCurrency,
+    name: form.name.trim(),
+    retainer_amount: moneyFromInput(
+      form.retainerAmount,
+      form.defaultCurrency,
+    ),
+    terms_days: clientTermsDays(form.termsDays),
+    vat_number: form.vatNumber.trim() || null,
+    vat_treatment: form.vatTreatment,
+  };
+}
+
+function moneyFromInput(
+  value: string,
+  currency: ClientCurrency,
+): InvoicingMoneyAmount | null {
+  const amountMinor = parseMoneyInput(value);
+  if (amountMinor === null) {
+    return null;
+  }
+  return {
+    amount_minor: amountMinor,
+    currency,
+  };
+}
+
+function clientTermsDays(value: string): InvoicingClientRequest["terms_days"] {
+  return value === "14" ? 14 : 30;
+}
+
+function parseMoneyInput(value: string) {
+  const trimmed = value.trim();
+  if (trimmed === "") {
+    return null;
+  }
+  const match = /^(\d+)(?:\.(\d{0,2}))?$/.exec(trimmed);
+  if (!match) {
+    return 0;
+  }
+  const whole = Number(match[1]);
+  const fractional = Number((match[2] ?? "").padEnd(2, "0"));
+  if (!Number.isSafeInteger(whole) || !Number.isSafeInteger(fractional)) {
+    return 0;
+  }
+  return whole * 100 + fractional;
+}
+
+function moneyInputValue(amount: InvoicingMoneyAmount | null) {
+  if (!amount) {
+    return "";
+  }
+  const sign = amount.amount_minor < 0 ? "-" : "";
+  const absolute = Math.abs(amount.amount_minor);
+  const whole = Math.floor(absolute / 100);
+  const fractional = String(absolute % 100).padStart(2, "0");
+  return `${sign}${whole}.${fractional}`;
+}
+
+function clientBillingSummary(client: InvoicingClient) {
+  const items = [];
+  if (client.retainer_amount) {
+    items.push(
+      <span key="retainer">
+        Retainer <MoneyAmountText amount={client.retainer_amount} /> / month
+      </span>,
+    );
+  }
+  if (client.day_rate) {
+    items.push(
+      <span key="day-rate">
+        Day rate <MoneyAmountText amount={client.day_rate} /> / day
+      </span>,
+    );
+  }
+  if (items.length === 0) {
+    return <span className="type-secondary">Ad-hoc</span>;
+  }
+  return <div className="client-billing-summary">{items}</div>;
+}
+
+function MoneyAmountText({
+  amount,
+}: {
+  readonly amount: InvoicingMoneyAmount;
+}) {
+  return (
+    <AmountText
+      amountMinor={amount.amount_minor}
+      currency={amount.currency}
+    />
+  );
+}
+
+function clientAddressSummary(client: InvoicingClient) {
+  const place = [
+    client.address.locality,
+    countryName(client.address.country),
+  ].filter(Boolean);
+  const vat = client.vat_number ? `VAT ${client.vat_number}` : "";
+  return [...place, vat].filter(Boolean).join(" · ");
+}
+
+function countryName(country: string) {
+  switch (country.toUpperCase()) {
+    case "DE":
+      return "Germany";
+    case "GB":
+      return "United Kingdom";
+    case "IM":
+      return "Isle of Man";
+    default:
+      return country.toUpperCase();
+  }
+}
+
+function vatTreatmentLabel(treatment: ClientVATTreatment) {
+  switch (treatment) {
+    case "reverse-charge-eu-b2b":
+      return "reverse charge";
+    case "domestic":
+      return "domestic";
+    default:
+      return treatment;
+  }
 }
 
 function initialFor(value: string) {

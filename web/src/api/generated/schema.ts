@@ -145,6 +145,59 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/invoicing/clients": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List clients */
+        get: operations["invoicingListClients"];
+        put?: never;
+        /** Create a client */
+        post: operations["invoicingCreateClient"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/invoicing/clients/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Return a client */
+        get: operations["invoicingGetClient"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Partially update a client */
+        patch: operations["invoicingPatchClient"];
+        trace?: never;
+    };
+    "/api/invoicing/clients/{id}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Archive a client */
+        post: operations["invoicingArchiveClient"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/healthz": {
         parameters: {
             query?: never;
@@ -331,6 +384,67 @@ export interface components {
             /** Format: int64 */
             id: number;
             name: string;
+        };
+        InvoicingAddress: {
+            country: string;
+            line1: string;
+            line2: string;
+            locality: string;
+            postal_code: string;
+            region: string;
+        };
+        InvoicingClient: {
+            address: components["schemas"]["InvoicingAddress"];
+            /** Format: date-time */
+            archived_at: string | null;
+            /** Format: date-time */
+            created_at: string;
+            day_rate: components["schemas"]["InvoicingMoneyAmount"] | null;
+            /** @enum {string} */
+            default_currency: "EUR" | "GBP";
+            id: string;
+            name: string;
+            retainer_amount: components["schemas"]["InvoicingMoneyAmount"] | null;
+            /** @enum {integer} */
+            terms_days: 14 | 30;
+            vat_number: string | null;
+            /** @enum {string} */
+            vat_treatment: "domestic" | "reverse-charge-eu-b2b";
+        };
+        InvoicingClientPatch: {
+            address?: components["schemas"]["InvoicingAddress"];
+            day_rate?: components["schemas"]["InvoicingMoneyAmount"] | null;
+            /** @enum {string} */
+            default_currency?: "EUR" | "GBP";
+            name?: string;
+            retainer_amount?: components["schemas"]["InvoicingMoneyAmount"] | null;
+            /** @enum {integer} */
+            terms_days?: 14 | 30;
+            vat_number?: string | null;
+            /** @enum {string} */
+            vat_treatment?: "domestic" | "reverse-charge-eu-b2b";
+        };
+        InvoicingClientRequest: {
+            address: components["schemas"]["InvoicingAddress"];
+            day_rate?: components["schemas"]["InvoicingMoneyAmount"] | null;
+            /** @enum {string} */
+            default_currency: "EUR" | "GBP";
+            name: string;
+            retainer_amount?: components["schemas"]["InvoicingMoneyAmount"] | null;
+            /** @enum {integer} */
+            terms_days: 14 | 30;
+            vat_number?: string | null;
+            /** @enum {string} */
+            vat_treatment: "domestic" | "reverse-charge-eu-b2b";
+        };
+        InvoicingClientsResponse: {
+            clients: components["schemas"]["InvoicingClient"][];
+        };
+        InvoicingMoneyAmount: {
+            /** Format: int64 */
+            amount_minor: number;
+            /** @enum {string} */
+            currency: "EUR" | "GBP";
         };
         Problem: {
             detail?: string;
@@ -799,6 +913,265 @@ export interface operations {
             };
             /** @description Registration request body is too large */
             413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    invoicingListClients: {
+        parameters: {
+            query?: {
+                /** @description Include soft-archived clients for history views. */
+                include_archived?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Clients listed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvoicingClientsResponse"];
+                };
+            };
+            /** @description Invalid query */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    invoicingCreateClient: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InvoicingClientRequest"];
+            };
+        };
+        responses: {
+            /** @description Client created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvoicingClient"];
+                };
+            };
+            /** @description Malformed client request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Client request body is too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Client validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ValidationProblem"];
+                };
+            };
+        };
+    };
+    invoicingGetClient: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Client */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvoicingClient"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Client was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    invoicingPatchClient: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InvoicingClientPatch"];
+            };
+        };
+        responses: {
+            /** @description Updated client */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvoicingClient"];
+                };
+            };
+            /** @description Malformed client patch */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Client was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Client currency is locked */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Client patch request body is too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Client validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ValidationProblem"];
+                };
+            };
+        };
+    };
+    invoicingArchiveClient: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Client archived */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Client was not found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

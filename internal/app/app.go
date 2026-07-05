@@ -21,6 +21,7 @@ import (
 
 	"github.com/npmulder/ledgerly/internal/demo"
 	"github.com/npmulder/ledgerly/internal/identity"
+	"github.com/npmulder/ledgerly/internal/invoicing"
 	"github.com/npmulder/ledgerly/internal/platform/bus"
 	"github.com/npmulder/ledgerly/internal/platform/clock"
 	"github.com/npmulder/ledgerly/internal/platform/config"
@@ -47,10 +48,11 @@ type ModuleBuilder func(context.Context, ModuleDeps) (Module, error)
 
 // ModuleDeps are the platform dependencies available to module builders.
 type ModuleDeps struct {
-	Logger   *slog.Logger
-	Clock    clock.Clock
-	Bus      *bus.Bus
-	DemoPool *pgxpool.Pool
+	Logger        *slog.Logger
+	Clock         clock.Clock
+	Bus           *bus.Bus
+	DemoPool      *pgxpool.Pool
+	InvoicingPool *pgxpool.Pool
 }
 
 // Module is a module contribution to the HTTP router and in-process bus.
@@ -69,8 +71,9 @@ type Dependencies struct {
 	HealthDB     httpserver.Pinger
 	HealthCloser io.Closer
 
-	IdentityPool *pgxpool.Pool
-	DemoPool     *pgxpool.Pool
+	IdentityPool  *pgxpool.Pool
+	DemoPool      *pgxpool.Pool
+	InvoicingPool *pgxpool.Pool
 
 	Bus        *bus.Bus
 	BusOptions []bus.Option
@@ -102,6 +105,7 @@ type App struct {
 	HealthDB        httpserver.Pinger
 	IdentityPool    *pgxpool.Pool
 	DemoPool        *pgxpool.Pool
+	InvoicingPool   *pgxpool.Pool
 	IdentityService *identity.Service
 
 	jobs   map[string]Job
@@ -148,6 +152,10 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 	if err != nil {
 		return nil, err
 	}
+	invoicingPool, err := modulePool(ctx, cfg.Runtime.DatabaseURL, invoicing.ModuleName, deps.InvoicingPool, openPool, &closeFuncs)
+	if err != nil {
+		return nil, err
+	}
 
 	eventBus := deps.Bus
 	if eventBus == nil {
@@ -174,15 +182,36 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 	modules := []httpserver.Module{identity.HTTPModule(identityHandler)}
 	fragments := []httpserver.OpenAPIFragment{identity.OpenAPIFragment()}
 
+	invoicingBuilder := buildInvoicingModule
+	if deps.ModuleBuilders != nil && deps.ModuleBuilders[invoicing.ModuleName] != nil {
+		invoicingBuilder = deps.ModuleBuilders[invoicing.ModuleName]
+	}
+	invoicingModule, err := invoicingBuilder(ctx, ModuleDeps{
+		Logger:        logger,
+		Clock:         clk,
+		Bus:           eventBus,
+		DemoPool:      demoPool,
+		InvoicingPool: invoicingPool,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if invoicingModule.SubscribeEvents != nil {
+		invoicingModule.SubscribeEvents(eventBus)
+	}
+	modules = append(modules, invoicingModule.HTTPModule)
+	fragments = append(fragments, invoicingModule.OpenAPIFragment)
+
 	demoBuilder := buildDemoModule
 	if deps.ModuleBuilders != nil && deps.ModuleBuilders[demo.ModuleName] != nil {
 		demoBuilder = deps.ModuleBuilders[demo.ModuleName]
 	}
 	demoModule, err := demoBuilder(ctx, ModuleDeps{
-		Logger:   logger,
-		Clock:    clk,
-		Bus:      eventBus,
-		DemoPool: demoPool,
+		Logger:        logger,
+		Clock:         clk,
+		Bus:           eventBus,
+		DemoPool:      demoPool,
+		InvoicingPool: invoicingPool,
 	})
 	if err != nil {
 		return nil, err
@@ -216,6 +245,7 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		HealthDB:        healthDB,
 		IdentityPool:    identityPool,
 		DemoPool:        demoPool,
+		InvoicingPool:   invoicingPool,
 		IdentityService: identityService,
 		jobs:            copyJobs(deps.Jobs),
 		closer: func() error {
@@ -233,8 +263,22 @@ func OpenAPIDocument(version string) map[string]any {
 	return httpserver.OpenAPIDocument(
 		version,
 		identity.OpenAPIFragment(),
+		invoicing.OpenAPIFragment(),
 		demo.OpenAPIFragment(),
 	)
+}
+
+func buildInvoicingModule(_ context.Context, deps ModuleDeps) (Module, error) {
+	invoicingModule, err := invoicing.New(invoicing.Config{
+		Pool: deps.InvoicingPool,
+	})
+	if err != nil {
+		return Module{}, err
+	}
+	return Module{
+		HTTPModule:      invoicingModule.HTTPModule(),
+		OpenAPIFragment: invoicingModule.OpenAPIFragment(),
+	}, nil
 }
 
 func buildDemoModule(_ context.Context, deps ModuleDeps) (Module, error) {
