@@ -86,6 +86,8 @@ type Dependencies struct {
 	IdentityHTTPOptions    []identity.HTTPOption
 	IdentityProfileOptions []identity.ProfileOption
 
+	JurisdictionLoader func(string) error
+
 	ModuleBuilders map[string]ModuleBuilder
 
 	Jobs map[string]Job
@@ -119,6 +121,14 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 	clk := deps.Clock
 	if clk == nil {
 		clk = clock.New()
+	}
+
+	loadJurisdiction := deps.JurisdictionLoader
+	if loadJurisdiction == nil {
+		loadJurisdiction = jurisdiction.LoadActive
+	}
+	if err := loadJurisdiction(cfg.Runtime.Jurisdiction); err != nil {
+		return nil, fmt.Errorf("load jurisdiction pack: %w", err)
 	}
 
 	var closeFuncs []func() error

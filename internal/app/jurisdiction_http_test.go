@@ -13,6 +13,7 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/npmulder/ledgerly/internal/identity"
 	"github.com/npmulder/ledgerly/internal/jurisdiction"
 	httpserver "github.com/npmulder/ledgerly/internal/platform/http"
 )
@@ -101,6 +102,34 @@ func TestJurisdictionDeadlinesEndpointUsesCompanyFacts(t *testing.T) {
 	}
 }
 
+func TestJurisdictionDeadlinesEndpointMapsMissingProfileToNotFound(t *testing.T) {
+	if err := jurisdiction.LoadActive(jurisdiction.DefaultSelector); err != nil {
+		t.Fatalf("LoadActive() error = %v", err)
+	}
+	router := newJurisdictionTestRouterWithProvider(
+		t,
+		func(context.Context) (jurisdiction.CompanyFacts, error) {
+			return jurisdiction.CompanyFacts{}, identity.ErrProfileNotFound
+		},
+		fixedJurisdictionClock{},
+	)
+
+	response := performJurisdictionRequest(router, nethttp.MethodGet, "/api/jurisdiction/deadlines", true)
+	if response.Code != nethttp.StatusNotFound {
+		t.Fatalf("deadlines status = %d, want %d; body=%s", response.Code, nethttp.StatusNotFound, response.Body.String())
+	}
+	if got := response.Header().Get("Content-Type"); got != httpserver.ProblemContentType {
+		t.Fatalf("Content-Type = %q, want %s", got, httpserver.ProblemContentType)
+	}
+	var problem httpserver.Problem
+	if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil {
+		t.Fatalf("decode problem response: %v; body=%s", err, response.Body.String())
+	}
+	if problem.Detail != "company profile was not found" {
+		t.Fatalf("problem detail = %q, want company profile was not found", problem.Detail)
+	}
+}
+
 func TestJurisdictionRoutesRequireAuthentication(t *testing.T) {
 	if err := jurisdiction.LoadActive(jurisdiction.DefaultSelector); err != nil {
 		t.Fatalf("LoadActive() error = %v", err)
@@ -121,15 +150,26 @@ func TestJurisdictionRoutesRequireAuthentication(t *testing.T) {
 func newJurisdictionTestRouter(t *testing.T, facts jurisdiction.CompanyFacts, clock jurisdiction.Clock) nethttp.Handler {
 	t.Helper()
 
+	return newJurisdictionTestRouterWithProvider(
+		t,
+		func(context.Context) (jurisdiction.CompanyFacts, error) { return facts, nil },
+		clock,
+	)
+}
+
+func newJurisdictionTestRouterWithProvider(
+	t *testing.T,
+	companyFacts jurisdictionCompanyFactsFunc,
+	clock jurisdiction.Clock,
+) nethttp.Handler {
+	t.Helper()
+
 	router := httpserver.NewRouter(httpserver.Config{
 		Version: "test",
 		DB:      pingerFunc(func(context.Context) error { return nil }),
 		APIAuth: testAuthMiddleware,
 		Modules: []httpserver.Module{
-			jurisdictionHTTPModule(
-				func(context.Context) (jurisdiction.CompanyFacts, error) { return facts, nil },
-				clock,
-			),
+			jurisdictionHTTPModule(companyFacts, clock),
 		},
 		OpenAPIFragments: []httpserver.OpenAPIFragment{jurisdictionOpenAPIFragment()},
 	})

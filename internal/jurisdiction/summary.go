@@ -62,6 +62,14 @@ func packOverview(pack *Pack) (PackOverview, error) {
 	if err != nil {
 		return PackOverview{}, fmt.Errorf("VAT summary: %w", err)
 	}
+	annualReturn, err := requiredFiling(pack.Filings, ruleSummaryAnnualReturn)
+	if err != nil {
+		return PackOverview{}, err
+	}
+	companyTaxReturn, err := requiredFiling(pack.Filings, ruleSummaryCompanyTax)
+	if err != nil {
+		return PackOverview{}, err
+	}
 
 	return PackOverview{
 		Meta: pack.Meta,
@@ -88,8 +96,8 @@ func packOverview(pack *Pack) (PackOverview, error) {
 				Label:   "VAT",
 				Summary: fmt.Sprintf("VAT %s via %s; %s (%s)", formatRatePercent(vat.StandardRate), pack.Tax.VAT.Authority, formatReverseCharge(pack.Tax.VAT.ReverseCharge), vatYear),
 			},
-			filingSummary(ruleSummaryAnnualReturn, "Annual return", pack.Filings["annual_return"]),
-			filingSummary(ruleSummaryCompanyTax, "Company tax return", pack.Filings["company_tax_return"]),
+			filingSummary(ruleSummaryAnnualReturn, "Annual return", annualReturn),
+			filingSummary(ruleSummaryCompanyTax, "Company tax return", companyTaxReturn),
 			{
 				ID:      ruleSummaryDirectorLoan,
 				Label:   "Director loan account",
@@ -97,6 +105,14 @@ func packOverview(pack *Pack) (PackOverview, error) {
 			},
 		},
 	}, nil
+}
+
+func requiredFiling(filings map[string]Filing, key string) (Filing, error) {
+	filing, ok := filings[key]
+	if !ok {
+		return Filing{}, fmt.Errorf("jurisdiction: required filing %q is not configured", key)
+	}
+	return filing, nil
 }
 
 type orderedYear interface {

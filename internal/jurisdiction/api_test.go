@@ -2,6 +2,7 @@ package jurisdiction
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -281,6 +282,26 @@ func TestActivePackOverviewReturnsIsleOfManSummaries(t *testing.T) {
 	}
 	if len(want) > 0 {
 		t.Fatalf("missing summaries: %#v", want)
+	}
+}
+
+func TestPackOverviewRequiresSummaryFilingKeys(t *testing.T) {
+	for _, key := range []string{ruleSummaryAnnualReturn, ruleSummaryCompanyTax} {
+		t.Run(key, func(t *testing.T) {
+			pack, err := LoadFromFS(testFixtureFS(t), "testland@0.1")
+			if err != nil {
+				t.Fatalf("LoadFromFS() error = %v", err)
+			}
+			delete(pack.Filings, key)
+
+			_, err = packOverview(pack)
+			if err == nil {
+				t.Fatal("packOverview() error = nil, want missing filing error")
+			}
+			if !strings.Contains(err.Error(), `required filing "`+key+`" is not configured`) {
+				t.Fatalf("packOverview() error = %q, want missing %s filing", err, key)
+			}
+		})
 	}
 }
 

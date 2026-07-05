@@ -3,17 +3,21 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	nethttp "net/http"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/npmulder/ledgerly/internal/identity"
 	"github.com/npmulder/ledgerly/internal/jurisdiction"
 	httpserver "github.com/npmulder/ledgerly/internal/platform/http"
 )
 
 const jurisdictionModuleName = "jurisdiction"
+
+const jurisdictionProblemTypeNotFound = "https://ledgerly.local/problems/not-found"
 
 type jurisdictionCompanyFactsFunc func(context.Context) (jurisdiction.CompanyFacts, error)
 
@@ -84,6 +88,15 @@ func (h jurisdictionHTTPHandler) getDeadlines(w nethttp.ResponseWriter, r *netht
 
 	facts, err := h.companyFacts(r.Context())
 	if err != nil {
+		if errors.Is(err, identity.ErrProfileNotFound) {
+			httpserver.WriteProblem(w, r, httpserver.Problem{
+				Type:   jurisdictionProblemTypeNotFound,
+				Title:  nethttp.StatusText(nethttp.StatusNotFound),
+				Status: nethttp.StatusNotFound,
+				Detail: "company profile was not found",
+			})
+			return
+		}
 		httpserver.WriteError(w, r, err)
 		return
 	}
