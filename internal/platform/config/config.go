@@ -14,13 +14,16 @@ const (
 	Prefix = "LEDGERLY_"
 
 	DefaultHTTPAddr = ":8080"
+
+	DefaultJurisdiction = "isle-of-man@1.0"
 )
 
 const (
-	keyDatabaseURL = Prefix + "DATABASE_URL"
-	keyHTTPAddr    = Prefix + "HTTP_ADDR"
-	keyEnv         = Prefix + "ENV"
-	keyLogLevel    = Prefix + "LOG_LEVEL"
+	keyDatabaseURL  = Prefix + "DATABASE_URL"
+	keyHTTPAddr     = Prefix + "HTTP_ADDR"
+	keyEnv          = Prefix + "ENV"
+	keyLogLevel     = Prefix + "LOG_LEVEL"
+	keyJurisdiction = Prefix + "JURISDICTION"
 )
 
 // Env describes the runtime environment.
@@ -33,10 +36,11 @@ const (
 
 // Config contains all runtime configuration required by the application shell.
 type Config struct {
-	DatabaseURL string
-	HTTPAddr    string
-	Env         Env
-	LogLevel    slog.Level
+	DatabaseURL  string
+	HTTPAddr     string
+	Env          Env
+	LogLevel     slog.Level
+	Jurisdiction string
 }
 
 // Load reads configuration from process environment variables.
@@ -83,11 +87,17 @@ func LoadFrom(lookup func(string) (string, bool)) (Config, error) {
 		httpAddr = DefaultHTTPAddr
 	}
 
+	jurisdiction, ok := nonEmptyEnv(lookup, keyJurisdiction)
+	if !ok {
+		jurisdiction = DefaultJurisdiction
+	}
+
 	return Config{
-		DatabaseURL: databaseURL,
-		HTTPAddr:    httpAddr,
-		Env:         env,
-		LogLevel:    logLevel,
+		DatabaseURL:  databaseURL,
+		HTTPAddr:     httpAddr,
+		Env:          env,
+		LogLevel:     logLevel,
+		Jurisdiction: jurisdiction,
 	}, nil
 }
 
