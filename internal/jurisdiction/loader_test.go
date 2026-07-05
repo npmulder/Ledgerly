@@ -1,6 +1,7 @@
 package jurisdiction
 
 import (
+	"embed"
 	"errors"
 	"io/fs"
 	"os"
@@ -10,8 +11,11 @@ import (
 	"testing/fstest"
 )
 
+//go:embed testdata/packs/*/*/pack.yaml
+var embeddedTestFixtures embed.FS
+
 func TestLoadFromFSEmbeddedFixture(t *testing.T) {
-	pack, err := LoadFromFS(embeddedPacks, "testland@0.1")
+	pack, err := LoadFromFS(testFixtureFS(t), "testland@0.1")
 	if err != nil {
 		t.Fatalf("LoadFromFS() error = %v", err)
 	}
@@ -55,13 +59,31 @@ func TestLoadFromFSEmbeddedFixture(t *testing.T) {
 }
 
 func TestLoadActiveInstallsActivePackMeta(t *testing.T) {
-	if err := LoadActiveFromFS(embeddedPacks, "testland@0.1"); err != nil {
+	if err := LoadActiveFromFS(testFixtureFS(t), "testland@0.1"); err != nil {
 		t.Fatalf("LoadActiveFromFS() error = %v", err)
 	}
 
 	meta := ActivePack()
 	if meta.ID != "testland" || meta.Version != "0.1" || meta.Name != "Testland" || meta.Currency != "TST" {
 		t.Fatalf("ActivePack() = %#v, want testland metadata", meta)
+	}
+}
+
+func TestEmbeddedPacksExcludeTestlandFixture(t *testing.T) {
+	_, err := LoadFromFS(embeddedPacks, "testland@0.1")
+	if err == nil {
+		t.Fatal("LoadFromFS() error = nil, want missing production pack error")
+	}
+
+	var validationErr ValidationError
+	if !errors.As(err, &validationErr) {
+		t.Fatalf("LoadFromFS() error type = %T, want ValidationError", err)
+	}
+	if validationErr.File != PackPath("testland", "0.1") {
+		t.Fatalf("ValidationError.File = %q, want %q", validationErr.File, PackPath("testland", "0.1"))
+	}
+	if !strings.Contains(validationErr.Message, "read embedded pack") {
+		t.Fatalf("ValidationError.Message = %q, want missing pack read error", validationErr.Message)
 	}
 }
 
@@ -161,10 +183,44 @@ func TestValidationFailuresNameFilePathAndField(t *testing.T) {
 	}
 }
 
+func TestLoadFromFSRejectsUnknownVATYearField(t *testing.T) {
+	valid := readEmbeddedFixture(t)
+	pack := strings.Replace(valid, "standard_rate: 0.17", "standard_ratee: 0.17", 1)
+
+	_, err := LoadFromFS(mapPack(pack), "testland@0.1")
+	if err == nil {
+		t.Fatal("LoadFromFS() error = nil, want unknown VAT year field error")
+	}
+
+	var validationErr ValidationError
+	if !errors.As(err, &validationErr) {
+		t.Fatalf("LoadFromFS() error type = %T, want ValidationError", err)
+	}
+	if validationErr.File != PackPath("testland", "0.1") {
+		t.Fatalf("ValidationError.File = %q, want %q", validationErr.File, PackPath("testland", "0.1"))
+	}
+	if validationErr.Path != "pack" || validationErr.Field != "yaml" {
+		t.Fatalf("ValidationError path/field = %q/%q, want pack/yaml", validationErr.Path, validationErr.Field)
+	}
+	if !strings.Contains(validationErr.Message, `unknown vat year field "standard_ratee"`) {
+		t.Fatalf("ValidationError.Message = %q, want unknown VAT field", validationErr.Message)
+	}
+}
+
+func testFixtureFS(t *testing.T) fs.FS {
+	t.Helper()
+
+	files, err := fs.Sub(embeddedTestFixtures, "testdata")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return files
+}
+
 func readEmbeddedFixture(t *testing.T) string {
 	t.Helper()
 
-	data, err := fs.ReadFile(embeddedPacks, PackPath("testland", "0.1"))
+	data, err := fs.ReadFile(testFixtureFS(t), PackPath("testland", "0.1"))
 	if err != nil {
 		t.Fatal(err)
 	}

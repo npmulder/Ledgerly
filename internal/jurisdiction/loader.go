@@ -14,7 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-//go:embed packs/*/*/pack.yaml
+//go:embed packs
 var embeddedPacks embed.FS
 
 var (
