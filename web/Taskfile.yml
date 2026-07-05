@@ -1,0 +1,27 @@
+version: "3"
+
+tasks:
+  dev:
+    desc: Start the Vite development server
+    cmds:
+      - npm run dev -- {{.CLI_ARGS}}
+
+  build:
+    desc: Build the React SPA
+    cmds:
+      - npm run build
+
+  test:
+    desc: Run frontend tests
+    cmds:
+      - npm run test
+
+  lint:
+    desc: Run frontend lint checks
+    cmds:
+      - npm run lint
+
+  typecheck:
+    desc: Run frontend TypeScript checks
+    cmds:
+      - npm run typecheck
