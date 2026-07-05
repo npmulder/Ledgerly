@@ -8,6 +8,7 @@ import (
 	nethttp "net/http"
 	"net/http/httptest"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -217,6 +218,90 @@ func TestAPIAuthMiddlewareWrapsModuleRoutes(t *testing.T) {
 	}
 	if got := response.Header().Get("X-API-Auth"); got != "checked" {
 		t.Fatalf("X-API-Auth = %q, want checked", got)
+	}
+}
+
+func TestSPAServesIndexForRootAndDeepLinks(t *testing.T) {
+	router := NewRouter(Config{
+		StaticAssets: fstest.MapFS{
+			"index.html": {Data: []byte("<!doctype html><title>Ledgerly</title>")},
+		},
+	})
+
+	for _, route := range []string{"/", "/invoices"} {
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest(nethttp.MethodGet, route, nil))
+
+		if response.Code != nethttp.StatusOK {
+			t.Fatalf("%s status = %d, want %d; body=%s", route, response.Code, nethttp.StatusOK, response.Body.String())
+		}
+		if got := response.Header().Get("Cache-Control"); got != cacheControlNoCache {
+			t.Fatalf("%s Cache-Control = %q, want %q", route, got, cacheControlNoCache)
+		}
+		if got := response.Body.String(); got != "<!doctype html><title>Ledgerly</title>" {
+			t.Fatalf("%s body = %q", route, got)
+		}
+	}
+}
+
+func TestSPAServesHashedAssetsWithImmutableCache(t *testing.T) {
+	router := NewRouter(Config{
+		StaticAssets: fstest.MapFS{
+			"index.html":                  {Data: []byte("<!doctype html>")},
+			"assets/app-a1b2c3d4ef.js":    {Data: []byte("console.log('ledgerly');")},
+			"assets/style-a1b2c3d4ef.css": {Data: []byte("body { color: black; }")},
+		},
+	})
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(nethttp.MethodGet, "/assets/app-a1b2c3d4ef.js", nil))
+
+	if response.Code != nethttp.StatusOK {
+		t.Fatalf("asset status = %d, want %d; body=%s", response.Code, nethttp.StatusOK, response.Body.String())
+	}
+	if got := response.Header().Get("Cache-Control"); got != cacheControlImmutable {
+		t.Fatalf("Cache-Control = %q, want %q", got, cacheControlImmutable)
+	}
+	if got := response.Body.String(); got != "console.log('ledgerly');" {
+		t.Fatalf("asset body = %q", got)
+	}
+}
+
+func TestSPADoesNotHandleAPIRoutes(t *testing.T) {
+	router := NewRouter(Config{
+		StaticAssets: fstest.MapFS{
+			"index.html": {Data: []byte("<!doctype html><title>Ledgerly</title>")},
+		},
+	})
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(nethttp.MethodGet, "/api/missing", nil))
+
+	if response.Code != nethttp.StatusNotFound {
+		t.Fatalf("/api/missing status = %d, want %d; body=%s", response.Code, nethttp.StatusNotFound, response.Body.String())
+	}
+	if response.Body.String() == "<!doctype html><title>Ledgerly</title>" {
+		t.Fatal("/api/missing served the SPA index")
+	}
+}
+
+func TestHealthzRouteWinsWhenSPAConfigured(t *testing.T) {
+	router := NewRouter(Config{
+		Version: "test-version",
+		DB:      pingerFunc(func(context.Context) error { return nil }),
+		StaticAssets: fstest.MapFS{
+			"index.html": {Data: []byte("<!doctype html><title>Ledgerly</title>")},
+		},
+	})
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(nethttp.MethodGet, "/healthz", nil))
+
+	if response.Code != nethttp.StatusOK {
+		t.Fatalf("/healthz status = %d, want %d; body=%s", response.Code, nethttp.StatusOK, response.Body.String())
+	}
+	if got := response.Header().Get("Content-Type"); got != "application/json" {
+		t.Fatalf("Content-Type = %q, want application/json", got)
 	}
 }
 

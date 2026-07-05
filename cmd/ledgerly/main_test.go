@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -45,6 +46,35 @@ func TestRunRejectsUnexpectedArguments(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "usage: ledgerly migrate") {
 		t.Fatalf("run() error = %q, want migrate usage error", err)
+	}
+}
+
+func TestRunPrintsOpenAPIDocument(t *testing.T) {
+	restore := setVersionForTest("test-sha")
+	defer restore()
+
+	var stdout bytes.Buffer
+	if err := run(context.Background(), []string{"openapi"}, &stdout); err != nil {
+		t.Fatalf("run() error = %v", err)
+	}
+
+	var document map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &document); err != nil {
+		t.Fatalf("openapi output is not JSON: %v; body=%s", err, stdout.String())
+	}
+	info, ok := document["info"].(map[string]any)
+	if !ok {
+		t.Fatalf("openapi info missing or wrong type: %+v", document["info"])
+	}
+	if got := info["version"]; got != "test-sha" {
+		t.Fatalf("openapi version = %v, want test-sha", got)
+	}
+	paths, ok := document["paths"].(map[string]any)
+	if !ok {
+		t.Fatalf("openapi paths missing or wrong type: %+v", document["paths"])
+	}
+	if _, ok := paths["/api/identity/login"]; !ok {
+		t.Fatalf("openapi paths missing /api/identity/login: %+v", paths)
 	}
 }
 
