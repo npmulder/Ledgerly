@@ -1,9 +1,14 @@
 package identity
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"image"
+	"image/color"
+	"image/jpeg"
+	"image/png"
 	"io"
 	"log/slog"
 	"os"
@@ -64,6 +69,29 @@ func TestSeedMigrationCreatesNPMFixture(t *testing.T) {
 		t.Fatalf("Profile() error = %v", err)
 	}
 	assertNPMProfile(t, profile)
+	if profile.LogoAssetID == nil || *profile.LogoAssetID != DevSeedLogoAssetID {
+		t.Fatalf("LogoAssetID = %v, want dev seed asset %s", profile.LogoAssetID, DevSeedLogoAssetID)
+	}
+
+	dataDir := t.TempDir()
+	seedPath := filepath.Join(findRepoRoot(t), "docs", "design_handoff_keel", "uploads", "invoice_brand-1783009881094.png")
+	seedID, err := SeedDevLogoAsset(ctx, pool, dataDir, seedPath)
+	if err != nil {
+		t.Fatalf("SeedDevLogoAsset() error = %v", err)
+	}
+	if seedID != DevSeedLogoAssetID {
+		t.Fatalf("SeedDevLogoAsset() id = %s, want %s", seedID, DevSeedLogoAssetID)
+	}
+	asset, err := New(pool, discardBus(), WithDataDir(dataDir)).Asset(ctx, seedID)
+	if err != nil {
+		t.Fatalf("Asset(seed) error = %v", err)
+	}
+	if asset.SHA256 != devSeedLogoSHA256 || asset.MIME != devSeedLogoMIME || asset.Size != devSeedLogoSize {
+		t.Fatalf("seed asset = %#v, want handoff logo metadata", asset)
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, "assets", devSeedLogoSHA256)); err != nil {
+		t.Fatalf("seed asset file stat error = %v", err)
+	}
 }
 
 func TestSingleRowCompanyProfileEnforced(t *testing.T) {
@@ -220,6 +248,122 @@ func TestUpdateProfilePublishesEventInSameTransaction(t *testing.T) {
 	}
 	if !handlerRan {
 		t.Fatal("ProfileUpdated handler did not run")
+	}
+}
+
+func TestValidateLogoUploadAcceptsSupportedImageTypes(t *testing.T) {
+	tests := []struct {
+		name  string
+		mime  string
+		bytes []byte
+	}{
+		{name: "png", mime: "image/png", bytes: testPNG(t)},
+		{name: "jpeg", mime: "image/jpeg", bytes: testJPEG(t)},
+		{name: "svg", mime: "image/svg+xml", bytes: []byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"></svg>`)},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			asset, err := validateLogoUpload(LogoUpload{MIME: test.mime, Bytes: test.bytes})
+			if err != nil {
+				t.Fatalf("validateLogoUpload() error = %v", err)
+			}
+			if asset.mime != test.mime {
+				t.Fatalf("mime = %q, want %q", asset.mime, test.mime)
+			}
+			if asset.size != int64(len(test.bytes)) {
+				t.Fatalf("size = %d, want %d", asset.size, len(test.bytes))
+			}
+		})
+	}
+}
+
+func TestReplaceLogoStoresContentAddressedAssetAndPublishesEvent(t *testing.T) {
+	ctx, tx := migratedIdentityTx(t)
+	dataDir := t.TempDir()
+	eventBus := discardBus()
+	service := New(tx, eventBus, WithDataDir(dataDir))
+	logo := testPNG(t)
+	logoSHA := sha256Hex(logo)
+	published := 0
+
+	eventBus.Subscribe(ProfileUpdatedEventName, func(ctx context.Context, gotTx db.Tx, evt bus.Event) error {
+		published++
+		if gotTx != tx {
+			t.Fatalf("handler tx = %p, want replace tx %p", gotTx, tx)
+		}
+		if _, ok := evt.(ProfileUpdated); !ok {
+			t.Fatalf("event type = %T, want identity.ProfileUpdated", evt)
+		}
+		return nil
+	})
+
+	firstID, err := service.ReplaceLogo(ctx, LogoUpload{MIME: "image/png", Bytes: logo})
+	if err != nil {
+		t.Fatalf("ReplaceLogo() first error = %v", err)
+	}
+	if published != 1 {
+		t.Fatalf("published events after first replace = %d, want 1", published)
+	}
+	assertAssetFile(t, dataDir, logoSHA, logo)
+	assertAssetFileCount(t, dataDir, 1)
+	firstAsset, err := service.Asset(ctx, firstID)
+	if err != nil {
+		t.Fatalf("Asset(first) error = %v", err)
+	}
+	if firstAsset.MIME != "image/png" || firstAsset.SHA256 != logoSHA || !bytes.Equal(firstAsset.Bytes, logo) {
+		t.Fatalf("first asset = %#v, want PNG bytes with sha %s", firstAsset, logoSHA)
+	}
+
+	secondID, err := service.ReplaceLogo(ctx, LogoUpload{MIME: "image/png", Bytes: logo})
+	if err != nil {
+		t.Fatalf("ReplaceLogo() second error = %v", err)
+	}
+	if firstID == secondID {
+		t.Fatalf("second ReplaceLogo() reused asset id %s; want a new reference to the same sha file", secondID)
+	}
+	if published != 2 {
+		t.Fatalf("published events after second replace = %d, want 2", published)
+	}
+	assertAssetFile(t, dataDir, logoSHA, logo)
+	assertAssetFileCount(t, dataDir, 1)
+
+	var referenceCount int
+	if err := tx.QueryRow(ctx, "SELECT count(*) FROM identity.assets WHERE sha256 = $1", logoSHA).Scan(&referenceCount); err != nil {
+		t.Fatalf("count assets by sha: %v", err)
+	}
+	if referenceCount != 2 {
+		t.Fatalf("asset rows for sha = %d, want two references", referenceCount)
+	}
+
+	profile, err := service.Profile(ctx)
+	if err != nil {
+		t.Fatalf("Profile() error = %v", err)
+	}
+	if profile.LogoAssetID == nil || *profile.LogoAssetID != secondID {
+		t.Fatalf("LogoAssetID = %v, want second asset %s", profile.LogoAssetID, secondID)
+	}
+
+	oldAsset, err := service.Asset(ctx, firstID)
+	if err != nil {
+		t.Fatalf("Asset(first) after replacement error = %v", err)
+	}
+	if !bytes.Equal(oldAsset.Bytes, logo) {
+		t.Fatal("old asset bytes changed after replacement")
+	}
+}
+
+func TestReplaceLogoRejectsOversizedAndWrongMIME(t *testing.T) {
+	ctx, tx := migratedIdentityTx(t)
+	service := New(tx, discardBus(), WithDataDir(t.TempDir()))
+
+	oversized := bytes.Repeat([]byte("x"), MaxLogoAssetBytes+1)
+	if _, err := service.ReplaceLogo(ctx, LogoUpload{MIME: "image/png", Bytes: oversized}); !errors.Is(err, ErrAssetTooLarge) {
+		t.Fatalf("ReplaceLogo() oversized error = %v, want ErrAssetTooLarge", err)
+	}
+
+	if _, err := service.ReplaceLogo(ctx, LogoUpload{MIME: "text/plain", Bytes: testPNG(t)}); !errors.Is(err, ErrUnsupportedAsset) {
+		t.Fatalf("ReplaceLogo() wrong MIME error = %v, want ErrUnsupportedAsset", err)
 	}
 }
 
@@ -441,6 +585,61 @@ func assertDate(t *testing.T, got time.Time, year int, month time.Month, day int
 	if got.Year() != year || got.Month() != month || got.Day() != day {
 		t.Fatalf("date = %s, want %04d-%02d-%02d", got.Format(time.DateOnly), year, month, day)
 	}
+}
+
+func assertAssetFile(t *testing.T, dataDir string, sha string, want []byte) {
+	t.Helper()
+
+	got, err := os.ReadFile(filepath.Join(dataDir, "assets", sha))
+	if err != nil {
+		t.Fatalf("read asset file: %v", err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatal("asset file bytes do not match upload")
+	}
+}
+
+func assertAssetFileCount(t *testing.T, dataDir string, want int) {
+	t.Helper()
+
+	entries, err := os.ReadDir(filepath.Join(dataDir, "assets"))
+	if err != nil {
+		t.Fatalf("read asset directory: %v", err)
+	}
+	var got int
+	for _, entry := range entries {
+		if entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		got++
+	}
+	if got != want {
+		t.Fatalf("asset file count = %d, want %d", got, want)
+	}
+}
+
+func testPNG(t *testing.T) []byte {
+	t.Helper()
+
+	img := image.NewRGBA(image.Rect(0, 0, 1, 1))
+	img.Set(0, 0, color.RGBA{R: 0x11, G: 0x66, B: 0xaa, A: 0xff})
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatalf("encode test PNG: %v", err)
+	}
+	return buf.Bytes()
+}
+
+func testJPEG(t *testing.T) []byte {
+	t.Helper()
+
+	img := image.NewRGBA(image.Rect(0, 0, 1, 1))
+	img.Set(0, 0, color.RGBA{R: 0xaa, G: 0x66, B: 0x11, A: 0xff})
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, nil); err != nil {
+		t.Fatalf("encode test JPEG: %v", err)
+	}
+	return buf.Bytes()
 }
 
 func npmProfile() CompanyProfile {
