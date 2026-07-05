@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "@/app/App";
 import type { IdentityProfile, IdentityProfilePatch } from "@/api/identity";
+import type { InvoicingClient } from "@/api/invoicing";
 
 afterEach(() => {
   cleanup();
@@ -93,6 +94,75 @@ describe("Company settings", () => {
       await screen.findByRole("heading", { level: 1, name: "Users" }),
     ).toBeInTheDocument();
     expect(screen.getByText("Coming soon")).toBeInTheDocument();
+  });
+
+  it("renders clients and archives them from the active list", async () => {
+    const user = userEvent.setup();
+    let clients = [contosoClient(), fabrikamClient()];
+    const fetchImpl = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = pathFromRequest(input);
+        if (path === "/api/identity/me") {
+          return jsonResponse({
+            created_at: "2026-07-05T12:00:00Z",
+            email: "owner@example.com",
+            id: 1,
+            name: "N. Meyer",
+          });
+        }
+        if (path === "/api/identity/profile") {
+          return jsonResponse(identityProfile());
+        }
+        if (
+          path === "/api/invoicing/clients/client_fabrikam/archive" &&
+          init?.method === "POST"
+        ) {
+          clients = clients.filter((client) => client.id !== "client_fabrikam");
+          return new Response(null, { status: 204 });
+        }
+        if (path === "/api/invoicing/clients") {
+          return jsonResponse({ clients });
+        }
+        return jsonResponse(
+          { status: 404, title: "Not Found", type: "about:blank" },
+          404,
+          "application/problem+json",
+        );
+      },
+    );
+    vi.stubGlobal("fetch", fetchImpl);
+
+    renderAt("/settings/clients");
+
+    expect(await screen.findByText("Contoso GmbH")).toBeInTheDocument();
+    expect(screen.getByText("Fabrikam Ltd")).toBeInTheDocument();
+    const contosoRow = screen.getByText("Contoso GmbH").closest("tr");
+    const fabrikamRow = screen.getByText("Fabrikam Ltd").closest("tr");
+    expect(contosoRow).not.toBeNull();
+    expect(fabrikamRow).not.toBeNull();
+    expect(within(contosoRow as HTMLElement).getByText("EUR")).toBeInTheDocument();
+    expect(within(fabrikamRow as HTMLElement).getByText("GBP")).toBeInTheDocument();
+    expect(within(contosoRow as HTMLElement).getByText(/Retainer/)).toHaveTextContent(
+      "€4,500.00",
+    );
+    expect(within(fabrikamRow as HTMLElement).getByText(/Day rate/)).toHaveTextContent(
+      "£600.00",
+    );
+    expect(
+      within(contosoRow as HTMLElement).getByText("Net 14 · reverse charge"),
+    ).toBeInTheDocument();
+    expect(
+      within(fabrikamRow as HTMLElement).getByText("Net 30 · domestic"),
+    ).toBeInTheDocument();
+    await user.click(
+      within(fabrikamRow as HTMLElement).getByRole("button", {
+        name: "Archive",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByText("Fabrikam Ltd")).not.toBeInTheDocument();
+    });
   });
 
   it("renders the jurisdiction rules pack from the API", async () => {
@@ -313,6 +383,9 @@ function authenticatedFetch() {
     if (path === "/api/identity/profile") {
       return jsonResponse(identityProfile());
     }
+    if (path === "/api/invoicing/clients") {
+      return jsonResponse({ clients: [contosoClient(), fabrikamClient()] });
+    }
     if (path === "/api/jurisdiction/pack") {
       return jsonResponse(jurisdictionPack());
     }
@@ -397,6 +470,58 @@ function identityProfile(): IdentityProfile {
     trading_name: "NPM Limited",
     vat_number: null,
     year_end: { day: 31, month: 3 },
+  };
+}
+
+function contosoClient(): InvoicingClient {
+  return {
+    address: {
+      country: "DE",
+      line1: "Theresienhoehe 12",
+      line2: "",
+      locality: "Munich",
+      postal_code: "80339",
+      region: "Bavaria",
+    },
+    archived_at: null,
+    created_at: "2026-07-05T12:00:00Z",
+    day_rate: null,
+    default_currency: "EUR",
+    id: "client_contoso",
+    name: "Contoso GmbH",
+    retainer_amount: {
+      amount_minor: 450000,
+      currency: "EUR",
+    },
+    terms_days: 14,
+    vat_number: "DE 129 273 398",
+    vat_treatment: "reverse-charge-eu-b2b",
+  };
+}
+
+function fabrikamClient(): InvoicingClient {
+  return {
+    address: {
+      country: "GB",
+      line1: "1 Park Row",
+      line2: "",
+      locality: "Leeds",
+      postal_code: "LS1 5AB",
+      region: "West Yorkshire",
+    },
+    archived_at: null,
+    created_at: "2026-07-05T12:00:00Z",
+    day_rate: {
+      amount_minor: 60000,
+      currency: "GBP",
+    },
+    default_currency: "GBP",
+    id: "client_fabrikam",
+    name: "Fabrikam Ltd",
+    retainer_amount: null,
+    terms_days: 30,
+    vat_number: null,
+    vat_treatment: "domestic",
   };
 }
 

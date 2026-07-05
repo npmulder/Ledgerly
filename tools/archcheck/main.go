@@ -23,14 +23,14 @@ import (
 var (
 	moduleDependencies = map[string]map[string]struct{}{
 		"advisor":      dependencySet("jurisdiction", "invoicing", "banking", "dla", "dividends", "reports", "moneyfx", "identity"),
-		"app":          dependencySet("demo", "identity", "jurisdiction"),
+		"app":          dependencySet("demo", "identity", "invoicing", "jurisdiction"),
 		"banking":      dependencySet("ledger", "moneyfx", "invoicing", "dla"),
 		"demo":         dependencySet(),
 		"dividends":    dependencySet("ledger", "reports", "jurisdiction", "identity"),
 		"dla":          dependencySet("ledger", "jurisdiction", "moneyfx"),
 		"identity":     dependencySet(),
 		"invoicing":    dependencySet("moneyfx", "ledger", "jurisdiction", "identity"),
-		"it":           dependencySet("app", "demo", "identity"),
+		"it":           dependencySet("app", "demo", "identity", "invoicing"),
 		"jurisdiction": dependencySet(),
 		"ledger":       dependencySet(),
 		"moneyfx":      dependencySet("ledger"),

@@ -68,6 +68,7 @@ func New(t testing.TB, opts Options) *Harness {
 	rawPool := testdb.Raw(t)
 	identityPool := testdb.AsModule(t, "identity")
 	demoPool := testdb.AsModule(t, demo.ModuleName)
+	invoicingPool := testdb.AsModule(t, "invoicing")
 
 	startAt := opts.ClockStart
 	if startAt.IsZero() {
@@ -85,11 +86,12 @@ func New(t testing.TB, opts Options) *Harness {
 		},
 		Version: "test",
 	}, app.Dependencies{
-		Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Clock:        fakeClock,
-		HealthDB:     pgxPinger{pool: rawPool},
-		IdentityPool: identityPool,
-		DemoPool:     demoPool,
+		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Clock:         fakeClock,
+		HealthDB:      pgxPinger{pool: rawPool},
+		IdentityPool:  identityPool,
+		DemoPool:      demoPool,
+		InvoicingPool: invoicingPool,
 		BusOptions: []bus.Option{
 			bus.WithMiddleware(faults.middleware),
 		},

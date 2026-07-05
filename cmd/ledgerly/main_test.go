@@ -79,6 +79,9 @@ func TestRunPrintsOpenAPIDocument(t *testing.T) {
 	if _, ok := paths["/api/identity/login"]; !ok {
 		t.Fatalf("openapi paths missing /api/identity/login: %+v", paths)
 	}
+	if _, ok := paths["/api/invoicing/clients"]; !ok {
+		t.Fatalf("openapi paths missing /api/invoicing/clients: %+v", paths)
+	}
 	if _, ok := paths["/api/jurisdiction/pack"]; !ok {
 		t.Fatalf("openapi paths missing /api/jurisdiction/pack: %+v", paths)
 	}

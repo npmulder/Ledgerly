@@ -9,6 +9,13 @@ export const queryKeys = {
     me: (): ApiQueryKey => ["identity", "me", {}],
     profile: (): ApiQueryKey => ["identity", "profile", {}],
   },
+  invoicing: {
+    clients: (includeArchived = false): ApiQueryKey => [
+      "invoicing",
+      "clients",
+      { includeArchived },
+    ],
+  },
   jurisdiction: {
     pack: (): ApiQueryKey => ["jurisdiction", "pack", {}],
   },

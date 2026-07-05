@@ -226,6 +226,9 @@ function authenticatedFetch() {
     if (path === "/api/identity/profile") {
       return jsonResponse(identityProfile());
     }
+    if (path === "/api/invoicing/clients") {
+      return jsonResponse({ clients: [] });
+    }
     return jsonResponse(
       {
         status: 404,
