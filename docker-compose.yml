@@ -2,7 +2,6 @@
 services:
   db:
     image: postgres:16
-    container_name: ledgerly-db
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres

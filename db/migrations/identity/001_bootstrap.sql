@@ -1,0 +1,18 @@
+DO $ledgerly$
+BEGIN
+	EXECUTE 'CREATE SCHEMA IF NOT EXISTS identity';
+	EXECUTE 'REVOKE ALL ON SCHEMA identity FROM PUBLIC';
+
+	IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ledgerly_identity') THEN
+		EXECUTE 'CREATE ROLE ledgerly_identity LOGIN PASSWORD ''ledgerly_identity''';
+	END IF;
+
+	EXECUTE 'ALTER ROLE ledgerly_identity WITH LOGIN PASSWORD ''ledgerly_identity'' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION';
+	EXECUTE 'GRANT USAGE, CREATE ON SCHEMA identity TO ledgerly_identity';
+	EXECUTE 'GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA identity TO ledgerly_identity';
+	EXECUTE 'GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA identity TO ledgerly_identity';
+	EXECUTE 'ALTER DEFAULT PRIVILEGES IN SCHEMA identity GRANT ALL PRIVILEGES ON TABLES TO ledgerly_identity';
+	EXECUTE 'ALTER DEFAULT PRIVILEGES IN SCHEMA identity GRANT ALL PRIVILEGES ON SEQUENCES TO ledgerly_identity';
+	EXECUTE 'ALTER ROLE ledgerly_identity SET search_path = identity';
+END
+$ledgerly$;
