@@ -9,6 +9,7 @@ import { ApiErrorBannerProvider } from "@/app/ApiErrorBanner";
 import "@/styles/tokens.css";
 import "@/styles/base.css";
 import "@/styles/global.css";
+import "@/styles/components.css";
 
 const rootElement = document.getElementById("root");
 

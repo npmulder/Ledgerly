@@ -14,6 +14,7 @@
   --color-danger: #b0263a;
   --color-danger-bg: #f7dee2;
   --color-danger-row-tint: #fdf5f6;
+  --color-neutral-bg: #f1f3f8;
   --color-text: #1c2433;
   --color-text-secondary: #6b7484;
   --color-text-muted: #9aa2b1;
@@ -21,6 +22,8 @@
   --color-card: #ffffff;
   --color-border-hairline: #e7eaf1;
   --color-border-input: #d6dcea;
+  --color-border-dashed: #c3cbde;
+  --color-border-subtle: #f1f3f8;
   --color-canvas: #e9ebf0;
 
   --font-ui:
