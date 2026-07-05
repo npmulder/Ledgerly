@@ -1,0 +1,108 @@
+# Project automation via go-task — https://taskfile.dev
+# Run `task --list` to see everything.
+
+version: "3"
+
+tasks:
+  default:
+    desc: List available tasks
+    cmds:
+      - task --list
+    silent: true
+
+  setup:
+    desc: One-time project setup (pinned toolchain + Python env)
+    cmds:
+      - mise install
+      - uv sync
+
+  # ── Database (docker compose) ───────────────────────────────────────────
+
+  db:start:
+    desc: Start PostgreSQL 16 via docker compose (creates ledgerly_dev)
+    preconditions:
+      - sh: command -v docker
+        msg: "Docker is required for the database — https://docs.docker.com/get-docker/"
+    cmds:
+      - docker compose up -d --wait db
+
+  db:stop:
+    desc: Stop the database container (data persists)
+    cmds:
+      - docker compose stop db
+
+  db:psql:
+    desc: Open a psql shell into ledgerly_dev
+    interactive: true
+    cmds:
+      - docker compose exec db psql -U postgres -d ledgerly_dev
+
+  db:reset:
+    desc: Destroy the database container AND its data volume
+    prompt: This deletes all local database data — continue?
+    cmds:
+      - docker compose down -v
+
+  # ── Go backend ──────────────────────────────────────────────────────────
+  # These fail with a clear message until the backend is scaffolded
+  # (docs/design/hld.md §12, step 1: walking skeleton), then work unchanged.
+
+  fmt:
+    desc: Format Go code
+    preconditions:
+      - sh: test -f go.mod
+        msg: "Go backend not yet scaffolded (no go.mod) — see docs/design/hld.md §12."
+    cmds:
+      - gofmt -w cmd internal
+
+  lint:
+    desc: Lint the Go backend (golangci-lint)
+    preconditions:
+      - sh: test -f go.mod
+        msg: "Go backend not yet scaffolded (no go.mod) — see docs/design/hld.md §12."
+    cmds:
+      - golangci-lint run ./...
+
+  test:
+    desc: Run backend tests
+    preconditions:
+      - sh: test -f go.mod
+        msg: "Go backend not yet scaffolded (no go.mod) — see docs/design/hld.md §12."
+    cmds:
+      - go test ./...
+
+  build:
+    desc: Build the ledgerly binary into bin/
+    preconditions:
+      - sh: test -f go.mod
+        msg: "Go backend not yet scaffolded (no go.mod) — see docs/design/hld.md §12."
+    cmds:
+      - go build -o bin/ledgerly ./cmd/ledgerly
+
+  dev:
+    desc: Run the backend in development mode
+    preconditions:
+      - sh: test -f go.mod
+        msg: "Go backend not yet scaffolded (no go.mod) — see docs/design/hld.md §12."
+    cmds:
+      - go run ./cmd/ledgerly
+
+  # ── Web frontend ────────────────────────────────────────────────────────
+
+  web:install:
+    desc: Install frontend dependencies
+    preconditions:
+      - sh: test -f web/package.json
+        msg: "Frontend not yet scaffolded (no web/package.json) — see docs/design/hld.md §12."
+    dir: web
+    cmds:
+      - npm install
+
+  web:dev:
+    desc: Run the Vite dev server
+    preconditions:
+      - sh: test -f web/package.json
+        msg: "Frontend not yet scaffolded (no web/package.json) — see docs/design/hld.md §12."
+    dir: web
+    cmds:
+      - npm run dev

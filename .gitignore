@@ -1,1 +1,12 @@
 .DS_Store
+
+# toolchain / local state
+.venv/
+
+# build outputs
+bin/
+dist/
+node_modules/
+
+# logs
+*.log

@@ -83,8 +83,11 @@ ledgerly/
 ├── web/                      # React SPA (Vite, TS)
 ├── packs/isle-of-man/1.0/    # rules pack data (embedded via go:embed)
 ├── db/migrations/
+├── Taskfile.yml              # go-task (taskfile.dev) — build orchestration; NO Makefiles
 └── docs/design/              # this document set
 ```
+
+Build orchestration uses **go-task** (`Taskfile.yml`, taskfile.dev), not make: `task build` / `test` / `lint` / `ci`, with namespaced includes (`web:*`, `api:*`, `golden:*`). CI installs task and invokes the same definitions, so local and CI runs can't drift.
 
 Each module directory follows the same shape: `api.go` (public interface — the ONLY thing other modules may import), `events.go` (published event types), `service.go`, `store.go` (private SQL), `http.go` (its REST handlers). Boundary rule enforced in CI with `go-arch-lint` (or a small custom `go vet` check): `internal/<mod>/...` may import only `internal/<other-mod>` root package (the `api.go` surface) and `internal/platform`.
 

@@ -1,0 +1,58 @@
+name: Bug report
+description: Something isn't working correctly
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug!
+
+        ⚠️ **Security issues** (including money-math or ledger-integrity defects): please do **not** file them here — see [SECURITY.md](../../SECURITY.md).
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead?
+      placeholder: The invoice total shows £0.01 off after allocation…
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. …
+        2. …
+        3. …
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      multiple: true
+      options:
+        - ledger / money-fx
+        - invoicing
+        - banking / reconciliation
+        - director's loan account
+        - dividends
+        - reports / filings
+        - advisor / jurisdiction rules
+        - settings / identity
+        - CLI / MCP
+        - web UI
+        - docs / tooling
+        - not sure
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, browser (if UI), commit hash / version.
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Logs, screenshots, or context that might help.

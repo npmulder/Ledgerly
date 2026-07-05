@@ -1,0 +1,16 @@
+# Pinned toolchain for Ledgerly — https://mise.jdx.dev
+# Install everything with:  mise install
+# Major/minor pins so contributors pick up patch releases automatically.
+
+[tools]
+go = "1.24"            # backend (modular monolith)
+node = "22"            # LTS — Vite/React frontend
+python = "3.13"        # agent tooling under .agents/
+task = "3"             # go-task — project automation (see Taskfile.yml)
+golangci-lint = "2"    # Go linting, same version locally and in CI
+uv = "latest"          # Python package/venv manager
+# PostgreSQL is NOT managed here — it runs as a service via `docker compose` (see compose.yaml).
+
+[env]
+# Auto-create and activate the Python virtualenv when entering the repo.
+_.python.venv = { path = ".venv", create = true }

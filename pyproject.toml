@@ -1,0 +1,9 @@
+[project]
+name = "ledgerly-tools"
+version = "0.1.0"
+description = "Python environment for Ledgerly repo tooling (agent scripts under .agents/)"
+requires-python = ">=3.13"
+dependencies = []
+
+# No build-system on purpose: this is a virtual (non-packaged) uv project —
+# `uv sync` manages the .venv without trying to install the repo as a package.

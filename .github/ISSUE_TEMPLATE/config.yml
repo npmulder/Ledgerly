@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/npmulder/Ledgerly/security/advisories/new
+    about: Please report security issues (including money-math and ledger-integrity defects) privately, not as public issues.

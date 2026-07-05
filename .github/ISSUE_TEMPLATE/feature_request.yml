@@ -1,0 +1,46 @@
+name: Feature request
+description: Suggest an idea or improvement
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing, it's worth skimming the [high-level design](../../docs/design/hld.md) and [module docs](../../docs/design/modules/) — the feature may already be specified and just not built yet.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the need from the owner-director's point of view.
+      placeholder: When reconciling, I have to…
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What would you like Ledgerly to do?
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      multiple: true
+      options:
+        - ledger / money-fx
+        - invoicing
+        - banking / reconciliation
+        - director's loan account
+        - dividends
+        - reports / filings
+        - advisor / jurisdiction rules
+        - settings / identity
+        - CLI / MCP
+        - web UI
+        - new jurisdiction pack
+        - docs / tooling
+        - not sure
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
