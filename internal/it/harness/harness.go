@@ -96,6 +96,9 @@ func New(t testing.TB, opts Options) *Harness {
 		IdentityServiceOptions: []identity.ServiceOption{
 			identity.WithPasswordParams(fastPasswordParams()),
 		},
+		IdentityProfileOptions: []identity.ProfileOption{
+			identity.WithDataDir(t.TempDir()),
+		},
 		ModuleBuilders: opts.ModuleBuilders,
 		Jobs:           opts.Jobs,
 		CronAutostart:  opts.CronAutostart,

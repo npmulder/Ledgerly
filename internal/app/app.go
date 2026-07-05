@@ -83,6 +83,7 @@ type Dependencies struct {
 
 	IdentityServiceOptions []identity.ServiceOption
 	IdentityHTTPOptions    []identity.HTTPOption
+	IdentityProfileOptions []identity.ProfileOption
 
 	ModuleBuilders map[string]ModuleBuilder
 
@@ -160,7 +161,15 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		clk,
 		deps.IdentityServiceOptions...,
 	)
-	identityHandler := identity.NewHTTPHandler(identityService, deps.IdentityHTTPOptions...)
+	profileOptions := []identity.ProfileOption{}
+	if strings.TrimSpace(cfg.Runtime.DataDir) != "" {
+		profileOptions = append(profileOptions, identity.WithDataDir(cfg.Runtime.DataDir))
+	}
+	profileOptions = append(profileOptions, deps.IdentityProfileOptions...)
+	identityProfile := identity.NewTransactionalProfileService(identityPool, eventBus, profileOptions...)
+	identityHTTPOptions := []identity.HTTPOption{identity.WithProfileAPI(identityProfile)}
+	identityHTTPOptions = append(identityHTTPOptions, deps.IdentityHTTPOptions...)
+	identityHandler := identity.NewHTTPHandler(identityService, identityHTTPOptions...)
 
 	modules := []httpserver.Module{identity.HTTPModule(identityHandler)}
 	fragments := []httpserver.OpenAPIFragment{identity.OpenAPIFragment()}

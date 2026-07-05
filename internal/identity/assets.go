@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/xml"
 	"errors"
 	"fmt"
 	"image"
@@ -172,7 +171,7 @@ func normalizeAssetMIME(value string) (string, error) {
 	}
 	mediaType = strings.ToLower(mediaType)
 	switch mediaType {
-	case "image/png", "image/jpeg", "image/svg+xml":
+	case "image/png", "image/jpeg":
 		return mediaType, nil
 	default:
 		return "", fmt.Errorf("%w: %s", ErrUnsupportedAsset, mediaType)
@@ -187,23 +186,8 @@ func logoBytesMatchMIME(data []byte, mediaType string) bool {
 	case "image/jpeg":
 		_, format, err := image.DecodeConfig(bytes.NewReader(data))
 		return err == nil && format == "jpeg"
-	case "image/svg+xml":
-		return isSVG(data)
 	default:
 		return false
-	}
-}
-
-func isSVG(data []byte) bool {
-	decoder := xml.NewDecoder(bytes.NewReader(data))
-	for {
-		token, err := decoder.Token()
-		if err != nil {
-			return false
-		}
-		if start, ok := token.(xml.StartElement); ok {
-			return start.Name.Local == "svg"
-		}
 	}
 }
 
