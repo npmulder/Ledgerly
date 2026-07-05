@@ -26,15 +26,16 @@ func main() {
 	defer stop()
 
 	if err := run(ctx, os.Args[1:], os.Stdout); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		if _, writeErr := fmt.Fprintln(os.Stderr, err); writeErr != nil {
+			os.Exit(1)
+		}
 		os.Exit(1)
 	}
 }
 
 func run(ctx context.Context, args []string, stdout io.Writer) error {
 	if len(args) == 0 {
-		fmt.Fprintf(stdout, "ledgerly %s\n", version)
-		return nil
+		return printVersion(stdout)
 	}
 
 	switch args[0] {
@@ -44,14 +45,18 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 		}
 		return runServe(ctx)
 	case "version":
-		fmt.Fprintf(stdout, "ledgerly %s\n", version)
-		return nil
+		return printVersion(stdout)
 	default:
 		return fmt.Errorf("unknown command %q", args[0])
 	}
 }
 
-func runServe(ctx context.Context) error {
+func printVersion(stdout io.Writer) error {
+	_, err := fmt.Fprintf(stdout, "ledgerly %s\n", version)
+	return err
+}
+
+func runServe(ctx context.Context) (err error) {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -66,7 +71,12 @@ func runServe(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("open database handle: %w", err)
 	}
-	defer db.Close()
+	defer func() {
+		closeErr := db.Close()
+		if err == nil && closeErr != nil {
+			err = fmt.Errorf("close database handle: %w", closeErr)
+		}
+	}()
 
 	router := httpserver.NewRouter(httpserver.Config{
 		Version: version,
