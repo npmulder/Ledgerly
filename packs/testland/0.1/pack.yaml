@@ -1,0 +1,54 @@
+meta:
+  id: testland
+  version: "0.1"
+  name: Testland
+  currency: TST
+tax:
+  corporate_income:
+    "2025-26":
+      standard_rate: 0.19
+  personal_income:
+    "2025-26":
+      personal_allowance: 1234
+      bands:
+        - upto: 1000
+          rate: 0.05
+        - upto: 2000
+          rate: 0.15
+        - rate: 0.25
+  dividends:
+    "2025-26":
+      withholding_rate: 0.04
+  vat:
+    regime: test-shared
+    "2025-26":
+      standard_rate: 0.17
+    reverse_charge:
+      b2b_services_eu:
+        article: Test Article 42
+        invoice_wording: Testland reverse charge applies
+filings:
+  annual_return:
+    due: incorporation_anniversary + 1 month
+    authority: Testland Companies Office
+  company_tax_return:
+    due: accounting_year_end + 12 months + 1 day
+    authority: Testland Revenue
+    required_at_zero_rate: true
+  vat_return:
+    due: vat_period_end + 1 month
+    cadence: quarterly
+    authority: Testland Customs
+director_loans:
+  "2025-26":
+    s455_charge: true
+    overdrawn:
+      warn: test_director_loan_warning
+      remedy: test_clear_or_repay
+advisor_rules:
+  - id: test-rule
+    severity: amber
+    fact_query: test.facts
+    condition: balance > 0
+    text_template: Review the test balance before filing
+    cta: open_test_review

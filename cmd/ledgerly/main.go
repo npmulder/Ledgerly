@@ -21,6 +21,7 @@ import (
 
 	"github.com/npmulder/ledgerly/internal/demo"
 	"github.com/npmulder/ledgerly/internal/identity"
+	"github.com/npmulder/ledgerly/internal/jurisdiction"
 	"github.com/npmulder/ledgerly/internal/platform/bus"
 	"github.com/npmulder/ledgerly/internal/platform/chrome"
 	"github.com/npmulder/ledgerly/internal/platform/clock"
@@ -32,6 +33,8 @@ import (
 )
 
 var version = "dev"
+
+var loadActiveJurisdiction = jurisdiction.LoadActive
 
 const migrationsDirEnv = "LEDGERLY_MIGRATIONS_DIR"
 
@@ -264,6 +267,10 @@ func runServe(ctx context.Context) (err error) {
 		Env:   string(cfg.Env),
 		Level: cfg.LogLevel,
 	})
+
+	if err := loadActiveJurisdiction(cfg.Jurisdiction); err != nil {
+		return fmt.Errorf("load jurisdiction pack: %w", err)
+	}
 
 	sqlDB, err := sql.Open("postgres", cfg.DatabaseURL)
 	if err != nil {
