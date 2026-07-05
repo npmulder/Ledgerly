@@ -171,6 +171,11 @@ func validateFilings(file string, filings map[string]Filing) error {
 	if len(filings) == 0 {
 		return fieldError(file, "filings", "filings", "must contain at least one filing")
 	}
+	for _, key := range []string{ruleSummaryAnnualReturn, ruleSummaryCompanyTax} {
+		if _, ok := filings[key]; !ok {
+			return fieldError(file, "filings."+key, key, "is required for pack summaries")
+		}
+	}
 
 	keys := make([]string, 0, len(filings))
 	for key := range filings {

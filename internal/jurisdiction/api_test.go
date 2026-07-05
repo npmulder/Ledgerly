@@ -2,6 +2,7 @@ package jurisdiction
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -242,6 +243,63 @@ func TestTaxYearAccessorsReturnTypedErrorForUnknownTaxYear(t *testing.T) {
 			}
 			if unknownYear.TaxYear != "2099-00" {
 				t.Fatalf("UnknownTaxYearError.TaxYear = %q, want 2099-00", unknownYear.TaxYear)
+			}
+		})
+	}
+}
+
+func TestActivePackOverviewReturnsIsleOfManSummaries(t *testing.T) {
+	loadIsleOfManForAccessors(t)
+
+	overview, err := ActivePackOverview()
+	if err != nil {
+		t.Fatalf("ActivePackOverview() error = %v", err)
+	}
+	if overview.Meta.ID != "isle-of-man" || overview.Meta.Version != "1.0" || overview.Meta.Name != "Isle of Man" {
+		t.Fatalf("Meta = %+v, want isle-of-man@1.0 Isle of Man", overview.Meta)
+	}
+	if len(overview.RuleSummaries) != 6 {
+		t.Fatalf("RuleSummaries length = %d, want 6", len(overview.RuleSummaries))
+	}
+
+	want := map[string]string{
+		ruleSummaryCorporateTax: "0% CIT (2025-26)",
+		ruleSummaryPersonalTax:  "no dividend WHT; personal allowance GBP 14,750; bands 10% to GBP 6,500, then 21% (2025-26/2025-26)",
+		ruleSummaryVAT:          "VAT 20% via Isle of Man Customs & Excise; reverse charge via Article 196, Directive 2006/112/EC (2025-26)",
+		ruleSummaryAnnualReturn: "due incorporation anniversary + 1 month with IoM Companies Registry",
+		ruleSummaryCompanyTax:   "due accounting year end + 12 months + 1 day; required at zero rate",
+		ruleSummaryDirectorLoan: "no s455 charge; overdrawn warning: benefit in kind interest free; remedy: clear with dividend",
+	}
+	for _, summary := range overview.RuleSummaries {
+		wantSummary, ok := want[summary.ID]
+		if !ok {
+			t.Fatalf("unexpected summary ID %q", summary.ID)
+		}
+		if summary.Summary != wantSummary {
+			t.Fatalf("%s summary = %q, want %q", summary.ID, summary.Summary, wantSummary)
+		}
+		delete(want, summary.ID)
+	}
+	if len(want) > 0 {
+		t.Fatalf("missing summaries: %#v", want)
+	}
+}
+
+func TestPackOverviewRequiresSummaryFilingKeys(t *testing.T) {
+	for _, key := range []string{ruleSummaryAnnualReturn, ruleSummaryCompanyTax} {
+		t.Run(key, func(t *testing.T) {
+			pack, err := LoadFromFS(testFixtureFS(t), "testland@0.1")
+			if err != nil {
+				t.Fatalf("LoadFromFS() error = %v", err)
+			}
+			delete(pack.Filings, key)
+
+			_, err = packOverview(pack)
+			if err == nil {
+				t.Fatal("packOverview() error = nil, want missing filing error")
+			}
+			if !strings.Contains(err.Error(), `required filing "`+key+`" is not configured`) {
+				t.Fatalf("packOverview() error = %q, want missing %s filing", err, key)
 			}
 		})
 	}
