@@ -1,0 +1,14 @@
+.git
+.github
+.DS_Store
+.env
+.env.*
+!.env.prod.example
+.codex-docker
+.workpad-id
+workpad.md
+node_modules
+web/node_modules
+tmp
+dist
+coverage

@@ -1,0 +1,38 @@
+name: ledgerly-prod
+
+x-prod-env-files: &prod-env-files
+  - path: .env.prod.example
+    required: true
+  - path: .env.prod
+    required: false
+
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    env_file: *prod-env-files
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  app:
+    image: ledgerly:${GIT_SHA:-dev}
+    init: true
+    build:
+      context: .
+      args:
+        GIT_SHA: ${GIT_SHA:-dev}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: *prod-env-files
+    ports:
+      - "${LEDGERLY_HTTP_PORT:-8080}:8080"
+
+volumes:
+  postgres-data:
