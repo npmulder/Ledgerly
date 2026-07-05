@@ -417,7 +417,9 @@ func renderRaster(pdfBytes []byte, masks []textMask, dpi float64) (rasterSnapsho
 	if err != nil {
 		return rasterSnapshot{}, err
 	}
-	defer doc.Close()
+	defer func() {
+		_ = doc.Close()
+	}()
 
 	pageCount := doc.NumPage()
 	if pageCount == 0 {
