@@ -70,5 +70,11 @@ func (m *Module) HTTPModule() httpserver.Module {
 
 // OpenAPIFragment returns the module's OpenAPI contribution.
 func (m *Module) OpenAPIFragment() httpserver.OpenAPIFragment {
+	return OpenAPIFragment()
+}
+
+// OpenAPIFragment returns the demo module's OpenAPI contribution without
+// requiring database-backed module construction.
+func OpenAPIFragment() httpserver.OpenAPIFragment {
 	return openAPIFragment()
 }

@@ -39,6 +39,9 @@ func TestLoadFromReportsMissingRequiredKeys(t *testing.T) {
 	if strings.Contains(message, "LEDGERLY_HTTP_ADDR") {
 		t.Fatalf("error %q lists defaulted optional key LEDGERLY_HTTP_ADDR", message)
 	}
+	if strings.Contains(message, "LEDGERLY_JURISDICTION") {
+		t.Fatalf("error %q lists defaulted optional key LEDGERLY_JURISDICTION", message)
+	}
 }
 
 func TestLoadFromAppliesDefaults(t *testing.T) {
@@ -66,6 +69,26 @@ func TestLoadFromAppliesDefaults(t *testing.T) {
 	}
 	if cfg.LogLevel != slog.LevelInfo {
 		t.Fatalf("LogLevel = %s, want %s", cfg.LogLevel, slog.LevelInfo)
+	}
+	if cfg.Jurisdiction != DefaultJurisdiction {
+		t.Fatalf("Jurisdiction = %q, want %q", cfg.Jurisdiction, DefaultJurisdiction)
+	}
+}
+
+func TestLoadFromReadsJurisdiction(t *testing.T) {
+	cfg, err := LoadFrom(mapLookup(map[string]string{
+		"LEDGERLY_DATABASE_URL": "postgres://ledgerly@example/ledgerly",
+		"LEDGERLY_DATA_DIR":     "/var/lib/ledgerly",
+		"LEDGERLY_ENV":          "dev",
+		"LEDGERLY_LOG_LEVEL":    "info",
+		"LEDGERLY_JURISDICTION": "testland@0.1",
+	}))
+	if err != nil {
+		t.Fatalf("LoadFrom() error = %v", err)
+	}
+
+	if cfg.Jurisdiction != "testland@0.1" {
+		t.Fatalf("Jurisdiction = %q, want testland@0.1", cfg.Jurisdiction)
 	}
 }
 

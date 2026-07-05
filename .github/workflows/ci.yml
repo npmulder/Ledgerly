@@ -25,6 +25,13 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
       - name: Set up Task
         uses: arduino/setup-task@v2
 
@@ -70,6 +77,92 @@ jobs:
 
       - name: Build and vet
         run: task build
+
+  web-lint:
+    name: web lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Set up Task
+        uses: arduino/setup-task@v2
+
+      - name: Frontend lint
+        run: task web:lint
+
+  web-test:
+    name: web test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Set up Task
+        uses: arduino/setup-task@v2
+
+      - name: Frontend tests
+        run: task web:test
+
+  web-build:
+    name: web build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Set up Task
+        uses: arduino/setup-task@v2
+
+      - name: Frontend build
+        run: task web:build
+
+  api-drift-check:
+    name: api drift check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Set up Task
+        uses: arduino/setup-task@v2
+
+      - name: API drift check
+        run: task api:drift-check
 
   test:
     name: test
