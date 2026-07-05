@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/npmulder/ledgerly/internal/app"
+	"github.com/npmulder/ledgerly/internal/jurisdiction"
 	"github.com/npmulder/ledgerly/internal/platform/chrome"
 	"github.com/npmulder/ledgerly/internal/platform/config"
 	"github.com/npmulder/ledgerly/internal/platform/db"
@@ -21,6 +23,8 @@ import (
 )
 
 var version = "dev"
+
+var loadActiveJurisdiction = jurisdiction.LoadActive
 
 const migrationsDirEnv = app.MigrationsDirEnv
 
@@ -61,6 +65,11 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 			outputPath = args[1]
 		}
 		return runChromeSmoke(ctx, stdout, outputPath)
+	case "openapi":
+		if len(args) != 1 {
+			return fmt.Errorf("usage: ledgerly openapi")
+		}
+		return runOpenAPI(stdout)
 	case "version", "--version", "-v":
 		return printVersion(stdout)
 	default:
@@ -105,6 +114,12 @@ func resolveMigrationsDir() (string, error) {
 	return app.ResolveMigrationsDir()
 }
 
+func runOpenAPI(stdout io.Writer) error {
+	encoder := json.NewEncoder(stdout)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(app.OpenAPIDocument(version))
+}
+
 func runChromeSmoke(ctx context.Context, stdout io.Writer, outputPath string) error {
 	if err := chrome.RenderAboutBlankPDF(ctx, outputPath); err != nil {
 		return err
@@ -124,6 +139,10 @@ func runServe(ctx context.Context) (err error) {
 		Env:   string(cfg.Env),
 		Level: cfg.LogLevel,
 	})
+
+	if err := loadActiveJurisdiction(cfg.Jurisdiction); err != nil {
+		return fmt.Errorf("load jurisdiction pack: %w", err)
+	}
 
 	startupCtx, startupCancel := context.WithTimeout(ctx, 45*time.Second)
 	defer startupCancel()

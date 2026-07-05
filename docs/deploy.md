@@ -1,6 +1,6 @@
 # Deploy Ledgerly
 
-Ledgerly deploys as one Docker image: the `ledgerly` Go binary plus headless Chromium for chromedp PDF rendering.
+Ledgerly deploys as one Docker image: the `ledgerly` Go binary with the embedded React SPA plus headless Chromium for chromedp PDF rendering.
 
 ## Local Production Compose
 
@@ -37,7 +37,7 @@ Run migrations as a one-off command:
 docker compose -f docker-compose.prod.yml run --rm app migrate
 ```
 
-The production image includes `db/migrations` and defaults `LEDGERLY_MIGRATIONS_DIR` to that packaged path, so the one-off command applies the bootstrap schema migrations inside the container.
+The production image includes `db/migrations` and the built SPA. It defaults `LEDGERLY_MIGRATIONS_DIR` to that packaged path, so the one-off command applies the bootstrap schema migrations inside the container.
 
 ## Environment Variables
 

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	nethttp "net/http"
 	"os"
@@ -25,6 +26,7 @@ import (
 	"github.com/npmulder/ledgerly/internal/platform/config"
 	"github.com/npmulder/ledgerly/internal/platform/db"
 	httpserver "github.com/npmulder/ledgerly/internal/platform/http"
+	"github.com/npmulder/ledgerly/web"
 )
 
 // MigrationsDirEnv overrides automatic migration-directory discovery.
@@ -75,6 +77,9 @@ type Dependencies struct {
 
 	OpenSQL  func(driverName, dataSourceName string) (*sql.DB, error)
 	OpenPool func(context.Context, string, ...db.PoolOption) (*pgxpool.Pool, error)
+
+	StaticAssets     fs.FS
+	LoadStaticAssets func() (fs.FS, error)
 
 	IdentityServiceOptions []identity.ServiceOption
 	IdentityHTTPOptions    []identity.HTTPOption
@@ -179,12 +184,18 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 	modules = append(modules, demoModule.HTTPModule)
 	fragments = append(fragments, demoModule.OpenAPIFragment)
 
+	staticAssets, err := loadStaticAssets(deps)
+	if err != nil {
+		return nil, err
+	}
+
 	router := httpserver.NewRouter(httpserver.Config{
 		Version:          cfg.Version,
 		Logger:           logger,
 		DB:               healthDB,
 		Clock:            clk,
 		APIAuth:          identity.AuthMiddleware(identityService),
+		StaticAssets:     staticAssets,
 		Modules:          modules,
 		OpenAPIFragments: fragments,
 	})
@@ -208,6 +219,15 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 	}, nil
 }
 
+// OpenAPIDocument returns the full application OpenAPI document.
+func OpenAPIDocument(version string) map[string]any {
+	return httpserver.OpenAPIDocument(
+		version,
+		identity.OpenAPIFragment(),
+		demo.OpenAPIFragment(),
+	)
+}
+
 func buildDemoModule(_ context.Context, deps ModuleDeps) (Module, error) {
 	demoModule, err := demo.New(demo.Config{
 		Pool: deps.DemoPool,
@@ -221,6 +241,21 @@ func buildDemoModule(_ context.Context, deps ModuleDeps) (Module, error) {
 		OpenAPIFragment: demoModule.OpenAPIFragment(),
 		SubscribeEvents: demoModule.SubscribeEvents,
 	}, nil
+}
+
+func loadStaticAssets(deps Dependencies) (fs.FS, error) {
+	if deps.StaticAssets != nil {
+		return deps.StaticAssets, nil
+	}
+	loader := deps.LoadStaticAssets
+	if loader == nil {
+		loader = web.Dist
+	}
+	staticAssets, err := loader()
+	if err != nil {
+		return nil, fmt.Errorf("load web assets: %w", err)
+	}
+	return staticAssets, nil
 }
 
 func healthPinger(databaseURL string, deps Dependencies, closeFuncs *[]func() error) (httpserver.Pinger, error) {

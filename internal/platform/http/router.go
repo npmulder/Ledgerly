@@ -3,6 +3,7 @@ package httpserver
 import (
 	"context"
 	"io"
+	"io/fs"
 	"log/slog"
 	nethttp "net/http"
 	"strings"
@@ -40,6 +41,7 @@ type Config struct {
 	DB               Pinger
 	Clock            clock.Clock
 	APIAuth          func(nethttp.Handler) nethttp.Handler
+	StaticAssets     fs.FS
 	Modules          []Module
 	OpenAPIFragments []OpenAPIFragment
 	HandlerTimeout   time.Duration
@@ -65,6 +67,9 @@ func NewRouter(cfg Config) chi.Router {
 
 	for _, module := range cfg.Modules {
 		MountModule(r, module)
+	}
+	if cfg.StaticAssets != nil {
+		r.NotFound(spaHandler(cfg.StaticAssets))
 	}
 
 	return r

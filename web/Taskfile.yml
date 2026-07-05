@@ -1,32 +1,69 @@
 version: "3"
 
 tasks:
+  deps:
+    desc: Install frontend dependencies
+    sources:
+      - package.json
+      - package-lock.json
+    generates:
+      - node_modules/.package-lock.json
+    method: checksum
+    cmds:
+      - npm ci
+
   dev:
     desc: Start the Vite development server
+    deps:
+      - deps
     cmds:
       - npm run dev -- {{.CLI_ARGS}}
 
   build:
     desc: Build the React SPA
+    deps:
+      - deps
+    sources:
+      - package.json
+      - package-lock.json
+      - tsconfig.json
+      - vite.config.ts
+      - index.html
+      - src/**/*
+    generates:
+      - dist/index.html
+      - dist/assets/**/*
+      - dist/.ledgerly-embed
+    method: checksum
     cmds:
       - npm run build
+      - mkdir -p dist
+      - touch dist/.ledgerly-embed
 
   test:
     desc: Run frontend tests
+    deps:
+      - deps
     cmds:
       - npm run test
 
   lint:
     desc: Run frontend lint checks
+    deps:
+      - deps
     cmds:
       - npm run lint
 
   typecheck:
     desc: Run frontend TypeScript checks
+    deps:
+      - deps
     cmds:
       - npm run typecheck
 
   api:generate:
     desc: Generate TypeScript API types from the running server OpenAPI spec
+    deps:
+      - deps
     cmds:
       - npm run api:generate
