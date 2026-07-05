@@ -17,7 +17,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/lib/pq"
 
+	"github.com/npmulder/ledgerly/internal/identity"
 	"github.com/npmulder/ledgerly/internal/platform/chrome"
+	"github.com/npmulder/ledgerly/internal/platform/clock"
 	"github.com/npmulder/ledgerly/internal/platform/config"
 	"github.com/npmulder/ledgerly/internal/platform/db"
 	httpserver "github.com/npmulder/ledgerly/internal/platform/http"
@@ -201,10 +203,26 @@ func runServe(ctx context.Context) (err error) {
 		}
 	}()
 
+	identityPool, err := db.Open(ctx, cfg, db.WithModule("identity"))
+	if err != nil {
+		return fmt.Errorf("open identity store: %w", err)
+	}
+	defer identityPool.Close()
+
+	identityService := identity.NewService(identity.NewPostgresStore(identityPool), clock.New())
+	identityHandler := identity.NewHTTPHandler(identityService)
+
 	router := httpserver.NewRouter(httpserver.Config{
 		Version: version,
 		Logger:  logger,
 		DB:      sqlDB,
+		APIAuth: identity.AuthMiddleware(identityService),
+		Modules: []httpserver.Module{
+			identity.HTTPModule(identityHandler),
+		},
+		OpenAPIFragments: []httpserver.OpenAPIFragment{
+			identity.OpenAPIFragment(),
+		},
 	})
 	server := httpserver.Server(cfg.HTTPAddr, router)
 
