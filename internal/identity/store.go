@@ -18,6 +18,14 @@ func NewPostgresStore(pool *pgxpool.Pool) *PostgresStore {
 	return &PostgresStore{pool: pool}
 }
 
+func (s *PostgresStore) UsersExist(ctx context.Context) (bool, error) {
+	var exists bool
+	if err := s.pool.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM identity.users)").Scan(&exists); err != nil {
+		return false, fmt.Errorf("check users exist: %w", err)
+	}
+	return exists, nil
+}
+
 func (s *PostgresStore) CreateFirstUser(ctx context.Context, email, passwordHash, name string) (user User, err error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -137,6 +145,13 @@ func (s *PostgresStore) RefreshSession(ctx context.Context, tokenHash []byte, ex
 func (s *PostgresStore) DeleteSession(ctx context.Context, tokenHash []byte) error {
 	if _, err := s.pool.Exec(ctx, "DELETE FROM identity.sessions WHERE token_sha256 = $1", tokenHash); err != nil {
 		return fmt.Errorf("delete session: %w", err)
+	}
+	return nil
+}
+
+func (s *PostgresStore) DeleteExpiredSessions(ctx context.Context, now time.Time) error {
+	if _, err := s.pool.Exec(ctx, "DELETE FROM identity.sessions WHERE expires_at <= $1", now); err != nil {
+		return fmt.Errorf("delete expired sessions: %w", err)
 	}
 	return nil
 }

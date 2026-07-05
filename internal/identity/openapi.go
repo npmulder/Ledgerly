@@ -13,6 +13,15 @@ func OpenAPIFragment() httpserver.OpenAPIFragment {
 					"tags":        []string{"identity"},
 					"summary":     "Register the first owner account",
 					"description": "Allowed only while no users exist.",
+					"requestBody": jsonRequestBody(map[string]any{
+						"type":     "object",
+						"required": []string{"email", "password", "name"},
+						"properties": map[string]any{
+							"email":    map[string]any{"type": "string", "format": "email"},
+							"password": map[string]any{"type": "string", "format": "password"},
+							"name":     map[string]any{"type": "string"},
+						},
+					}),
 					"responses": map[string]any{
 						"201": map[string]any{"description": "Owner created"},
 						"403": map[string]any{"description": "Registration is closed"},
@@ -23,6 +32,14 @@ func OpenAPIFragment() httpserver.OpenAPIFragment {
 				"post": map[string]any{
 					"tags":    []string{"identity"},
 					"summary": "Open a browser session",
+					"requestBody": jsonRequestBody(map[string]any{
+						"type":     "object",
+						"required": []string{"email", "password"},
+						"properties": map[string]any{
+							"email":    map[string]any{"type": "string", "format": "email"},
+							"password": map[string]any{"type": "string", "format": "password"},
+						},
+					}),
 					"responses": map[string]any{
 						"200": map[string]any{"description": "Session opened"},
 						"401": map[string]any{"description": "Invalid credentials"},
@@ -49,6 +66,17 @@ func OpenAPIFragment() httpserver.OpenAPIFragment {
 						"401": map[string]any{"description": "Authentication required"},
 					},
 				},
+			},
+		},
+	}
+}
+
+func jsonRequestBody(schema map[string]any) map[string]any {
+	return map[string]any{
+		"required": true,
+		"content": map[string]any{
+			"application/json": map[string]any{
+				"schema": schema,
 			},
 		},
 	}

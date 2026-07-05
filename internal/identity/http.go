@@ -15,9 +15,14 @@ import (
 
 const (
 	problemTypeBadRequest         = "https://ledgerly.local/problems/bad-request"
+	problemTypePayloadTooLarge    = "https://ledgerly.local/problems/payload-too-large"
 	problemTypeRegistrationClosed = "https://ledgerly.local/problems/registration-closed"
 	problemTypeRateLimited        = "https://ledgerly.local/problems/rate-limited"
+
+	maxJSONBodyBytes = 64 * 1024
 )
+
+var errRequestBodyTooLarge = errors.New("request body too large")
 
 type HTTPHandler struct {
 	service      *Service
@@ -79,7 +84,11 @@ type userResponse struct {
 
 func (h *HTTPHandler) register(w nethttp.ResponseWriter, r *nethttp.Request) {
 	var request registerRequest
-	if err := decodeJSON(r, &request); err != nil {
+	if err := decodeJSON(w, r, &request); err != nil {
+		if errors.Is(err, errRequestBodyTooLarge) {
+			writePayloadTooLarge(w, r)
+			return
+		}
 		writeBadRequest(w, r, err)
 		return
 	}
@@ -119,7 +128,11 @@ func (h *HTTPHandler) login(w nethttp.ResponseWriter, r *nethttp.Request) {
 	}
 
 	var request loginRequest
-	if err := decodeJSON(r, &request); err != nil {
+	if err := decodeJSON(w, r, &request); err != nil {
+		if errors.Is(err, errRequestBodyTooLarge) {
+			writePayloadTooLarge(w, r)
+			return
+		}
 		writeBadRequest(w, r, err)
 		return
 	}
@@ -190,17 +203,27 @@ func ExpiredSessionCookie() *nethttp.Cookie {
 	}
 }
 
-func decodeJSON(r *nethttp.Request, dst any) error {
+func decodeJSON(w nethttp.ResponseWriter, r *nethttp.Request, dst any) error {
+	r.Body = nethttp.MaxBytesReader(w, r.Body, maxJSONBodyBytes)
 	defer func() {
 		_ = r.Body.Close()
 	}()
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(dst); err != nil {
+		var maxBytesErr *nethttp.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			return errRequestBodyTooLarge
+		}
 		return fmt.Errorf("decode JSON body: %w", err)
 	}
-	if decoder.Decode(&struct{}{}) == nil {
+	if err := decoder.Decode(&struct{}{}); err == nil {
 		return fmt.Errorf("JSON body must contain one object")
+	} else {
+		var maxBytesErr *nethttp.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			return errRequestBodyTooLarge
+		}
 	}
 	return nil
 }
@@ -217,6 +240,15 @@ func writeBadRequest(w nethttp.ResponseWriter, r *nethttp.Request, err error) {
 		Title:  nethttp.StatusText(nethttp.StatusBadRequest),
 		Status: nethttp.StatusBadRequest,
 		Detail: err.Error(),
+	})
+}
+
+func writePayloadTooLarge(w nethttp.ResponseWriter, r *nethttp.Request) {
+	httpserver.WriteProblem(w, r, httpserver.Problem{
+		Type:   problemTypePayloadTooLarge,
+		Title:  nethttp.StatusText(nethttp.StatusRequestEntityTooLarge),
+		Status: nethttp.StatusRequestEntityTooLarge,
+		Detail: "request body is too large",
 	})
 }
 

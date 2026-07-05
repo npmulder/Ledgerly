@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	nethttp "net/http"
 	"net/http/httptest"
 	"strings"
@@ -186,6 +187,72 @@ func TestLoginAttemptsAreRateLimitedPerIP(t *testing.T) {
 	}
 }
 
+func TestClosedRegistrationDoesNotHashPassword(t *testing.T) {
+	store := newMemoryStore()
+	if _, err := store.CreateFirstUser(context.Background(), "owner@example.com", "hash", "Owner"); err != nil {
+		t.Fatalf("CreateFirstUser() error = %v", err)
+	}
+
+	hashErr := errors.New("hash should not run")
+	service := NewService(store, clock.NewFake(time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC)), WithTokenReader(errorReader{err: hashErr}))
+
+	_, err := service.Register(context.Background(), RegisterInput{
+		Email:    "second@example.com",
+		Password: "correct horse battery staple",
+		Name:     "Second",
+	})
+	if !errors.Is(err, ErrRegistrationClosed) {
+		t.Fatalf("Register() error = %v, want %v", err, ErrRegistrationClosed)
+	}
+}
+
+func TestRegisterRejectsOversizedJSONBody(t *testing.T) {
+	router, _, _ := newTestRouter(t, LoginRateLimit{Capacity: 100, RefillEvery: time.Hour})
+	body := `{"email":"owner@example.com","password":"` + strings.Repeat("x", maxJSONBodyBytes) + `","name":"Owner"}`
+
+	response := performRaw(router, nethttp.MethodPost, "/api/identity/register", body, nil)
+	if response.Code != nethttp.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized register status = %d, want %d; body=%s", response.Code, nethttp.StatusRequestEntityTooLarge, response.Body.String())
+	}
+}
+
+func TestClientIPIgnoresForwardedFor(t *testing.T) {
+	request := httptest.NewRequest(nethttp.MethodPost, "/api/identity/login", nil)
+	request.RemoteAddr = "203.0.113.10:58124"
+	request.Header.Set("X-Forwarded-For", "198.51.100.4")
+
+	if got := clientIP(request); got != "203.0.113.10" {
+		t.Fatalf("clientIP() = %q, want remote address", got)
+	}
+}
+
+func TestLoginPrunesExpiredSessions(t *testing.T) {
+	router, store, fakeClock := newTestRouter(t, LoginRateLimit{Capacity: 100, RefillEvery: time.Hour})
+	registerOwner(t, router)
+	store.insertSessionForTest("expired", 1, fakeClock.Now().Add(-time.Minute))
+
+	loginOwner(t, router)
+
+	if store.hasSession("expired") {
+		t.Fatal("expired session was not pruned during login")
+	}
+}
+
+func TestOpenAPIIncludesIdentityRequestBodies(t *testing.T) {
+	document := httpserver.OpenAPIDocument("test-version", OpenAPIFragment())
+	paths := document["paths"].(map[string]any)
+
+	login := paths["/api/identity/login"].(map[string]any)["post"].(map[string]any)
+	if login["requestBody"] == nil {
+		t.Fatal("login requestBody missing from OpenAPI fragment")
+	}
+
+	register := paths["/api/identity/register"].(map[string]any)["post"].(map[string]any)
+	if register["requestBody"] == nil {
+		t.Fatal("register requestBody missing from OpenAPI fragment")
+	}
+}
+
 func newTestRouter(t *testing.T, limit LoginRateLimit) (nethttp.Handler, *memoryStore, *clock.FakeClock) {
 	t.Helper()
 
@@ -262,7 +329,15 @@ func performJSON(router nethttp.Handler, method, path string, payload any, cooki
 	if payload != nil {
 		_ = json.NewEncoder(&body).Encode(payload)
 	}
-	request := httptest.NewRequest(method, path, &body)
+	return performRequest(router, method, path, &body, cookie)
+}
+
+func performRaw(router nethttp.Handler, method, path, body string, cookie *nethttp.Cookie) *httptest.ResponseRecorder {
+	return performRequest(router, method, path, strings.NewReader(body), cookie)
+}
+
+func performRequest(router nethttp.Handler, method, path string, body io.Reader, cookie *nethttp.Cookie) *httptest.ResponseRecorder {
+	request := httptest.NewRequest(method, path, body)
 	request.Header.Set("Content-Type", "application/json")
 	request.RemoteAddr = "203.0.113.10:58124"
 	if cookie != nil {
@@ -303,6 +378,13 @@ func newMemoryStore() *memoryStore {
 		users:    make(map[string]storedUser),
 		sessions: make(map[string]memorySession),
 	}
+}
+
+func (s *memoryStore) UsersExist(_ context.Context) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return len(s.users) > 0, nil
 }
 
 func (s *memoryStore) CreateFirstUser(_ context.Context, email, passwordHash, name string) (User, error) {
@@ -392,6 +474,18 @@ func (s *memoryStore) DeleteSession(_ context.Context, tokenHash []byte) error {
 	return nil
 }
 
+func (s *memoryStore) DeleteExpiredSessions(_ context.Context, now time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for key, session := range s.sessions {
+		if !session.expiresAt.After(now) {
+			delete(s.sessions, key)
+		}
+	}
+	return nil
+}
+
 func (s *memoryStore) userByEmail(email string) storedUser {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -399,8 +493,35 @@ func (s *memoryStore) userByEmail(email string) storedUser {
 	return s.users[email]
 }
 
+func (s *memoryStore) insertSessionForTest(key string, userID int64, expiresAt time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.sessions[key] = memorySession{
+		userID:    userID,
+		expiresAt: expiresAt,
+		createdAt: expiresAt.Add(-time.Hour),
+	}
+}
+
+func (s *memoryStore) hasSession(key string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, ok := s.sessions[key]
+	return ok
+}
+
 func hashKey(hash []byte) string {
 	return hex.EncodeToString(hash)
+}
+
+type errorReader struct {
+	err error
+}
+
+func (r errorReader) Read([]byte) (int, error) {
+	return 0, r.err
 }
 
 type pingerFunc func(context.Context) error

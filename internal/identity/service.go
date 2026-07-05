@@ -27,12 +27,14 @@ type storedSession struct {
 }
 
 type Store interface {
+	UsersExist(ctx context.Context) (bool, error)
 	CreateFirstUser(ctx context.Context, email, passwordHash, name string) (User, error)
 	FindUserByEmail(ctx context.Context, email string) (storedUser, error)
 	CreateSession(ctx context.Context, userID int64, tokenHash []byte, expiresAt time.Time) error
 	FindSessionByTokenHash(ctx context.Context, tokenHash []byte) (storedSession, error)
 	RefreshSession(ctx context.Context, tokenHash []byte, expiresAt time.Time) error
 	DeleteSession(ctx context.Context, tokenHash []byte) error
+	DeleteExpiredSessions(ctx context.Context, now time.Time) error
 }
 
 // Service owns identity auth use cases.
@@ -89,6 +91,14 @@ func (s *Service) Register(ctx context.Context, input RegisterInput) (User, erro
 		return User{}, fmt.Errorf("password is required")
 	}
 
+	closed, err := s.store.UsersExist(ctx)
+	if err != nil {
+		return User{}, err
+	}
+	if closed {
+		return User{}, ErrRegistrationClosed
+	}
+
 	hash, err := HashPassword(input.Password, s.passwordParams, s.tokenReader)
 	if err != nil {
 		return User{}, err
@@ -123,7 +133,12 @@ func (s *Service) Login(ctx context.Context, input LoginInput) (LoginResult, err
 	if err != nil {
 		return LoginResult{}, fmt.Errorf("create session token: %w", err)
 	}
-	expiresAt := s.clock.Now().UTC().Add(sessionDuration)
+	now := s.clock.Now().UTC()
+	if err := s.store.DeleteExpiredSessions(ctx, now); err != nil {
+		return LoginResult{}, err
+	}
+
+	expiresAt := now.Add(sessionDuration)
 	tokenHash := hashSessionToken(token)
 	if err := s.store.CreateSession(ctx, user.ID, tokenHash[:], expiresAt); err != nil {
 		return LoginResult{}, err
