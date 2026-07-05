@@ -23,12 +23,35 @@ func OpenAPIDocument(version string, fragments ...OpenAPIFragment) map[string]an
 		version = defaultVersion
 	}
 
-	paths := map[string]any{}
+	paths := platformOpenAPIPaths()
 	components := map[string]any{
 		"schemas": map[string]any{
-			"Problem": map[string]any{
+			"HealthCheck": map[string]any{
 				"type":     "object",
-				"required": []string{"type", "title", "status"},
+				"required": []string{"status"},
+				"properties": map[string]any{
+					"status": map[string]any{"type": "string"},
+					"error":  map[string]any{"type": "string"},
+				},
+			},
+			"HealthResponse": map[string]any{
+				"type":     "object",
+				"required": []string{"status", "version", "checks"},
+				"properties": map[string]any{
+					"status":  map[string]any{"type": "string"},
+					"version": map[string]any{"type": "string"},
+					"checks": map[string]any{
+						"type": "object",
+						"additionalProperties": map[string]any{
+							"$ref": "#/components/schemas/HealthCheck",
+						},
+					},
+				},
+			},
+			"Problem": map[string]any{
+				"type":                 "object",
+				"additionalProperties": true,
+				"required":             []string{"type", "title", "status"},
 				"properties": map[string]any{
 					"type":     map[string]any{"type": "string", "format": "uri-reference"},
 					"title":    map[string]any{"type": "string"},
@@ -63,6 +86,40 @@ func OpenAPIDocument(version string, fragments ...OpenAPIFragment) map[string]an
 	}
 
 	return document
+}
+
+func platformOpenAPIPaths() map[string]any {
+	healthOperation := map[string]any{
+		"summary": "Read platform health",
+		"tags":    []string{"platform"},
+		"responses": map[string]any{
+			"200": map[string]any{
+				"description": "Platform health status",
+				"content": map[string]any{
+					"application/json": map[string]any{
+						"schema": map[string]any{"$ref": "#/components/schemas/HealthResponse"},
+					},
+				},
+			},
+			"503": map[string]any{
+				"description": "Platform dependency is unavailable",
+				"content": map[string]any{
+					ProblemContentType: map[string]any{
+						"schema": map[string]any{"$ref": "#/components/schemas/Problem"},
+					},
+				},
+			},
+		},
+	}
+
+	return map[string]any{
+		"/healthz": map[string]any{
+			"get": healthOperation,
+		},
+		"/readyz": map[string]any{
+			"get": healthOperation,
+		},
+	}
 }
 
 func mergeComponents(dst, src map[string]any) {

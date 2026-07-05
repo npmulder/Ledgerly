@@ -25,3 +25,8 @@ tasks:
     desc: Run frontend TypeScript checks
     cmds:
       - npm run typecheck
+
+  api:generate:
+    desc: Generate TypeScript API types from the running server OpenAPI spec
+    cmds:
+      - npm run api:generate
