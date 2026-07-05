@@ -262,6 +262,8 @@ export interface components {
             status: string;
         };
         HealthResponse: {
+            /** Format: date-time */
+            checked_at: string;
             checks: {
                 [key: string]: components["schemas"]["HealthCheck"];
             };
