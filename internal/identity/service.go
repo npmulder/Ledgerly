@@ -88,27 +88,42 @@ func NewService(store Store, clk clock.Clock, opts ...ServiceOption) *Service {
 
 // ProfileService implements the company-profile API.
 type ProfileService struct {
-	tx    db.Tx
-	bus   *bus.Bus
-	store profileStore
+	tx     db.Tx
+	bus    *bus.Bus
+	store  profileStore
+	assets fileAssetStore
 }
 
 var _ Identity = (*ProfileService)(nil)
 
+type ProfileOption func(*ProfileService)
+
+// WithDataDir configures disk-backed asset storage for profile APIs.
+func WithDataDir(dataDir string) ProfileOption {
+	return func(s *ProfileService) {
+		s.assets = fileAssetStore{dataDir: dataDir}
+	}
+}
+
 // New returns a profile API bound to tx. The caller owns the transaction
 // lifetime; UpdateProfile publishes its event on the supplied transaction.
-func New(tx db.Tx, eventBus *bus.Bus) *ProfileService {
-	return NewProfileService(tx, eventBus)
+func New(tx db.Tx, eventBus *bus.Bus, opts ...ProfileOption) *ProfileService {
+	return NewProfileService(tx, eventBus, opts...)
 }
 
 // NewProfileService returns a profile API bound to tx. The caller owns the
 // transaction lifetime; UpdateProfile publishes its event on tx.
-func NewProfileService(tx db.Tx, eventBus *bus.Bus) *ProfileService {
-	return &ProfileService{
-		tx:    tx,
-		bus:   eventBus,
-		store: profileStore{},
+func NewProfileService(tx db.Tx, eventBus *bus.Bus, opts ...ProfileOption) *ProfileService {
+	service := &ProfileService{
+		tx:     tx,
+		bus:    eventBus,
+		store:  profileStore{},
+		assets: fileAssetStoreFromEnv(),
 	}
+	for _, opt := range opts {
+		opt(service)
+	}
+	return service
 }
 
 // Profile returns the current company profile.
@@ -141,13 +156,68 @@ func (s *ProfileService) UpdateProfile(ctx context.Context, patch UpdateProfileP
 			return err
 		}
 	}
-	if s.bus == nil {
-		return nil
+	return s.publishProfileUpdated(ctx)
+}
+
+// ReplaceLogo stores upload as a content-addressed logo asset, points the
+// company profile at the new asset row, and publishes ProfileUpdated.
+func (s *ProfileService) ReplaceLogo(ctx context.Context, upload LogoUpload) (AssetID, error) {
+	validated, err := validateLogoUpload(upload)
+	if err != nil {
+		return "", err
 	}
-	if err := s.bus.Publish(ctx, s.tx, ProfileUpdated{}); err != nil {
-		return fmt.Errorf("publish profile updated: %w", err)
+	if err := s.assets.write(validated.sha256, validated.bytes); err != nil {
+		return "", err
 	}
-	return nil
+
+	id, err := newAssetID()
+	if err != nil {
+		return "", err
+	}
+	if err := s.store.createAsset(ctx, s.tx, assetRecord{
+		ID:     id,
+		SHA256: validated.sha256,
+		MIME:   validated.mime,
+		Size:   validated.size,
+	}); err != nil {
+		return "", err
+	}
+
+	profile, err := s.store.profileForUpdate(ctx, s.tx)
+	if err != nil {
+		return "", err
+	}
+	profile.LogoAssetID = &id
+	if err := s.store.updateProfile(ctx, s.tx, profile); err != nil {
+		return "", err
+	}
+	if err := s.publishProfileUpdated(ctx); err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+// Asset returns a stored asset's metadata and bytes.
+func (s *ProfileService) Asset(ctx context.Context, id AssetID) (Asset, error) {
+	record, err := s.store.asset(ctx, s.tx, id)
+	if err != nil {
+		return Asset{}, err
+	}
+	data, err := s.assets.read(record.SHA256)
+	if err != nil {
+		return Asset{}, err
+	}
+	if int64(len(data)) != record.Size {
+		return Asset{}, fmt.Errorf("identity: asset %s size = %d, want %d", record.ID, len(data), record.Size)
+	}
+	return Asset{
+		ID:        record.ID,
+		SHA256:    record.SHA256,
+		MIME:      record.MIME,
+		Size:      record.Size,
+		CreatedAt: record.CreatedAt,
+		Bytes:     data,
+	}, nil
 }
 
 // CompanyFacts returns identity facts consumed by jurisdiction and reports.
@@ -160,6 +230,16 @@ func (s *ProfileService) CompanyFacts(ctx context.Context) (CompanyFacts, error)
 		IncorporationDate: profile.IncorporationDate,
 		YearEnd:           profile.YearEnd,
 	}, nil
+}
+
+func (s *ProfileService) publishProfileUpdated(ctx context.Context) error {
+	if s.bus == nil {
+		return nil
+	}
+	if err := s.bus.Publish(ctx, s.tx, ProfileUpdated{}); err != nil {
+		return fmt.Errorf("publish profile updated: %w", err)
+	}
+	return nil
 }
 
 func (s *Service) Register(ctx context.Context, input RegisterInput) (User, error) {

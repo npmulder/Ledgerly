@@ -19,6 +19,9 @@ var (
 	ErrInvalidCredentials = errors.New("invalid credentials")
 	ErrUnauthenticated    = errors.New("unauthenticated")
 	ErrUserNotFound       = errors.New("user not found")
+	ErrAssetNotFound      = errors.New("identity: asset not found")
+	ErrAssetTooLarge      = errors.New("identity: asset exceeds maximum size")
+	ErrUnsupportedAsset   = errors.New("identity: unsupported asset MIME type")
 )
 
 // Identity is the company-profile API exposed to other modules.
@@ -28,6 +31,8 @@ var (
 type Identity interface {
 	Profile(context.Context) (CompanyProfile, error)
 	UpdateProfile(context.Context, UpdateProfilePatch) error
+	ReplaceLogo(context.Context, LogoUpload) (AssetID, error)
+	Asset(context.Context, AssetID) (Asset, error)
 	CompanyFacts(context.Context) (CompanyFacts, error)
 }
 
@@ -69,10 +74,24 @@ type Shareholder struct {
 	Class  string `json:"class"`
 }
 
-// AssetID is the opaque identifier for a logo asset owned by the future asset
-// store. ID-1 only carries the nullable reference; it does not implement logo
-// storage.
+// AssetID is the opaque identifier for a logo asset.
 type AssetID string
+
+// LogoUpload is a validated image upload candidate for the company logo.
+type LogoUpload struct {
+	MIME  string
+	Bytes []byte
+}
+
+// Asset is the stored logo asset read model.
+type Asset struct {
+	ID        AssetID
+	SHA256    string
+	MIME      string
+	Size      int64
+	CreatedAt time.Time
+	Bytes     []byte
+}
 
 // YearEnd stores the company's accounting year end as month and day.
 type YearEnd struct {

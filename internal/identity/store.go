@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -162,6 +163,14 @@ func (s *PostgresStore) DeleteExpiredSessions(ctx context.Context, now time.Time
 
 type profileStore struct{}
 
+type assetRecord struct {
+	ID        AssetID
+	SHA256    string
+	MIME      string
+	Size      int64
+	CreatedAt time.Time
+}
+
 func (profileStore) profile(ctx context.Context, tx db.Tx) (CompanyProfile, error) {
 	return scanProfile(ctx, tx, "")
 }
@@ -257,6 +266,117 @@ WHERE id = 1`,
 	)
 	if err != nil {
 		return fmt.Errorf("update company profile: %w", err)
+	}
+	return nil
+}
+
+func (profileStore) createAsset(ctx context.Context, tx db.Tx, record assetRecord) error {
+	id, err := assetUUID(record.ID)
+	if err != nil {
+		return err
+	}
+
+	_, err = tx.Exec(ctx, `
+INSERT INTO identity.assets (
+	id,
+	sha256,
+	mime,
+	size
+) VALUES (
+	$1,
+	$2,
+	$3,
+	$4
+)`,
+		id,
+		record.SHA256,
+		record.MIME,
+		record.Size,
+	)
+	if err != nil {
+		return fmt.Errorf("create identity asset: %w", err)
+	}
+	return nil
+}
+
+func (profileStore) ensureAsset(ctx context.Context, tx db.Tx, record assetRecord) error {
+	id, err := assetUUID(record.ID)
+	if err != nil {
+		return err
+	}
+
+	_, err = tx.Exec(ctx, `
+INSERT INTO identity.assets (
+	id,
+	sha256,
+	mime,
+	size
+) VALUES (
+	$1,
+	$2,
+	$3,
+	$4
+)
+ON CONFLICT (id) DO NOTHING`,
+		id,
+		record.SHA256,
+		record.MIME,
+		record.Size,
+	)
+	if err != nil {
+		return fmt.Errorf("ensure identity asset: %w", err)
+	}
+	return nil
+}
+
+func (profileStore) asset(ctx context.Context, tx db.Tx, id AssetID) (assetRecord, error) {
+	assetID, err := assetUUID(id)
+	if err != nil {
+		return assetRecord{}, err
+	}
+
+	var (
+		record assetRecord
+		uuid   pgtype.UUID
+	)
+	err = tx.QueryRow(ctx, `
+SELECT id,
+	sha256,
+	mime,
+	size,
+	created_at
+FROM identity.assets
+WHERE id = $1`, assetID).
+		Scan(
+			&uuid,
+			&record.SHA256,
+			&record.MIME,
+			&record.Size,
+			&record.CreatedAt,
+		)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return assetRecord{}, ErrAssetNotFound
+	}
+	if err != nil {
+		return assetRecord{}, fmt.Errorf("select identity asset: %w", err)
+	}
+	record.ID = AssetID(uuid.String())
+	return record, nil
+}
+
+func (profileStore) setProfileLogoAssetIDIfEmpty(ctx context.Context, tx db.Tx, id AssetID) error {
+	assetID, err := assetUUID(id)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `
+UPDATE identity.company_profile
+SET logo_asset_id = $1,
+	updated_at = now()
+WHERE id = 1
+	AND logo_asset_id IS NULL`, assetID)
+	if err != nil {
+		return fmt.Errorf("seed company profile logo: %w", err)
 	}
 	return nil
 }
@@ -378,8 +498,16 @@ func nullableUUID(id *AssetID) (pgtype.UUID, error) {
 	if id == nil || *id == "" {
 		return pgtype.UUID{}, nil
 	}
+	return assetUUID(*id)
+}
+
+func assetUUID(id AssetID) (pgtype.UUID, error) {
+	trimmed := strings.TrimSpace(string(id))
+	if trimmed == "" {
+		return pgtype.UUID{}, fmt.Errorf("identity: asset id is required")
+	}
 	var uuid pgtype.UUID
-	if err := uuid.Scan(string(*id)); err != nil {
+	if err := uuid.Scan(trimmed); err != nil {
 		return pgtype.UUID{}, fmt.Errorf("parse logo asset id: %w", err)
 	}
 	return uuid, nil
