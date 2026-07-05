@@ -30,7 +30,7 @@ RUN set -eux; \
 	if [ -n "${TARGETARCH:-}" ]; then export GOARCH="${TARGETARCH}"; fi; \
 	go build -trimpath -ldflags="-s -w -X main.version=${GIT_SHA}" -o /out/ledgerly ./cmd/ledgerly
 
-FROM chromedp/headless-shell:latest AS golden-test
+FROM chromedp/headless-shell@sha256:6b48adef158c57ef401977e1d18e4100c605b0407162e3d12f7c80b1b9bfdaaa AS golden-test
 
 USER root
 

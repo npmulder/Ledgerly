@@ -2,6 +2,7 @@ version: "3"
 
 vars:
   GOLANGCI_LINT_VERSION: v2.8.0
+  GO_TEST_ARGS: ""
 
 includes:
   web:
@@ -38,7 +39,7 @@ tasks:
     cmds:
       - task: golden:docker
         vars:
-          CLI_ARGS: "-run TestPDFMatchesGolden -update"
+          GO_TEST_ARGS: "-run TestPDFMatchesGolden -update"
 
   golden:docker:
     desc: Run document golden tests inside the deterministic Chromium image
@@ -59,7 +60,7 @@ tasks:
           -v "{{.ROOT_DIR}}:/src" \
           -w /src \
           ledgerly-golden-test:local \
-          go test ./internal/it/golden {{.CLI_ARGS}}
+          go test ./internal/it/golden {{.GO_TEST_ARGS}} {{.CLI_ARGS}}
 
   lint:
     desc: Run all lint checks

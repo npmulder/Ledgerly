@@ -164,6 +164,20 @@ type paths struct {
 	png  string
 }
 
+type textSegment struct {
+	text  pdfreader.Text
+	value string
+	start int
+	end   int
+}
+
+type textRedaction struct {
+	text  pdfreader.Text
+	value string
+	start int
+	end   int
+}
+
 func goldenPaths(name string) (paths, error) {
 	clean, err := cleanName(name)
 	if err != nil {
@@ -391,7 +405,13 @@ func extractPDFText(pdfBytes []byte) (string, error) {
 }
 
 func textLine(texts pdfreader.TextHorizontal) string {
+	line, _ := textLineSegments(texts)
+	return line
+}
+
+func textLineSegments(texts pdfreader.TextHorizontal) (string, []textSegment) {
 	var line strings.Builder
+	segments := make([]textSegment, 0, len(texts))
 	var prevRight float64
 	for i, text := range texts {
 		rawChunk := strings.ReplaceAll(text.S, "\t", " ")
@@ -402,10 +422,17 @@ func textLine(texts pdfreader.TextHorizontal) string {
 		if line.Len() > 0 && i > 0 && (strings.HasPrefix(rawChunk, " ") || text.X-prevRight > math.Max(1, text.FontSize*0.2)) {
 			line.WriteByte(' ')
 		}
+		start := line.Len()
 		line.WriteString(chunk)
+		segments = append(segments, textSegment{
+			text:  text,
+			value: chunk,
+			start: start,
+			end:   line.Len(),
+		})
 		prevRight = text.X + text.W
 	}
-	return strings.TrimSpace(line.String())
+	return line.String(), segments
 }
 
 func newPDFReader(pdfBytes []byte) (*pdfreader.Reader, error) {
@@ -468,25 +495,77 @@ func redactMaskedText(pdfBytes []byte, pages []*image.RGBA, masks []textMask, dp
 		}
 		for _, row := range rows {
 			sort.Sort(row.Content)
-			line := textLine(row.Content)
-			if !matchesAnyMask(line, masks) {
-				continue
-			}
-			for _, text := range row.Content {
-				redactTextBounds(img, text, dpi)
+			line, segments := textLineSegments(row.Content)
+			for _, redaction := range textRedactionsForMasks(line, segments, masks) {
+				redactTextSpanBounds(img, redaction, dpi)
 			}
 		}
 	}
 	return nil
 }
 
-func matchesAnyMask(text string, masks []textMask) bool {
+func textRedactionsForMasks(line string, segments []textSegment, masks []textMask) []textRedaction {
+	redactions := make([]textRedaction, 0)
 	for _, mask := range masks {
-		if mask.re.MatchString(text) {
-			return true
+		for _, match := range mask.re.FindAllStringIndex(line, -1) {
+			for _, segment := range segments {
+				start := match[0]
+				if start < segment.start {
+					start = segment.start
+				}
+				end := match[1]
+				if end > segment.end {
+					end = segment.end
+				}
+				if start >= end {
+					continue
+				}
+				redactions = append(redactions, textRedaction{
+					text:  segment.text,
+					value: segment.value,
+					start: start - segment.start,
+					end:   end - segment.start,
+				})
+			}
 		}
 	}
-	return false
+	return redactions
+}
+
+func redactTextSpanBounds(img *image.RGBA, redaction textRedaction, dpi float64) {
+	if redaction.start <= 0 && redaction.end >= len(redaction.value) {
+		redactTextBounds(img, redaction.text, dpi)
+		return
+	}
+	if redaction.start < 0 {
+		redaction.start = 0
+	}
+	if redaction.end > len(redaction.value) {
+		redaction.end = len(redaction.value)
+	}
+	if redaction.start >= redaction.end {
+		return
+	}
+
+	width := redaction.text.W
+	if width <= 0 {
+		width = approximateTextWidth(redaction.value, redaction.text.FontSize)
+	}
+	totalRunes := len([]rune(redaction.value))
+	if totalRunes == 0 {
+		return
+	}
+	prefixRunes := len([]rune(redaction.value[:redaction.start]))
+	spanRunes := len([]rune(redaction.value[redaction.start:redaction.end]))
+	if spanRunes == 0 {
+		return
+	}
+
+	spanText := redaction.text
+	spanText.S = redaction.value[redaction.start:redaction.end]
+	spanText.X = redaction.text.X + width*(float64(prefixRunes)/float64(totalRunes))
+	spanText.W = width * (float64(spanRunes) / float64(totalRunes))
+	redactTextBounds(img, spanText, dpi)
 }
 
 func redactTextBounds(img *image.RGBA, text pdfreader.Text, dpi float64) {
@@ -566,7 +645,7 @@ func hashImages(images []*image.RGBA, dpi float64) string {
 		bounds := img.Bounds()
 		_, _ = fmt.Fprintf(h, "page=%d width=%d height=%d stride=%d\n", i+1, bounds.Dx(), bounds.Dy(), img.Stride)
 		for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
-			start := (y-bounds.Min.Y)*img.Stride + (bounds.Min.X * 4)
+			start := img.PixOffset(bounds.Min.X, y)
 			end := start + bounds.Dx()*4
 			_, _ = h.Write(img.Pix[start:end])
 		}

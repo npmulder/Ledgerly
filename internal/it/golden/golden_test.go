@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
+	pdfreader "github.com/ledongthuc/pdf"
 )
 
 const (
@@ -108,6 +110,46 @@ func TestUpdateModeGuard(t *testing.T) {
 	}
 	if !strings.Contains(string(output), "refusing to run -update while CI=true") {
 		t.Fatalf("CI -update guard output missing guard message:\n%s", output)
+	}
+}
+
+func TestRasterMaskRedactsOnlyMatchingTextSpans(t *testing.T) {
+	masks := []textMask{{
+		pattern: timestampPattern,
+		re:      regexp.MustCompile(timestampPattern),
+	}}
+
+	row := pdfreader.TextHorizontal{
+		{X: 10, Y: 20, W: 64, S: "Generated:"},
+		{X: 84, Y: 20, W: 132, S: baseTimestamp},
+		{X: 230, Y: 20, W: 136, S: "Total: GBP 1,234.56"},
+	}
+	line, segments := textLineSegments(row)
+	redactions := textRedactionsForMasks(line, segments, masks)
+	if len(redactions) != 1 {
+		t.Fatalf("redactions = %d, want 1 for line %q", len(redactions), line)
+	}
+	if redactions[0].value[redactions[0].start:redactions[0].end] != baseTimestamp {
+		t.Fatalf("redacted %q, want timestamp only", redactions[0].value[redactions[0].start:redactions[0].end])
+	}
+
+	singleChunk := pdfreader.TextHorizontal{{
+		X: 10,
+		Y: 20,
+		W: 360,
+		S: "Generated: " + baseTimestamp + " Total: GBP 1,234.56",
+	}}
+	line, segments = textLineSegments(singleChunk)
+	redactions = textRedactionsForMasks(line, segments, masks)
+	if len(redactions) != 1 {
+		t.Fatalf("single-chunk redactions = %d, want 1 for line %q", len(redactions), line)
+	}
+	got := redactions[0].value[redactions[0].start:redactions[0].end]
+	if got != baseTimestamp {
+		t.Fatalf("single-chunk redacted %q, want timestamp only", got)
+	}
+	if redactions[0].start == 0 || redactions[0].end == len(redactions[0].value) {
+		t.Fatalf("single-chunk redaction covered the full text chunk: %+v", redactions[0])
 	}
 }
 

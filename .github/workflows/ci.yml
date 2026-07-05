@@ -183,6 +183,19 @@ jobs:
       - name: Unit tests
         run: task test
 
+  golden-snapshots:
+    name: golden snapshots
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Task
+        uses: arduino/setup-task@v2
+
+      - name: Golden PDF snapshots
+        run: task golden:docker
+
   lint:
     name: lint
     runs-on: ubuntu-latest
