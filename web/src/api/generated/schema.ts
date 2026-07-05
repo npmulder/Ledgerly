@@ -450,7 +450,6 @@ export interface operations {
                 content: {
                     "image/jpeg": string;
                     "image/png": string;
-                    "image/svg+xml": string;
                 };
             };
             /** @description Authentication required */

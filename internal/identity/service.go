@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/npmulder/ledgerly/internal/platform/bus"
 	"github.com/npmulder/ledgerly/internal/platform/clock"
 	"github.com/npmulder/ledgerly/internal/platform/db"
@@ -126,6 +128,74 @@ func NewProfileService(tx db.Tx, eventBus *bus.Bus, opts ...ProfileOption) *Prof
 	return service
 }
 
+// TransactionalProfileService owns database transactions for profile commands
+// while exposing the same identity API to HTTP wiring.
+type TransactionalProfileService struct {
+	pool *pgxpool.Pool
+	bus  *bus.Bus
+	opts []ProfileOption
+}
+
+var _ Identity = (*TransactionalProfileService)(nil)
+
+// NewTransactionalProfileService returns a profile API that opens a transaction
+// for mutating operations and binds event publication to that transaction.
+func NewTransactionalProfileService(pool *pgxpool.Pool, eventBus *bus.Bus, opts ...ProfileOption) *TransactionalProfileService {
+	copiedOpts := append([]ProfileOption{}, opts...)
+	return &TransactionalProfileService{
+		pool: pool,
+		bus:  eventBus,
+		opts: copiedOpts,
+	}
+}
+
+func (s *TransactionalProfileService) Profile(ctx context.Context) (CompanyProfile, error) {
+	return NewProfileService(s.pool, s.bus, s.opts...).Profile(ctx)
+}
+
+func (s *TransactionalProfileService) UpdateProfile(ctx context.Context, patch UpdateProfilePatch) error {
+	return s.withTransaction(ctx, func(api *ProfileService) error {
+		return api.UpdateProfile(ctx, patch)
+	})
+}
+
+func (s *TransactionalProfileService) ReplaceLogo(ctx context.Context, upload LogoUpload) (id AssetID, err error) {
+	err = s.withTransaction(ctx, func(api *ProfileService) error {
+		var replaceErr error
+		id, replaceErr = api.ReplaceLogo(ctx, upload)
+		return replaceErr
+	})
+	return id, err
+}
+
+func (s *TransactionalProfileService) Asset(ctx context.Context, id AssetID) (Asset, error) {
+	return NewProfileService(s.pool, s.bus, s.opts...).Asset(ctx, id)
+}
+
+func (s *TransactionalProfileService) CompanyFacts(ctx context.Context) (CompanyFacts, error) {
+	return NewProfileService(s.pool, s.bus, s.opts...).CompanyFacts(ctx)
+}
+
+func (s *TransactionalProfileService) withTransaction(ctx context.Context, fn func(*ProfileService) error) (err error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("identity: begin profile transaction: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	if err = fn(NewProfileService(tx, s.bus, s.opts...)); err != nil {
+		return err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return fmt.Errorf("identity: commit profile transaction: %w", err)
+	}
+	return nil
+}
+
 // Profile returns the current company profile.
 func (s *ProfileService) Profile(ctx context.Context) (CompanyProfile, error) {
 	return s.store.profile(ctx, s.tx)
@@ -141,6 +211,18 @@ func (s *ProfileService) UpdateProfile(ctx context.Context, patch UpdateProfileP
 		profile = CompanyProfile{}
 	} else if err != nil {
 		return err
+	}
+
+	if patch.LogoAssetID != nil {
+		logoAssetID := AssetID(strings.TrimSpace(string(*patch.LogoAssetID)))
+		if logoAssetID != "" {
+			if _, err := s.store.asset(ctx, s.tx, logoAssetID); err != nil {
+				if errors.Is(err, ErrAssetNotFound) {
+					return fmt.Errorf("identity: logo asset id %s was not found: %w", logoAssetID, err)
+				}
+				return err
+			}
+		}
 	}
 
 	updated, err := patch.apply(profile)

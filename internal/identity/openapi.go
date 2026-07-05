@@ -198,9 +198,8 @@ func assetResponse() map[string]any {
 			},
 		},
 		"content": map[string]any{
-			"image/png":     map[string]any{"schema": binarySchema},
-			"image/jpeg":    map[string]any{"schema": binarySchema},
-			"image/svg+xml": map[string]any{"schema": binarySchema},
+			"image/png":  map[string]any{"schema": binarySchema},
+			"image/jpeg": map[string]any{"schema": binarySchema},
 		},
 	}
 }

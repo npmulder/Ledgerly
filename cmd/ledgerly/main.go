@@ -275,7 +275,7 @@ func runServe(ctx context.Context) (err error) {
 
 	eventBus := bus.New(bus.WithLogger(logger))
 	identityService := identity.NewService(identity.NewPostgresStore(identityPool), clock.New())
-	identityProfile := identity.NewProfileService(identityPool, eventBus)
+	identityProfile := identity.NewTransactionalProfileService(identityPool, eventBus, identity.WithDataDir(cfg.DataDir))
 	identityHandler := identity.NewHTTPHandler(identityService, identity.WithProfileAPI(identityProfile))
 
 	router, err := buildApplicationRouter(applicationWiring{

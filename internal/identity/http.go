@@ -324,7 +324,7 @@ func (h *HTTPHandler) getAsset(w nethttp.ResponseWriter, r *nethttp.Request) {
 	}
 
 	w.Header().Set("Content-Type", asset.MIME)
-	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
 	w.Header().Set("Content-Length", strconv.FormatInt(int64(len(asset.Bytes)), 10))
 	w.WriteHeader(nethttp.StatusOK)
 	_, _ = w.Write(asset.Bytes)
@@ -409,6 +409,9 @@ func decodeProfilePatch(w nethttp.ResponseWriter, r *nethttp.Request) (UpdatePro
 		case "company_number":
 			assignStringPatch(value, "/company_number", &patch.CompanyNumber, &fieldErrors)
 		case "registered_office":
+			if rejectJSONNull(value, "/registered_office", "must be an object with address fields", &fieldErrors) {
+				continue
+			}
 			var office RegisteredOffice
 			if err := decodeStrict(value, &office); err != nil {
 				fieldErrors = append(fieldErrors, fieldError{Pointer: "/registered_office", Detail: "must be an object with address fields"})
@@ -418,6 +421,9 @@ func decodeProfilePatch(w nethttp.ResponseWriter, r *nethttp.Request) (UpdatePro
 		case "incorporation_date":
 			assignStringPatch(value, "/incorporation_date", &patch.IncorporationDate, &fieldErrors)
 		case "year_end":
+			if rejectJSONNull(value, "/year_end", "must be an object with month and day", &fieldErrors) {
+				continue
+			}
 			var yearEnd yearEndResponse
 			if err := decodeStrict(value, &yearEnd); err != nil {
 				fieldErrors = append(fieldErrors, fieldError{Pointer: "/year_end", Detail: "must be an object with month and day"})
@@ -432,6 +438,9 @@ func decodeProfilePatch(w nethttp.ResponseWriter, r *nethttp.Request) (UpdatePro
 			}
 			assignStringPatch(value, "/vat_number", &patch.VATNumber, &fieldErrors)
 		case "bank_details":
+			if rejectJSONNull(value, "/bank_details", "must be an object with bank detail fields", &fieldErrors) {
+				continue
+			}
 			var bankDetails BankDetails
 			if err := decodeStrict(value, &bankDetails); err != nil {
 				fieldErrors = append(fieldErrors, fieldError{Pointer: "/bank_details", Detail: "must be an object with bank detail fields"})
@@ -439,6 +448,9 @@ func decodeProfilePatch(w nethttp.ResponseWriter, r *nethttp.Request) (UpdatePro
 			}
 			patch.BankDetails = &bankDetails
 		case "shareholders":
+			if rejectJSONNull(value, "/shareholders", "must be an array of shareholders", &fieldErrors) {
+				continue
+			}
 			var shareholders []Shareholder
 			if err := decodeStrict(value, &shareholders); err != nil {
 				fieldErrors = append(fieldErrors, fieldError{Pointer: "/shareholders", Detail: "must be an array of shareholders"})
@@ -464,6 +476,14 @@ func decodeProfilePatch(w nethttp.ResponseWriter, r *nethttp.Request) (UpdatePro
 	}
 
 	return patch, fieldErrors, nil
+}
+
+func rejectJSONNull(value json.RawMessage, pointer string, detail string, fieldErrors *[]fieldError) bool {
+	if !isJSONNull(value) {
+		return false
+	}
+	*fieldErrors = append(*fieldErrors, fieldError{Pointer: pointer, Detail: detail})
+	return true
 }
 
 func assignStringPatch(value json.RawMessage, pointer string, dst **string, fieldErrors *[]fieldError) {

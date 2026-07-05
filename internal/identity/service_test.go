@@ -259,7 +259,6 @@ func TestValidateLogoUploadAcceptsSupportedImageTypes(t *testing.T) {
 	}{
 		{name: "png", mime: "image/png", bytes: testPNG(t)},
 		{name: "jpeg", mime: "image/jpeg", bytes: testJPEG(t)},
-		{name: "svg", mime: "image/svg+xml", bytes: []byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"></svg>`)},
 	}
 
 	for _, test := range tests {
@@ -364,6 +363,23 @@ func TestReplaceLogoRejectsOversizedAndWrongMIME(t *testing.T) {
 
 	if _, err := service.ReplaceLogo(ctx, LogoUpload{MIME: "text/plain", Bytes: testPNG(t)}); !errors.Is(err, ErrUnsupportedAsset) {
 		t.Fatalf("ReplaceLogo() wrong MIME error = %v, want ErrUnsupportedAsset", err)
+	}
+
+	if _, err := service.ReplaceLogo(ctx, LogoUpload{
+		MIME:  "image/svg+xml",
+		Bytes: []byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"></svg>`),
+	}); !errors.Is(err, ErrUnsupportedAsset) {
+		t.Fatalf("ReplaceLogo() svg error = %v, want ErrUnsupportedAsset", err)
+	}
+}
+
+func TestUpdateProfileRejectsUnknownLogoAssetID(t *testing.T) {
+	ctx, tx := migratedIdentityTx(t)
+	service := New(tx, discardBus(), WithDataDir(t.TempDir()))
+
+	id := AssetID("17830098-8109-4a00-8b00-000000009999")
+	if err := service.UpdateProfile(ctx, UpdateProfilePatch{LogoAssetID: &id}); !errors.Is(err, ErrAssetNotFound) {
+		t.Fatalf("UpdateProfile() unknown logo asset id error = %v, want ErrAssetNotFound", err)
 	}
 }
 

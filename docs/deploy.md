@@ -48,6 +48,7 @@ The production image includes `db/migrations` and defaults `LEDGERLY_MIGRATIONS_
 | `POSTGRES_PASSWORD` | yes | `ledgerly` | PostgreSQL password for the app role. Replace for any shared environment. |
 | `POSTGRES_DB` | yes | `ledgerly` | PostgreSQL database name. |
 | `LEDGERLY_DATABASE_URL` | yes | `postgres://ledgerly:ledgerly@db:5432/ledgerly?sslmode=disable` | App database connection string. |
+| `LEDGERLY_DATA_DIR` | yes | `/var/lib/ledgerly` | Persistent app data root for content-addressed identity assets. |
 | `LEDGERLY_MIGRATIONS_DIR` | no | `/usr/local/share/ledgerly/db/migrations` | Container path to packaged SQL migrations for one-off `ledgerly migrate` runs. |
 | `LEDGERLY_ENV` | yes | `prod` | Runtime environment; valid values are `dev` and `prod`. |
 | `LEDGERLY_LOG_LEVEL` | yes | `info` | Structured log level: `debug`, `info`, `warn`, or `error`. |

@@ -250,8 +250,8 @@ func TestLogoUploadUpdatesProfileAndAssetIsImmutable(t *testing.T) {
 	registerOwner(t, router)
 	cookie := loginOwner(t, router)
 
-	logoBytes := []byte(`<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><rect width="1" height="1"/></svg>`)
-	upload := performMultipartLogo(router, "/api/identity/logo", "logo.svg", "image/svg+xml", logoBytes, cookie)
+	logoBytes := testPNG(t)
+	upload := performMultipartLogo(router, "/api/identity/logo", "logo.png", "image/png", logoBytes, cookie)
 	if upload.Code != nethttp.StatusOK {
 		t.Fatalf("logo upload status = %d, want %d; body=%s", upload.Code, nethttp.StatusOK, upload.Body.String())
 	}
@@ -276,14 +276,14 @@ func TestLogoUploadUpdatesProfileAndAssetIsImmutable(t *testing.T) {
 	if asset.Code != nethttp.StatusOK {
 		t.Fatalf("asset status = %d, want %d; body=%s", asset.Code, nethttp.StatusOK, asset.Body.String())
 	}
-	if got := asset.Header().Get("Content-Type"); got != "image/svg+xml" {
-		t.Fatalf("asset Content-Type = %q, want image/svg+xml", got)
+	if got := asset.Header().Get("Content-Type"); got != "image/png" {
+		t.Fatalf("asset Content-Type = %q, want image/png", got)
 	}
-	if got := asset.Header().Get("Cache-Control"); !strings.Contains(got, "immutable") {
-		t.Fatalf("asset Cache-Control = %q, want immutable directive", got)
+	if got := asset.Header().Get("Cache-Control"); got != "private, max-age=31536000, immutable" {
+		t.Fatalf("asset Cache-Control = %q, want private immutable directive", got)
 	}
 	if !bytes.Equal(asset.Body.Bytes(), logoBytes) {
-		t.Fatalf("asset bytes = %q, want uploaded SVG bytes", asset.Body.String())
+		t.Fatal("asset bytes do not match uploaded PNG")
 	}
 }
 
@@ -321,6 +321,49 @@ func TestInvalidProfilePatchReturnsFieldPointers(t *testing.T) {
 	}
 }
 
+func TestProfilePatchRejectsNullStructuredFields(t *testing.T) {
+	router, _, _, _ := newTestRouterWithProfile(t, LoginRateLimit{Capacity: 100, RefillEvery: time.Hour})
+	registerOwner(t, router)
+	cookie := loginOwner(t, router)
+
+	for _, tc := range []struct {
+		name    string
+		body    map[string]any
+		pointer string
+	}{
+		{name: "registered office", body: map[string]any{"registered_office": nil}, pointer: "/registered_office"},
+		{name: "bank details", body: map[string]any{"bank_details": nil}, pointer: "/bank_details"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			response := performJSON(router, nethttp.MethodPatch, "/api/identity/profile", tc.body, cookie)
+			if response.Code != nethttp.StatusUnprocessableEntity {
+				t.Fatalf("null structured field status = %d, want %d; body=%s", response.Code, nethttp.StatusUnprocessableEntity, response.Body.String())
+			}
+			problem := decodeValidationProblem(t, response)
+			if len(problem.Errors) != 1 || problem.Errors[0].Pointer != tc.pointer {
+				t.Fatalf("problem errors = %+v, want pointer %s", problem.Errors, tc.pointer)
+			}
+		})
+	}
+}
+
+func TestProfilePatchRejectsUnknownLogoAssetID(t *testing.T) {
+	router, _, _, _ := newTestRouterWithProfile(t, LoginRateLimit{Capacity: 100, RefillEvery: time.Hour})
+	registerOwner(t, router)
+	cookie := loginOwner(t, router)
+
+	response := performJSON(router, nethttp.MethodPatch, "/api/identity/profile", map[string]string{
+		"logo_asset_id": "17830098-8109-4a00-8b00-000000009999",
+	}, cookie)
+	if response.Code != nethttp.StatusUnprocessableEntity {
+		t.Fatalf("unknown logo asset id status = %d, want %d; body=%s", response.Code, nethttp.StatusUnprocessableEntity, response.Body.String())
+	}
+	problem := decodeValidationProblem(t, response)
+	if len(problem.Errors) != 1 || problem.Errors[0].Pointer != "/logo_asset_id" {
+		t.Fatalf("problem errors = %+v, want pointer /logo_asset_id", problem.Errors)
+	}
+}
+
 func TestLogoUploadRejectsOversizedPayloadAtHTTPBoundary(t *testing.T) {
 	router, _, _, _ := newTestRouterWithProfile(t, LoginRateLimit{Capacity: 100, RefillEvery: time.Hour})
 	registerOwner(t, router)
@@ -336,6 +379,24 @@ func TestLogoUploadRejectsOversizedPayloadAtHTTPBoundary(t *testing.T) {
 	)
 	if response.Code != nethttp.StatusRequestEntityTooLarge {
 		t.Fatalf("oversized logo status = %d, want %d; body=%s", response.Code, nethttp.StatusRequestEntityTooLarge, response.Body.String())
+	}
+}
+
+func TestLogoUploadRejectsSVG(t *testing.T) {
+	router, _, _, _ := newTestRouterWithProfile(t, LoginRateLimit{Capacity: 100, RefillEvery: time.Hour})
+	registerOwner(t, router)
+	cookie := loginOwner(t, router)
+
+	response := performMultipartLogo(
+		router,
+		"/api/identity/logo",
+		"logo.svg",
+		"image/svg+xml",
+		[]byte(`<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`),
+		cookie,
+	)
+	if response.Code != nethttp.StatusUnsupportedMediaType {
+		t.Fatalf("svg logo status = %d, want %d; body=%s", response.Code, nethttp.StatusUnsupportedMediaType, response.Body.String())
 	}
 }
 
@@ -462,7 +523,7 @@ func newTestRouterWithProfile(t *testing.T, limit LoginRateLimit) (nethttp.Handl
 	t.Helper()
 
 	store := newMemoryStore()
-	profile := newMemoryIdentity()
+	profile := newMemoryIdentity(t)
 	fakeClock := clock.NewFake(time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC))
 	service := NewService(store, fakeClock, WithPasswordParams(PasswordParams{
 		MemoryKiB: 64,
@@ -598,6 +659,24 @@ func decodeProfileResponse(t *testing.T, response *httptest.ResponseRecorder) pr
 	return body
 }
 
+func decodeValidationProblem(t *testing.T, response *httptest.ResponseRecorder) struct {
+	Type   string       `json:"type"`
+	Status int          `json:"status"`
+	Errors []fieldError `json:"errors"`
+} {
+	t.Helper()
+
+	var problem struct {
+		Type   string       `json:"type"`
+		Status int          `json:"status"`
+		Errors []fieldError `json:"errors"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil {
+		t.Fatalf("decode validation problem: %v; body=%s", err, response.Body.String())
+	}
+	return problem
+}
+
 func sessionCookieFrom(response *httptest.ResponseRecorder) *nethttp.Cookie {
 	var found *nethttp.Cookie
 	for _, cookie := range response.Result().Cookies() {
@@ -613,23 +692,24 @@ const (
 	testNextLogoAssetID AssetID = "17830098-8109-4a00-8b00-000000000222"
 )
 
-var testSeedLogoBytes = []byte(`<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"></svg>`)
-
 type memoryIdentity struct {
 	mu      sync.Mutex
 	profile CompanyProfile
 	assets  map[AssetID]Asset
 }
 
-func newMemoryIdentity() *memoryIdentity {
+func newMemoryIdentity(t *testing.T) *memoryIdentity {
+	t.Helper()
+
 	logoID := testSeedLogoAssetID
+	logoBytes := testPNG(t)
 	seedAsset := Asset{
 		ID:        logoID,
-		SHA256:    sha256Hex(testSeedLogoBytes),
-		MIME:      "image/svg+xml",
-		Size:      int64(len(testSeedLogoBytes)),
+		SHA256:    sha256Hex(logoBytes),
+		MIME:      "image/png",
+		Size:      int64(len(logoBytes)),
 		CreatedAt: time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC),
-		Bytes:     append([]byte{}, testSeedLogoBytes...),
+		Bytes:     append([]byte{}, logoBytes...),
 	}
 	return &memoryIdentity{
 		profile: CompanyProfile{
@@ -672,6 +752,15 @@ func (s *memoryIdentity) Profile(context.Context) (CompanyProfile, error) {
 func (s *memoryIdentity) UpdateProfile(_ context.Context, patch UpdateProfilePatch) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if patch.LogoAssetID != nil {
+		logoAssetID := AssetID(strings.TrimSpace(string(*patch.LogoAssetID)))
+		if logoAssetID != "" {
+			if _, ok := s.assets[logoAssetID]; !ok {
+				return fmt.Errorf("identity: logo asset id %s was not found: %w", logoAssetID, ErrAssetNotFound)
+			}
+		}
+	}
 
 	updated, err := patch.apply(s.profile)
 	if err != nil {

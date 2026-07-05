@@ -18,6 +18,7 @@ const (
 
 const (
 	keyDatabaseURL = Prefix + "DATABASE_URL"
+	keyDataDir     = Prefix + "DATA_DIR"
 	keyHTTPAddr    = Prefix + "HTTP_ADDR"
 	keyEnv         = Prefix + "ENV"
 	keyLogLevel    = Prefix + "LOG_LEVEL"
@@ -34,6 +35,7 @@ const (
 // Config contains all runtime configuration required by the application shell.
 type Config struct {
 	DatabaseURL string
+	DataDir     string
 	HTTPAddr    string
 	Env         Env
 	LogLevel    slog.Level
@@ -52,6 +54,11 @@ func LoadFrom(lookup func(string) (string, bool)) (Config, error) {
 	databaseURL, ok := nonEmptyEnv(lookup, keyDatabaseURL)
 	if !ok {
 		missing = append(missing, keyDatabaseURL)
+	}
+
+	dataDir, ok := nonEmptyEnv(lookup, keyDataDir)
+	if !ok {
+		missing = append(missing, keyDataDir)
 	}
 
 	envValue, ok := nonEmptyEnv(lookup, keyEnv)
@@ -85,6 +92,7 @@ func LoadFrom(lookup func(string) (string, bool)) (Config, error) {
 
 	return Config{
 		DatabaseURL: databaseURL,
+		DataDir:     dataDir,
 		HTTPAddr:    httpAddr,
 		Env:         env,
 		LogLevel:    logLevel,
