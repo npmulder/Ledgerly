@@ -33,6 +33,34 @@ tasks:
         fi
         go list ./... | grep -v '/web/node_modules/' | xargs go test -tags=integration
 
+  golden:update:
+    desc: Regenerate document golden snapshots inside the deterministic Chromium image
+    cmds:
+      - task: golden:docker
+        vars:
+          CLI_ARGS: "-run TestPDFMatchesGolden -update"
+
+  golden:docker:
+    desc: Run document golden tests inside the deterministic Chromium image
+    cmds:
+      - mkdir -p .task/golden-artifacts
+      - docker build --target golden-test -t ledgerly-golden-test:local .
+      - |
+        docker run --rm \
+          --user "$(id -u):$(id -g)" \
+          -e CHROME_BIN=/headless-shell/headless-shell \
+          -e GOLDEN_REQUIRE_CHROME=1 \
+          -e GOLDEN_ARTIFACT_DIR=/src/.task/golden-artifacts \
+          -e HOME=/tmp \
+          -e XDG_CACHE_HOME=/tmp/.cache \
+          -e XDG_CONFIG_HOME=/tmp/.config \
+          -e GOCACHE=/tmp/go-build \
+          -e GOMODCACHE=/tmp/go/pkg/mod \
+          -v "{{.ROOT_DIR}}:/src" \
+          -w /src \
+          ledgerly-golden-test:local \
+          go test ./internal/it/golden {{.CLI_ARGS}}
+
   lint:
     desc: Run all lint checks
     deps:
