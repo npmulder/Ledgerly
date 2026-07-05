@@ -45,8 +45,19 @@ func TestModuleRoleIsolation(t *testing.T) {
 		t.Fatalf("create ledger boundary table as admin: %v", err)
 	}
 
-	invoicingPool := openModuleRolePool(t, ctx, databaseURL, "invoicing")
+	invoicingPool, err := OpenURL(ctx, databaseURL, WithModule("invoicing"))
+	if err != nil {
+		t.Fatalf("OpenURL() invoicing module error = %v", err)
+	}
 	defer invoicingPool.Close()
+
+	var currentRole string
+	if err := invoicingPool.QueryRow(ctx, "SELECT current_role").Scan(&currentRole); err != nil {
+		t.Fatalf("SELECT current_role: %v", err)
+	}
+	if currentRole != "ledgerly_invoicing" {
+		t.Fatalf("current_role = %q, want ledgerly_invoicing", currentRole)
+	}
 
 	var searchPath string
 	if err := invoicingPool.QueryRow(ctx, "SHOW search_path").Scan(&searchPath); err != nil {
@@ -69,37 +80,6 @@ func TestModuleRoleIsolation(t *testing.T) {
 	if !errors.As(err, &pgErr) || pgErr.Code != "42501" {
 		t.Fatalf("SELECT from ledger.boundary_probe error = %v, want PostgreSQL insufficient_privilege 42501", err)
 	}
-}
-
-func openModuleRolePool(t *testing.T, ctx context.Context, databaseURL string, module string) *pgxpool.Pool {
-	t.Helper()
-
-	role, err := RoleForModule(module)
-	if err != nil {
-		t.Fatalf("RoleForModule(%q) error = %v", module, err)
-	}
-
-	cfg, err := pgxpool.ParseConfig(databaseURL)
-	if err != nil {
-		t.Fatalf("ParseConfig() error = %v", err)
-	}
-	cfg.ConnConfig.User = role
-	cfg.ConnConfig.Password = role
-	if cfg.ConnConfig.RuntimeParams == nil {
-		cfg.ConnConfig.RuntimeParams = make(map[string]string)
-	}
-	cfg.ConnConfig.RuntimeParams["search_path"] = module
-
-	pool, err := pgxpool.NewWithConfig(ctx, cfg)
-	if err != nil {
-		t.Fatalf("open pool as %s: %v", role, err)
-	}
-	if err := pool.Ping(ctx); err != nil {
-		pool.Close()
-		t.Fatalf("ping as %s: %v", role, err)
-	}
-
-	return pool
 }
 
 func assertSchemaAndRoleCounts(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {

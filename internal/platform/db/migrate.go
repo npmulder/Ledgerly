@@ -11,10 +11,13 @@ import (
 	"path"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+const migrationAdvisoryLockKey int64 = 240247
 
 // AppliedMigration describes a migration applied by this run.
 type AppliedMigration struct {
@@ -35,8 +38,32 @@ func MigrateDir(ctx context.Context, pool *pgxpool.Pool, dir string) ([]AppliedM
 
 // MigrateFS applies module migrations from fsys. The root must contain one
 // directory per Ledgerly database module.
-func MigrateFS(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) ([]AppliedMigration, error) {
-	if err := ensureMigrationTable(ctx, pool); err != nil {
+func MigrateFS(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) (applied []AppliedMigration, err error) {
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("acquire migration connection: %w", err)
+	}
+	defer conn.Release()
+
+	locked := false
+	defer func() {
+		if !locked {
+			return
+		}
+
+		unlockCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if unlockErr := unlockMigrations(unlockCtx, conn); unlockErr != nil && err == nil {
+			err = unlockErr
+		}
+	}()
+
+	if err := lockMigrations(ctx, conn); err != nil {
+		return nil, err
+	}
+	locked = true
+
+	if err := ensureMigrationTable(ctx, conn); err != nil {
 		return nil, err
 	}
 
@@ -45,9 +72,8 @@ func MigrateFS(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) ([]AppliedMi
 		return nil, err
 	}
 
-	var applied []AppliedMigration
 	for _, migration := range plan {
-		didApply, err := applyMigration(ctx, pool, migration)
+		didApply, err := applyMigration(ctx, conn, migration)
 		if err != nil {
 			return nil, err
 		}
@@ -59,8 +85,26 @@ func MigrateFS(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) ([]AppliedMi
 	return applied, nil
 }
 
-func ensureMigrationTable(ctx context.Context, pool *pgxpool.Pool) error {
-	if _, err := pool.Exec(ctx, "REVOKE ALL ON SCHEMA public FROM PUBLIC"); err != nil {
+func lockMigrations(ctx context.Context, conn *pgxpool.Conn) error {
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", migrationAdvisoryLockKey); err != nil {
+		return fmt.Errorf("lock migrations: %w", err)
+	}
+	return nil
+}
+
+func unlockMigrations(ctx context.Context, conn *pgxpool.Conn) error {
+	var unlocked bool
+	if err := conn.QueryRow(ctx, "SELECT pg_advisory_unlock($1)", migrationAdvisoryLockKey).Scan(&unlocked); err != nil {
+		return fmt.Errorf("unlock migrations: %w", err)
+	}
+	if !unlocked {
+		return fmt.Errorf("unlock migrations: advisory lock was not held")
+	}
+	return nil
+}
+
+func ensureMigrationTable(ctx context.Context, conn *pgxpool.Conn) error {
+	if _, err := conn.Exec(ctx, "REVOKE ALL ON SCHEMA public FROM PUBLIC"); err != nil {
 		return fmt.Errorf("revoke public schema privileges: %w", err)
 	}
 
@@ -72,7 +116,7 @@ CREATE TABLE IF NOT EXISTS public.ledgerly_migrations (
 	applied_at timestamptz NOT NULL DEFAULT now(),
 	PRIMARY KEY (module, filename)
 )`
-	if _, err := pool.Exec(ctx, sql); err != nil {
+	if _, err := conn.Exec(ctx, sql); err != nil {
 		return fmt.Errorf("ensure migration table: %w", err)
 	}
 	return nil
@@ -155,9 +199,9 @@ func readMigrationPlan(fsys fs.FS) ([]migrationFile, error) {
 	return plan, nil
 }
 
-func applyMigration(ctx context.Context, pool *pgxpool.Pool, migration migrationFile) (bool, error) {
+func applyMigration(ctx context.Context, conn *pgxpool.Conn, migration migrationFile) (bool, error) {
 	var existingChecksum string
-	err := pool.QueryRow(
+	err := conn.QueryRow(
 		ctx,
 		"SELECT checksum FROM public.ledgerly_migrations WHERE module = $1 AND filename = $2",
 		migration.Module,
@@ -173,7 +217,7 @@ func applyMigration(ctx context.Context, pool *pgxpool.Pool, migration migration
 		return false, fmt.Errorf("read migration state for %s/%s: %w", migration.Module, migration.Filename, err)
 	}
 
-	tx, err := pool.Begin(ctx)
+	tx, err := conn.Begin(ctx)
 	if err != nil {
 		return false, fmt.Errorf("begin migration %s/%s: %w", migration.Module, migration.Filename, err)
 	}

@@ -88,10 +88,11 @@ func OpenURL(ctx context.Context, databaseURL string, opts ...PoolOption) (*pgxp
 	return pool, nil
 }
 
-// WithModule pins a pool's search_path to the module's schema.
+// WithModule pins a pool to the module's database role and schema.
 func WithModule(module string) PoolOption {
 	return func(cfg *pgxpool.Config) error {
-		if err := ValidateModule(module); err != nil {
+		role, err := RoleForModule(module)
+		if err != nil {
 			return err
 		}
 
@@ -99,6 +100,23 @@ func WithModule(module string) PoolOption {
 			cfg.ConnConfig.RuntimeParams = make(map[string]string)
 		}
 		cfg.ConnConfig.RuntimeParams["search_path"] = module
+
+		previousAfterConnect := cfg.AfterConnect
+		cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
+			if previousAfterConnect != nil {
+				if err := previousAfterConnect(ctx, conn); err != nil {
+					return err
+				}
+			}
+
+			if _, err := conn.Exec(ctx, "SET ROLE "+pgx.Identifier{role}.Sanitize()); err != nil {
+				return fmt.Errorf("set module role %s: %w", role, err)
+			}
+			if _, err := conn.Exec(ctx, "SET search_path = "+pgx.Identifier{module}.Sanitize()); err != nil {
+				return fmt.Errorf("set module search_path %s: %w", module, err)
+			}
+			return nil
+		}
 		return nil
 	}
 }
@@ -110,7 +128,7 @@ func Modules() []string {
 	return modules
 }
 
-// RoleForModule returns the dev database role name for module.
+// RoleForModule returns the database role name for module.
 func RoleForModule(module string) (string, error) {
 	if err := ValidateModule(module); err != nil {
 		return "", err

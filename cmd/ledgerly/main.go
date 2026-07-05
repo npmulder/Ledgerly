@@ -9,6 +9,7 @@ import (
 	nethttp "net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -23,6 +24,8 @@ import (
 )
 
 var version = "dev"
+
+const migrationsDirEnv = "LEDGERLY_MIGRATIONS_DIR"
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -69,6 +72,10 @@ func runMigrate(ctx context.Context, stdout io.Writer) error {
 	if databaseURL == "" {
 		databaseURL = db.DefaultDevDatabaseURL
 	}
+	migrationsDir, err := resolveMigrationsDir()
+	if err != nil {
+		return err
+	}
 
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
@@ -79,13 +86,61 @@ func runMigrate(ctx context.Context, stdout io.Writer) error {
 	}
 	defer pool.Close()
 
-	applied, err := db.MigrateDir(ctx, pool, "db/migrations")
+	applied, err := db.MigrateDir(ctx, pool, migrationsDir)
 	if err != nil {
 		return err
 	}
 
 	_, err = fmt.Fprintf(stdout, "applied %d migrations\n", len(applied))
 	return err
+}
+
+func resolveMigrationsDir() (string, error) {
+	if dir := strings.TrimSpace(os.Getenv(migrationsDirEnv)); dir != "" {
+		return dir, nil
+	}
+
+	var starts []string
+	if cwd, err := os.Getwd(); err == nil {
+		starts = append(starts, cwd)
+	}
+	if executable, err := os.Executable(); err == nil {
+		starts = append(starts, filepath.Dir(executable))
+	}
+
+	seen := make(map[string]struct{}, len(starts))
+	for _, start := range starts {
+		dir, err := filepath.Abs(start)
+		if err != nil {
+			continue
+		}
+		if _, ok := seen[dir]; ok {
+			continue
+		}
+		seen[dir] = struct{}{}
+
+		if migrationsDir, ok := findMigrationsDirFrom(dir); ok {
+			return migrationsDir, nil
+		}
+	}
+
+	return "", fmt.Errorf("locate db/migrations: set %s or run ledgerly from a repository checkout", migrationsDirEnv)
+}
+
+func findMigrationsDirFrom(start string) (string, bool) {
+	dir := start
+	for {
+		candidate := filepath.Join(dir, "db", "migrations")
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			return candidate, true
+		}
+
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", false
+		}
+		dir = parent
+	}
 }
 
 func openPoolWithRetry(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {

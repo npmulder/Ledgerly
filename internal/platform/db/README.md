@@ -25,6 +25,10 @@ defaults to the local compose database:
 postgres://postgres:postgres@localhost:5432/ledgerly_dev?sslmode=disable
 ```
 
+The command finds migrations by walking up from the current directory and the
+binary directory until it finds `db/migrations`. Set `LEDGERLY_MIGRATIONS_DIR`
+when running the binary outside a checkout or packaged repo layout.
+
 ## Migrations
 
 Migrations live under `db/migrations/<module>/`. The runner validates that all
@@ -35,10 +39,13 @@ lexical order. Applied file checksums are recorded in
 Bootstrap migrations create only module schemas and module roles. Business
 tables belong to module implementation tickets.
 
+Default dev passwords are assigned only when a missing module role is created;
+rerunning migrations does not reset an existing role's password.
+
 ## Module Pools
 
 Use `db.Open` for a normal pool from runtime config, and pin a module pool's
-`search_path` with `db.WithModule`:
+database role and `search_path` with `db.WithModule`:
 
 ```go
 cfg, err := config.Load()
@@ -53,9 +60,12 @@ if err != nil {
 defer pool.Close()
 ```
 
-Module roles also have a default `search_path` set by the bootstrap migrations,
-but application pools should still pin it explicitly through pgx runtime
-parameters.
+`db.WithModule` runs `SET ROLE ledgerly_<module>` and then sets
+`search_path` for every new pgx connection. The connecting database user must
+therefore be the module role itself, be a member of that role, or have
+superuser privileges in local development. Module roles also have a default
+`search_path` set by the bootstrap migrations, but application pools should
+still pin it explicitly through pgx runtime parameters.
 
 ## Shared Transactions
 

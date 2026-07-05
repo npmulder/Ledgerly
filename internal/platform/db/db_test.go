@@ -19,6 +19,9 @@ func TestWithModulePinsSearchPath(t *testing.T) {
 	if got := cfg.ConnConfig.RuntimeParams["search_path"]; got != "invoicing" {
 		t.Fatalf("search_path = %q, want invoicing", got)
 	}
+	if cfg.AfterConnect == nil {
+		t.Fatal("AfterConnect = nil, want module role setup hook")
+	}
 }
 
 func TestWithModuleRejectsUnknownModule(t *testing.T) {

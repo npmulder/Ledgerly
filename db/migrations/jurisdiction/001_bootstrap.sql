@@ -7,7 +7,7 @@ BEGIN
 		EXECUTE 'CREATE ROLE ledgerly_jurisdiction LOGIN PASSWORD ''ledgerly_jurisdiction''';
 	END IF;
 
-	EXECUTE 'ALTER ROLE ledgerly_jurisdiction WITH LOGIN PASSWORD ''ledgerly_jurisdiction'' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION';
+	EXECUTE 'ALTER ROLE ledgerly_jurisdiction WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION';
 	EXECUTE 'GRANT USAGE, CREATE ON SCHEMA jurisdiction TO ledgerly_jurisdiction';
 	EXECUTE 'GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA jurisdiction TO ledgerly_jurisdiction';
 	EXECUTE 'GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA jurisdiction TO ledgerly_jurisdiction';
