@@ -1,0 +1,196 @@
+.dev-api-screen,
+.login-screen {
+  width: min(960px, calc(100vw - 32px));
+  margin: 0 auto;
+  padding: 48px 0;
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  color: var(--color-text-secondary);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.api-error-banner {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 12px 20px;
+  color: var(--color-card);
+  background: var(--color-danger);
+  box-shadow: 0 1px 0 rgb(0 0 0 / 16%);
+}
+
+.api-error-banner div {
+  display: grid;
+  gap: 2px;
+}
+
+.api-error-banner span {
+  color: var(--color-danger-bg);
+  font-size: 0.9rem;
+}
+
+.api-error-banner button,
+.secondary-action {
+  min-height: 40px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.api-error-banner button {
+  color: var(--color-card);
+  background: rgb(255 255 255 / 14%);
+}
+
+.api-error-banner button:hover {
+  background: rgb(255 255 255 / 22%);
+}
+
+.dev-api-header {
+  display: flex;
+  gap: 24px;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 24px;
+}
+
+.dev-api-header h1,
+.login-screen h1 {
+  margin: 0;
+  color: var(--color-text);
+  font-size: 2.25rem;
+  line-height: 1.1;
+}
+
+.secondary-action {
+  flex: 0 0 auto;
+  padding: 0 16px;
+  color: var(--color-navy);
+  background: var(--color-card);
+  border-color: var(--color-border-input);
+}
+
+.secondary-action:hover {
+  background: var(--color-panel);
+}
+
+.secondary-action:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.health-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.health-summary div,
+.checks-section {
+  border: 1px solid var(--color-border-hairline);
+  border-radius: 8px;
+  background: var(--color-card);
+}
+
+.health-summary div {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 20px;
+}
+
+.health-summary span {
+  color: var(--color-text-secondary);
+  font-size: 0.88rem;
+}
+
+.health-summary strong {
+  overflow-wrap: anywhere;
+  font-size: 1.4rem;
+  line-height: 1.2;
+}
+
+.health-message {
+  margin: 0 0 20px;
+  padding: 12px 14px;
+  border-left: 4px solid var(--color-danger);
+  color: var(--color-danger);
+  background: var(--color-danger-bg);
+}
+
+.checks-section {
+  overflow-x: auto;
+}
+
+.checks-section h2 {
+  margin: 0;
+  padding: 18px 20px 0;
+  font-size: 1.1rem;
+}
+
+.checks-section table {
+  width: 100%;
+  min-width: 100%;
+  border-collapse: collapse;
+}
+
+.checks-section th,
+.checks-section td {
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--color-border-hairline);
+  text-align: left;
+  vertical-align: top;
+}
+
+.checks-section th {
+  color: var(--color-text-secondary);
+  font-size: 0.82rem;
+  text-transform: uppercase;
+}
+
+.checks-section tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.login-screen p:last-child {
+  max-width: 560px;
+  color: var(--color-text-secondary);
+  font-size: 1.05rem;
+}
+
+@media (max-width: 640px) {
+  .dev-api-screen,
+  .login-screen {
+    width: min(100vw - 24px, 960px);
+    padding: 32px 0;
+  }
+
+  .api-error-banner,
+  .dev-api-header,
+  .health-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .api-error-banner,
+  .dev-api-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .checks-section th,
+  .checks-section td {
+    padding: 12px;
+  }
+}

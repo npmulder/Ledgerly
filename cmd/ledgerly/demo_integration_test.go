@@ -20,6 +20,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/npmulder/ledgerly/internal/demo"
+	"github.com/npmulder/ledgerly/internal/identity"
+	"github.com/npmulder/ledgerly/internal/platform/clock"
 	"github.com/npmulder/ledgerly/internal/platform/db"
 )
 
@@ -41,8 +43,16 @@ func TestDemoWalkingSkeletonE2E(t *testing.T) {
 	if _, err := db.MigrateDir(ctx, adminPool, filepath.Join(findRepoRoot(t), "db", "migrations")); err != nil {
 		t.Fatalf("migrate database: %v", err)
 	}
+	cleanIdentityRows(t, ctx, adminPool)
 	cleanDemoRows(t, ctx, adminPool)
 	defer cleanDemoRows(t, context.Background(), adminPool)
+	defer cleanIdentityRows(t, context.Background(), adminPool)
+
+	identityPool, err := openPoolWithRetry(ctx, databaseURL, db.WithModule("identity"))
+	if err != nil {
+		t.Fatalf("open identity pool: %v", err)
+	}
+	defer identityPool.Close()
 
 	demoPool, err := openPoolWithRetry(ctx, databaseURL, db.WithModule(demo.ModuleName))
 	if err != nil {
@@ -50,12 +60,17 @@ func TestDemoWalkingSkeletonE2E(t *testing.T) {
 	}
 	defer demoPool.Close()
 
+	identityService := identity.NewService(identity.NewPostgresStore(identityPool), clock.New())
+	identityHandler := identity.NewHTTPHandler(identityService)
+
 	rollbackBody := "force rollback from subscriber"
 	router, err := buildApplicationRouter(applicationWiring{
-		Version:  "test",
-		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
-		HealthDB: pgxPinger{pool: adminPool},
-		DemoPool: demoPool,
+		Version:         "test",
+		Logger:          slog.New(slog.NewTextHandler(io.Discard, nil)),
+		HealthDB:        pgxPinger{pool: adminPool},
+		IdentityService: identityService,
+		IdentityHandler: identityHandler,
+		DemoPool:        demoPool,
 		DemoAuditFailure: func(_ context.Context, _ db.Tx, evt demo.NoteCreated) error {
 			if evt.Body == rollbackBody {
 				return errors.New("forced demo audit failure")
@@ -71,15 +86,17 @@ func TestDemoWalkingSkeletonE2E(t *testing.T) {
 	defer server.Close()
 
 	client := server.Client()
-	note := postNote(t, ctx, client, server.URL, "hello from demo", nethttp.StatusCreated)
-	notes := getNotes(t, ctx, client, server.URL)
+	sessionCookie := registerAndLoginOwner(t, ctx, client, server.URL)
+
+	note := postNote(t, ctx, client, server.URL, sessionCookie, "hello from demo", nethttp.StatusCreated)
+	notes := getNotes(t, ctx, client, server.URL, sessionCookie)
 	assertListedNote(t, notes, note)
 	assertDemoRowCount(t, ctx, adminPool, "successful audit row", 1, `
 SELECT count(*)
 FROM demo.notes
 WHERE kind = 'audit' AND note_id = $1`, note.ID)
 
-	postNote(t, ctx, client, server.URL, rollbackBody, nethttp.StatusInternalServerError)
+	postNote(t, ctx, client, server.URL, sessionCookie, rollbackBody, nethttp.StatusInternalServerError)
 	assertDemoRowCount(t, ctx, adminPool, "rolled back note row", 0, `
 SELECT count(*)
 FROM demo.notes
@@ -98,22 +115,48 @@ func (p pgxPinger) PingContext(ctx context.Context) error {
 	return p.pool.Ping(ctx)
 }
 
-func postNote(t *testing.T, ctx context.Context, client *nethttp.Client, baseURL, body string, wantStatus int) demo.Note {
+func registerAndLoginOwner(t *testing.T, ctx context.Context, client *nethttp.Client, baseURL string) *nethttp.Cookie {
 	t.Helper()
 
-	payload, err := json.Marshal(map[string]string{"body": body})
-	if err != nil {
-		t.Fatalf("marshal create note request: %v", err)
+	postJSON(t, ctx, client, baseURL+"/api/identity/register", map[string]string{
+		"email":    "owner@example.com",
+		"password": "correct horse battery staple",
+		"name":     "Owner",
+	}, nil, nethttp.StatusCreated)
+
+	_, cookies := postJSON(t, ctx, client, baseURL+"/api/identity/login", map[string]string{
+		"email":    "owner@example.com",
+		"password": "correct horse battery staple",
+	}, nil, nethttp.StatusOK)
+
+	for _, cookie := range cookies {
+		if cookie.Name == identity.SessionCookieName {
+			return cookie
+		}
 	}
-	req, err := nethttp.NewRequestWithContext(ctx, nethttp.MethodPost, baseURL+"/api/demo/notes", bytes.NewReader(payload))
+	t.Fatalf("login response did not set %s cookie", identity.SessionCookieName)
+	return nil
+}
+
+func postJSON(t *testing.T, ctx context.Context, client *nethttp.Client, url string, requestBody any, cookie *nethttp.Cookie, wantStatus int) ([]byte, []*nethttp.Cookie) {
+	t.Helper()
+
+	payload, err := json.Marshal(requestBody)
+	if err != nil {
+		t.Fatalf("marshal request body: %v", err)
+	}
+	req, err := nethttp.NewRequestWithContext(ctx, nethttp.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
 		t.Fatalf("create POST request: %v", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if cookie != nil {
+		req.AddCookie(cookie)
+	}
 
 	resp, err := client.Do(req)
 	if err != nil {
-		t.Fatalf("POST /api/demo/notes: %v", err)
+		t.Fatalf("POST %s: %v", url, err)
 	}
 	defer resp.Body.Close()
 
@@ -122,8 +165,15 @@ func postNote(t *testing.T, ctx context.Context, client *nethttp.Client, baseURL
 		t.Fatalf("read POST response: %v", err)
 	}
 	if resp.StatusCode != wantStatus {
-		t.Fatalf("POST /api/demo/notes status = %d, want %d; body=%s", resp.StatusCode, wantStatus, string(bodyBytes))
+		t.Fatalf("POST %s status = %d, want %d; body=%s", url, resp.StatusCode, wantStatus, string(bodyBytes))
 	}
+	return bodyBytes, resp.Cookies()
+}
+
+func postNote(t *testing.T, ctx context.Context, client *nethttp.Client, baseURL string, cookie *nethttp.Cookie, body string, wantStatus int) demo.Note {
+	t.Helper()
+
+	bodyBytes, _ := postJSON(t, ctx, client, baseURL+"/api/demo/notes", map[string]string{"body": body}, cookie, wantStatus)
 	if wantStatus != nethttp.StatusCreated {
 		return demo.Note{}
 	}
@@ -144,13 +194,14 @@ func postNote(t *testing.T, ctx context.Context, client *nethttp.Client, baseURL
 	return note
 }
 
-func getNotes(t *testing.T, ctx context.Context, client *nethttp.Client, baseURL string) []demo.Note {
+func getNotes(t *testing.T, ctx context.Context, client *nethttp.Client, baseURL string, cookie *nethttp.Cookie) []demo.Note {
 	t.Helper()
 
 	req, err := nethttp.NewRequestWithContext(ctx, nethttp.MethodGet, baseURL+"/api/demo/notes", nil)
 	if err != nil {
 		t.Fatalf("create GET request: %v", err)
 	}
+	req.AddCookie(cookie)
 	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("GET /api/demo/notes: %v", err)
@@ -204,6 +255,16 @@ func cleanDemoRows(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	defer cancel()
 	if _, err := pool.Exec(cleanupCtx, "TRUNCATE TABLE demo.notes"); err != nil {
 		t.Fatalf("clean demo rows: %v", err)
+	}
+}
+
+func cleanIdentityRows(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+	t.Helper()
+
+	cleanupCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if _, err := pool.Exec(cleanupCtx, "TRUNCATE TABLE identity.sessions, identity.users RESTART IDENTITY CASCADE"); err != nil {
+		t.Fatalf("clean identity rows: %v", err)
 	}
 }
 

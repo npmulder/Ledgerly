@@ -36,6 +36,7 @@ type Config struct {
 	Version          string
 	Logger           *slog.Logger
 	DB               Pinger
+	APIAuth          func(nethttp.Handler) nethttp.Handler
 	Modules          []Module
 	OpenAPIFragments []OpenAPIFragment
 	HandlerTimeout   time.Duration
@@ -51,6 +52,9 @@ func NewRouter(cfg Config) chi.Router {
 	r.Use(requestLogMiddleware(cfg.Logger))
 	r.Use(recoveryMiddleware(cfg.Logger))
 	r.Use(timeoutMiddleware(cfg.HandlerTimeout))
+	if cfg.APIAuth != nil {
+		r.Use(cfg.APIAuth)
+	}
 
 	r.Get("/healthz", healthHandler(cfg))
 	r.Get("/readyz", healthHandler(cfg))

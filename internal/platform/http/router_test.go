@@ -188,6 +188,38 @@ func TestModuleRoutesAreNamespaced(t *testing.T) {
 	}
 }
 
+func TestAPIAuthMiddlewareWrapsModuleRoutes(t *testing.T) {
+	router := NewRouter(Config{
+		DB: pingerFunc(func(context.Context) error { return nil }),
+		APIAuth: func(next nethttp.Handler) nethttp.Handler {
+			return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+				w.Header().Set("X-API-Auth", "checked")
+				next.ServeHTTP(w, r)
+			})
+		},
+		Modules: []Module{
+			{
+				Name: "banking",
+				RegisterRoutes: func(r chi.Router) {
+					r.Get("/transactions", func(w nethttp.ResponseWriter, _ *nethttp.Request) {
+						w.WriteHeader(nethttp.StatusAccepted)
+					})
+				},
+			},
+		},
+	})
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(nethttp.MethodGet, "/api/banking/transactions", nil))
+
+	if response.Code != nethttp.StatusAccepted {
+		t.Fatalf("status = %d, want %d", response.Code, nethttp.StatusAccepted)
+	}
+	if got := response.Header().Get("X-API-Auth"); got != "checked" {
+		t.Fatalf("X-API-Auth = %q, want checked", got)
+	}
+}
+
 func TestOpenAPISkeletonIncludesFragments(t *testing.T) {
 	router := NewRouter(Config{
 		Version: "test-version",
@@ -231,8 +263,30 @@ func TestOpenAPISkeletonIncludesFragments(t *testing.T) {
 	}
 
 	paths := document["paths"].(map[string]any)
+	healthz, ok := paths["/healthz"].(map[string]any)
+	if !ok {
+		t.Fatalf("/healthz missing from OpenAPI document: %v", paths)
+	}
+	healthzGet, ok := healthz["get"].(map[string]any)
+	if !ok {
+		t.Fatalf("/healthz get operation missing from OpenAPI document: %v", healthz)
+	}
+	responses := healthzGet["responses"].(map[string]any)
+	if _, ok := responses["200"]; !ok {
+		t.Fatalf("/healthz 200 response missing from OpenAPI document: %v", responses)
+	}
+	if _, ok := responses["503"]; !ok {
+		t.Fatalf("/healthz 503 response missing from OpenAPI document: %v", responses)
+	}
+
 	if _, ok := paths["/api/banking/transactions"]; !ok {
 		t.Fatalf("fragment path missing from OpenAPI document: %v", paths)
+	}
+
+	components := document["components"].(map[string]any)
+	schemas := components["schemas"].(map[string]any)
+	if _, ok := schemas["HealthResponse"]; !ok {
+		t.Fatalf("HealthResponse schema missing from OpenAPI document: %v", schemas)
 	}
 }
 

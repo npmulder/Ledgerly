@@ -19,8 +19,10 @@ import (
 	_ "github.com/lib/pq"
 
 	"github.com/npmulder/ledgerly/internal/demo"
+	"github.com/npmulder/ledgerly/internal/identity"
 	"github.com/npmulder/ledgerly/internal/platform/bus"
 	"github.com/npmulder/ledgerly/internal/platform/chrome"
+	"github.com/npmulder/ledgerly/internal/platform/clock"
 	"github.com/npmulder/ledgerly/internal/platform/config"
 	"github.com/npmulder/ledgerly/internal/platform/db"
 	httpserver "github.com/npmulder/ledgerly/internal/platform/http"
@@ -177,11 +179,19 @@ type applicationWiring struct {
 	Version          string
 	Logger           *slog.Logger
 	HealthDB         httpserver.Pinger
+	IdentityService  *identity.Service
+	IdentityHandler  *identity.HTTPHandler
 	DemoPool         *pgxpool.Pool
 	DemoAuditFailure demo.AuditFailure
 }
 
 func buildApplicationRouter(cfg applicationWiring) (nethttp.Handler, error) {
+	if cfg.IdentityService == nil {
+		return nil, fmt.Errorf("identity service is required")
+	}
+	if cfg.IdentityHandler == nil {
+		return nil, fmt.Errorf("identity HTTP handler is required")
+	}
 	if cfg.DemoPool == nil {
 		return nil, fmt.Errorf("demo database pool is required")
 	}
@@ -201,10 +211,13 @@ func buildApplicationRouter(cfg applicationWiring) (nethttp.Handler, error) {
 		Version: cfg.Version,
 		Logger:  cfg.Logger,
 		DB:      cfg.HealthDB,
+		APIAuth: identity.AuthMiddleware(cfg.IdentityService),
 		Modules: []httpserver.Module{
+			identity.HTTPModule(cfg.IdentityHandler),
 			demoModule.HTTPModule(),
 		},
 		OpenAPIFragments: []httpserver.OpenAPIFragment{
+			identity.OpenAPIFragment(),
 			demoModule.OpenAPIFragment(),
 		},
 	}), nil
@@ -244,17 +257,28 @@ func runServe(ctx context.Context) (err error) {
 	startupCtx, startupCancel := context.WithTimeout(ctx, 45*time.Second)
 	defer startupCancel()
 
+	identityPool, err := openPoolWithRetry(startupCtx, cfg.DatabaseURL, db.WithModule("identity"))
+	if err != nil {
+		return fmt.Errorf("open identity store: %w", err)
+	}
+	defer identityPool.Close()
+
 	demoPool, err := openPoolWithRetry(startupCtx, cfg.DatabaseURL, db.WithModule(demo.ModuleName))
 	if err != nil {
 		return fmt.Errorf("open demo database pool: %w", err)
 	}
 	defer demoPool.Close()
 
+	identityService := identity.NewService(identity.NewPostgresStore(identityPool), clock.New())
+	identityHandler := identity.NewHTTPHandler(identityService)
+
 	router, err := buildApplicationRouter(applicationWiring{
-		Version:  version,
-		Logger:   logger,
-		HealthDB: sqlDB,
-		DemoPool: demoPool,
+		Version:         version,
+		Logger:          logger,
+		HealthDB:        sqlDB,
+		IdentityService: identityService,
+		IdentityHandler: identityHandler,
+		DemoPool:        demoPool,
 	})
 	if err != nil {
 		return err
