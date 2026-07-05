@@ -18,6 +18,7 @@ import (
 	_ "github.com/lib/pq"
 
 	"github.com/npmulder/ledgerly/internal/identity"
+	"github.com/npmulder/ledgerly/internal/platform/chrome"
 	"github.com/npmulder/ledgerly/internal/platform/clock"
 	"github.com/npmulder/ledgerly/internal/platform/config"
 	"github.com/npmulder/ledgerly/internal/platform/db"
@@ -57,6 +58,15 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 			return fmt.Errorf("serve accepts no arguments")
 		}
 		return runServe(ctx)
+	case "chrome-smoke":
+		if len(args) > 2 {
+			return fmt.Errorf("chrome-smoke accepts at most one output path")
+		}
+		outputPath := "/tmp/ledgerly-about-blank.pdf"
+		if len(args) == 2 {
+			outputPath = args[1]
+		}
+		return runChromeSmoke(ctx, stdout, outputPath)
 	case "version", "--version", "-v":
 		return printVersion(stdout)
 	default:
@@ -160,6 +170,15 @@ func openPoolWithRetry(ctx context.Context, databaseURL string) (*pgxpool.Pool, 
 		case <-time.After(500 * time.Millisecond):
 		}
 	}
+}
+
+func runChromeSmoke(ctx context.Context, stdout io.Writer, outputPath string) error {
+	if err := chrome.RenderAboutBlankPDF(ctx, outputPath); err != nil {
+		return err
+	}
+
+	_, err := fmt.Fprintf(stdout, "rendered about:blank PDF to %s\n", outputPath)
+	return err
 }
 
 func runServe(ctx context.Context) (err error) {

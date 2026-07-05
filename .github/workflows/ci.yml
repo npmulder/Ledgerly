@@ -87,3 +87,13 @@ jobs:
 
       - name: Lint
         run: task lint
+
+  docker-image:
+    name: docker image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build --build-arg GIT_SHA="${GITHUB_SHA}" -t ledgerly:"${GITHUB_SHA}" .
