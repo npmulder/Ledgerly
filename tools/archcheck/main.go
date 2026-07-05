@@ -21,16 +21,22 @@ import (
 )
 
 var (
-	featureModules = []string{
-		"invoicing",
-		"banking",
-		"dla",
-		"dividends",
-		"reports",
-		"advisor",
-		"identity",
+	moduleDependencies = map[string]map[string]struct{}{
+		"advisor":      dependencySet("jurisdiction", "invoicing", "banking", "dla", "dividends", "reports", "moneyfx", "identity"),
+		"banking":      dependencySet("ledger", "moneyfx", "invoicing", "dla"),
+		"dividends":    dependencySet("ledger", "reports", "jurisdiction", "identity"),
+		"dla":          dependencySet("ledger", "jurisdiction", "moneyfx"),
+		"identity":     dependencySet(),
+		"invoicing":    dependencySet("moneyfx", "ledger", "jurisdiction", "identity"),
+		"jurisdiction": dependencySet(),
+		"ledger":       dependencySet(),
+		"moneyfx":      dependencySet("ledger"),
+		"platform":     dependencySet(),
+		"reports":      dependencySet("ledger", "jurisdiction", "identity", "invoicing"),
 	}
-	guardedLiterals = []string{"0.20", "0.10", "0.21", "6500", "14750"}
+	rateLiteralAllowedModules = []string{"jurisdiction"}
+	guardedLiterals           = []string{"0.20", "0.10", "0.21", "6500", "14750"}
+	execCommand               = exec.Command
 )
 
 type goPackage struct {
@@ -133,7 +139,7 @@ func runRates(args []string) error {
 		return err
 	}
 
-	findings, err := checkRateLiterals(*root, featureModules, guardedLiterals)
+	findings, err := checkRateLiterals(*root, rateLiteralAllowedModules, guardedLiterals)
 	if err != nil {
 		return err
 	}
@@ -145,7 +151,7 @@ func runRates(args []string) error {
 }
 
 func currentModulePath() (string, error) {
-	cmd := exec.Command("go", "list", "-m")
+	cmd := execCommand("go", "list", "-m")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("go list -m failed: %w\n%s", err, string(out))
@@ -155,13 +161,16 @@ func currentModulePath() (string, error) {
 
 func listPackages(patterns []string) ([]goPackage, error) {
 	args := append([]string{"list", "-e", "-json"}, patterns...)
-	cmd := exec.Command("go", args...)
-	out, err := cmd.CombinedOutput()
-	if err != nil && len(out) == 0 {
-		return nil, fmt.Errorf("go list failed: %w\n%s", err, string(out))
+	cmd := execCommand("go", args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if err != nil && stdout.Len() == 0 {
+		return nil, fmt.Errorf("go list failed: %w\n%s", err, stderr.String())
 	}
 
-	dec := json.NewDecoder(bytes.NewReader(out))
+	dec := json.NewDecoder(bytes.NewReader(stdout.Bytes()))
 	var pkgs []goPackage
 	for {
 		var pkg goPackage
@@ -169,12 +178,15 @@ func listPackages(patterns []string) ([]goPackage, error) {
 			if errors.Is(err, io.EOF) {
 				break
 			}
-			return nil, err
+			if stderr.Len() > 0 {
+				return nil, fmt.Errorf("decode go list JSON: %w\n%s", err, stderr.String())
+			}
+			return nil, fmt.Errorf("decode go list JSON: %w", err)
 		}
 		pkgs = append(pkgs, pkg)
 	}
 	if err != nil && len(pkgs) == 0 {
-		return nil, fmt.Errorf("go list failed: %w\n%s", err, string(out))
+		return nil, fmt.Errorf("go list failed: %w\n%s", err, stderr.String())
 	}
 	return pkgs, nil
 }
@@ -200,7 +212,7 @@ func checkPackageBoundaries(pkgs []goPackage, modulePath string) []finding {
 			findings = append(findings, finding{
 				Path: pkg.ImportPath,
 				Message: fmt.Sprintf(
-					"imports %s; cross-module imports must use an internal/<module> root package, internal/platform/..., or internal/moneyfx/money",
+					"imports %s; cross-module imports must use declared internal/<module> root dependencies, internal/platform/..., or internal/moneyfx/money",
 					imported,
 				),
 			})
@@ -242,7 +254,23 @@ func allowedInternalImport(sourceModule string, importedSegments []string) bool 
 	if importedModule == "moneyfx" && len(importedSegments) == 2 && importedSegments[1] == "money" {
 		return true
 	}
-	return len(importedSegments) == 1
+	if len(importedSegments) != 1 {
+		return false
+	}
+	dependencies, ok := moduleDependencies[sourceModule]
+	if !ok {
+		return false
+	}
+	_, ok = dependencies[importedModule]
+	return ok
+}
+
+func dependencySet(modules ...string) map[string]struct{} {
+	dependencies := make(map[string]struct{}, len(modules))
+	for _, module := range modules {
+		dependencies[module] = struct{}{}
+	}
+	return dependencies
 }
 
 func uniqueImports(groups ...[]string) []string {
@@ -298,44 +326,64 @@ func appendGoListFinding(findings []finding, seen map[string]struct{}, importPat
 	})
 }
 
-func checkRateLiterals(root string, modules []string, literals []string) ([]finding, error) {
+func checkRateLiterals(root string, allowedModules []string, literals []string) ([]finding, error) {
 	pattern := literalPattern(literals)
+	allowed := dependencySet(allowedModules...)
 	var findings []finding
 
-	for _, module := range modules {
-		moduleRoot := filepath.Join(root, module)
-		if _, err := os.Stat(moduleRoot); err != nil {
-			if errors.Is(err, fs.ErrNotExist) {
-				continue
-			}
-			return nil, err
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
 		}
-
-		err := filepath.WalkDir(moduleRoot, func(path string, entry fs.DirEntry, walkErr error) error {
-			if walkErr != nil {
-				return walkErr
-			}
-			if entry.IsDir() {
+		if entry.IsDir() {
+			if path == root {
 				return nil
 			}
-			if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-				return nil
-			}
-
-			fileFindings, err := scanRateFile(path, pattern)
+			module, err := moduleForPath(root, path)
 			if err != nil {
 				return err
 			}
-			findings = append(findings, fileFindings...)
+			if _, ok := allowed[module]; ok {
+				return filepath.SkipDir
+			}
 			return nil
-		})
-		if err != nil {
-			return nil, err
 		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		module, err := moduleForPath(root, path)
+		if err != nil {
+			return err
+		}
+		if _, ok := allowed[module]; ok {
+			return nil
+		}
+
+		fileFindings, err := scanRateFile(path, pattern)
+		if err != nil {
+			return err
+		}
+		findings = append(findings, fileFindings...)
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	sortFindings(findings)
 	return findings, nil
+}
+
+func moduleForPath(root, path string) (string, error) {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return "", err
+	}
+	segments := strings.Split(filepath.ToSlash(rel), "/")
+	if len(segments) == 0 || segments[0] == "." || segments[0] == "" {
+		return "", nil
+	}
+	return segments[0], nil
 }
 
 func literalPattern(literals []string) *regexp.Regexp {
