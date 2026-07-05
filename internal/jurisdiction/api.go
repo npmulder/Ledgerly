@@ -97,8 +97,8 @@ func ReverseChargeWording(kind string) (Wording, error) {
 	return wording, nil
 }
 
-// FilingRules returns declarative filing rules. Deadline resolution belongs to
-// JUR-3 and is intentionally not implemented here.
+// FilingRules returns declarative filing rules. Use FilingDeadlines to resolve
+// concrete next due dates from caller-supplied company facts.
 func FilingRules() map[string]Filing {
 	pack := activePackSnapshotOrNil()
 	if pack == nil {

@@ -24,6 +24,7 @@ type Pack struct {
 // Tax contains tax-year keyed rules. Rate and allowance values always live
 // below a tax-year string such as "2025-26".
 type Tax struct {
+	YearEnd         YearEnd                        `yaml:"year_end"`
 	CorporateIncome map[string]CorporateIncomeYear `yaml:"corporate_income"`
 	PersonalIncome  map[string]PersonalIncomeYear  `yaml:"personal_income"`
 	Dividends       map[string]DividendYear        `yaml:"dividends"`
@@ -76,6 +77,8 @@ type Filing struct {
 	Authority          string `yaml:"authority"`
 	Cadence            string `yaml:"cadence,omitempty"`
 	RequiredAtZeroRate bool   `yaml:"required_at_zero_rate,omitempty"`
+
+	dueExpression *deadlineExpression `yaml:"-"`
 }
 
 type DLAPolicy struct {

@@ -4,25 +4,7 @@ import (
 	"fmt"
 	"math/big"
 	"sort"
-	"strconv"
 	"strings"
-)
-
-var (
-	knownDeadlineAnchors = map[string]struct{}{
-		"accounting_year_end":       {},
-		"incorporation_anniversary": {},
-		"tax_year_end":              {},
-		"vat_period_end":            {},
-	}
-	knownDeadlineUnits = map[string]struct{}{
-		"day":    {},
-		"days":   {},
-		"month":  {},
-		"months": {},
-		"year":   {},
-		"years":  {},
-	}
 )
 
 func validatePack(file, id, version string, pack *Pack) error {
@@ -30,6 +12,9 @@ func validatePack(file, id, version string, pack *Pack) error {
 		return err
 	}
 
+	if err := validateYearEnd(pack.Tax.YearEnd); err != nil {
+		return fieldError(file, "tax.year_end", "year_end", err.Error())
+	}
 	if err := validateYearMap(file, "tax.corporate_income", "corporate_income", pack.Tax.CorporateIncome, validateCorporateIncomeYear); err != nil {
 		return err
 	}
@@ -200,13 +185,16 @@ func validateFilings(file string, filings map[string]Filing) error {
 				return fieldError(file, path+".due", "due", "must have a due expression or cadence")
 			}
 		} else {
-			if err := validateDeadlineExpression(file, path+".due", "due", filing.Due); err != nil {
-				return err
+			dueExpression, err := parseDeadlineExpression(filing.Due)
+			if err != nil {
+				return fieldError(file, path+".due", "due", err.Error())
 			}
+			filing.dueExpression = dueExpression
 		}
 		if filing.Authority != "" && strings.TrimSpace(filing.Authority) == "" {
 			return fieldError(file, path+".authority", "authority", "must not be blank")
 		}
+		filings[key] = filing
 	}
 	return nil
 }
@@ -258,37 +246,5 @@ func validateRate(file, path, field string, rate Rate) error {
 	if parsed.Sign() < 0 || parsed.Cmp(big.NewRat(1, 1)) > 0 {
 		return fieldError(file, path, field, "rate must be between 0 and 1")
 	}
-	return nil
-}
-
-func validateDeadlineExpression(file, path, field, expression string) error {
-	expression = strings.TrimSpace(expression)
-	if expression == "" {
-		return fieldError(file, path, field, "must not be empty")
-	}
-
-	parts := strings.Split(expression, "+")
-	anchor := strings.TrimSpace(parts[0])
-	if len(strings.Fields(anchor)) != 1 {
-		return fieldError(file, path, field, "deadline anchor must be a single token")
-	}
-	if _, ok := knownDeadlineAnchors[anchor]; !ok {
-		return fieldError(file, path, field, fmt.Sprintf("unknown deadline anchor %q", anchor))
-	}
-
-	for _, offset := range parts[1:] {
-		fields := strings.Fields(strings.TrimSpace(offset))
-		if len(fields) != 2 {
-			return fieldError(file, path, field, "deadline offsets must use '<number> <unit>'")
-		}
-		amount, err := strconv.Atoi(fields[0])
-		if err != nil || amount <= 0 {
-			return fieldError(file, path, field, "deadline offset amount must be a positive integer")
-		}
-		if _, ok := knownDeadlineUnits[fields[1]]; !ok {
-			return fieldError(file, path, field, fmt.Sprintf("unknown deadline offset unit %q", fields[1]))
-		}
-	}
-
 	return nil
 }

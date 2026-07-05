@@ -1,7 +1,12 @@
 import { lazy, Suspense } from "react";
-import { Route, Routes } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 
+import { isApiError } from "@/api/client";
+import { getCurrentUser } from "@/api/identity";
+import { queryKeys } from "@/api/queryKeys";
 import { AppShell } from "@/app/AppShell";
+import { PageTitle, Screen } from "@/components";
 import { DevApiScreen } from "@/screens/DevApiScreen";
 import { DevComponentsScreen } from "@/screens/DevComponentsScreen";
 import { DevTokensScreen } from "@/screens/DevTokensScreen";
@@ -69,7 +74,7 @@ export function App() {
           </Suspense>
         }
       />
-      <Route element={<AppShell />}>
+      <Route element={<AuthenticatedShell />}>
         <Route index element={<DashboardScreen />} />
         <Route path="/invoices" element={<InvoicesScreen />} />
         <Route path="/invoices/:id" element={<InvoiceEditorScreen />} />
@@ -86,4 +91,35 @@ export function App() {
       <Route path="/login" element={<LoginScreen />} />
     </Routes>
   );
+}
+
+function AuthenticatedShell() {
+  const location = useLocation();
+  const userQuery = useQuery({
+    queryFn: getCurrentUser,
+    queryKey: queryKeys.identity.me(),
+    retry: false,
+  });
+
+  if (userQuery.isPending) {
+    return (
+      <Screen>
+        <PageTitle>Loading</PageTitle>
+      </Screen>
+    );
+  }
+
+  if (userQuery.isError) {
+    if (isApiError(userQuery.error) && userQuery.error.status === 401) {
+      return <Navigate replace state={{ from: location }} to="/login" />;
+    }
+
+    return (
+      <Screen>
+        <PageTitle>Unable to load session</PageTitle>
+      </Screen>
+    );
+  }
+
+  return <AppShell user={userQuery.data} />;
 }

@@ -113,6 +113,9 @@ func TestIsleOfManAccessorsReturnHandoffValues2025_26(t *testing.T) {
 				if got["vat_return"].Cadence != "quarterly" {
 					t.Fatalf("vat_return cadence = %q, want quarterly", got["vat_return"].Cadence)
 				}
+				if got["vat_return"].Due != "quarter_end + 1 month" {
+					t.Fatalf("vat_return due = %q", got["vat_return"].Due)
+				}
 				if got["vat_return"].Authority != "Isle of Man Customs & Excise" {
 					t.Fatalf("vat_return authority = %q, want Isle of Man Customs & Excise", got["vat_return"].Authority)
 				}
