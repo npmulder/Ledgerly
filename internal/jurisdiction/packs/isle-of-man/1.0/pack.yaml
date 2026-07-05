@@ -6,6 +6,9 @@ meta:
   name: Isle of Man
   currency: GBP
 tax:
+  year_end:
+    month: 4
+    day: 5
   corporate_income:
     "2025-26":
       standard_rate: "0.0"
@@ -36,6 +39,7 @@ filings:
     due: accounting_year_end + 12 months + 1 day
     required_at_zero_rate: true
   vat_return:
+    due: quarter_end + 1 month
     cadence: quarterly
     authority: Isle of Man Customs & Excise
 director_loans:

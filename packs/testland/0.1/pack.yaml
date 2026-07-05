@@ -4,6 +4,9 @@ meta:
   name: Testland
   currency: TST
 tax:
+  year_end:
+    month: 6
+    day: 30
   corporate_income:
     "2025-26":
       standard_rate: "0.19"
@@ -37,7 +40,7 @@ filings:
     authority: Testland Revenue
     required_at_zero_rate: true
   vat_return:
-    due: vat_period_end + 1 month
+    due: quarter_end + 1 month
     cadence: quarterly
     authority: Testland Customs
 director_loans:

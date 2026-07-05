@@ -177,6 +177,9 @@ const malformedJurisdictionPack = `meta:
   name: Testland
   currency: TST
 tax:
+  year_end:
+    month: 6
+    day: 30
   corporate_income:
     "2025-26":
       standard_rate: "0.19"
