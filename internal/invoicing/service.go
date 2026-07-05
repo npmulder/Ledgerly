@@ -83,6 +83,16 @@ func (s *Service) SaveClient(ctx context.Context, c Client) (_ Client, err error
 		return s.store.InsertClient(ctx, s.pool, c)
 	}
 
+	return s.updateClient(ctx, c.ID, func(Client) (Client, error) {
+		return c, nil
+	})
+}
+
+func (s *Service) patchClient(ctx context.Context, id string, apply func(Client) (Client, error)) (Client, error) {
+	return s.updateClient(ctx, id, apply)
+}
+
+func (s *Service) updateClient(ctx context.Context, id string, build func(Client) (Client, error)) (_ Client, err error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return Client{}, fmt.Errorf("invoicing: begin save client transaction: %w", err)
@@ -93,17 +103,28 @@ func (s *Service) SaveClient(ctx context.Context, c Client) (_ Client, err error
 		}
 	}()
 
-	existing, err := s.store.ClientForUpdate(ctx, tx, c.ID)
+	existing, err := s.store.ClientForUpdate(ctx, tx, id)
 	if err != nil {
 		return Client{}, err
 	}
-	if err := s.ensureCurrencyMutable(ctx, existing, c); err != nil {
+
+	next, err := build(existing)
+	if err != nil {
+		return Client{}, err
+	}
+	next, err = normalizeClient(next)
+	if err != nil {
+		return Client{}, err
+	}
+	next.ID = existing.ID
+	next.CreatedAt = existing.CreatedAt
+	next.ArchivedAt = existing.ArchivedAt
+
+	if err := s.ensureCurrencyMutable(ctx, existing, next); err != nil {
 		return Client{}, err
 	}
 
-	c.CreatedAt = existing.CreatedAt
-	c.ArchivedAt = existing.ArchivedAt
-	updated, err := s.store.UpdateClient(ctx, tx, c)
+	updated, err := s.store.UpdateClient(ctx, tx, next)
 	if err != nil {
 		return Client{}, err
 	}

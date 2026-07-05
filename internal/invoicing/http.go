@@ -129,14 +129,9 @@ func (h clientHandler) patchClient(w nethttp.ResponseWriter, r *nethttp.Request)
 		return
 	}
 
-	client, err := h.service.Client(r.Context(), clientIDParam(r))
-	if err != nil {
-		writeClientError(w, r, err)
-		return
-	}
-	client = patch.apply(client)
-
-	client, err = h.service.SaveClient(r.Context(), client)
+	client, err := h.service.patchClient(r.Context(), clientIDParam(r), func(client Client) (Client, error) {
+		return patch.apply(client), nil
+	})
 	if err != nil {
 		writeClientError(w, r, err)
 		return
@@ -336,6 +331,9 @@ func decodeClientJSON(w nethttp.ResponseWriter, r *nethttp.Request, dst any) err
 		var maxBytesErr *nethttp.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
 			return errClientRequestBodyTooLarge
+		}
+		if !errors.Is(err, io.EOF) {
+			return fmt.Errorf("decode JSON body: %w", err)
 		}
 	}
 	return nil

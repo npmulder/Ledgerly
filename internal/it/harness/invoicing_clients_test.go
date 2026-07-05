@@ -6,7 +6,9 @@ import (
 	"context"
 	"encoding/json"
 	nethttp "net/http"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/npmulder/ledgerly/internal/invoicing"
 	"github.com/npmulder/ledgerly/internal/it/fixtures"
@@ -80,6 +82,75 @@ func TestInvoicingClientsRejectReverseChargeWithoutVATNumber(t *testing.T) {
 	}
 	if !jsonContainsPointer(t, bodyBytes, "/vat_number") {
 		t.Fatalf("validation body = %s, want /vat_number error", string(bodyBytes))
+	}
+}
+
+func TestInvoicingClientsConcurrentPatchPreservesOmittedFields(t *testing.T) {
+	t.Parallel()
+
+	h := harness.New(t, harness.Options{})
+	client := fixtures.Fabrikam(t, h)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	tx, err := h.DB.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin row-lock transaction: %v", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(context.Background())
+		}
+	}()
+	if _, err := tx.Exec(ctx, `SELECT id FROM invoicing.clients WHERE id = $1 FOR UPDATE`, client.ID); err != nil {
+		t.Fatalf("lock client row: %v", err)
+	}
+
+	type patchResult struct {
+		name   string
+		body   []byte
+		status int
+	}
+	start := make(chan struct{})
+	results := make(chan patchResult, 2)
+	var wg sync.WaitGroup
+	patch := func(name string, body map[string]any) {
+		defer wg.Done()
+		<-start
+		bodyBytes, status := doJSON(t, h, nethttp.MethodPatch, "/api/invoicing/clients/"+client.ID, body)
+		results <- patchResult{name: name, body: bodyBytes, status: status}
+	}
+
+	wg.Add(2)
+	go patch("terms", map[string]any{"terms_days": 14})
+	go patch("day_rate", map[string]any{
+		"day_rate": map[string]any{
+			"amount_minor": int64(70000),
+			"currency":     string(invoicing.CurrencyGBP),
+		},
+	})
+	close(start)
+	time.Sleep(250 * time.Millisecond)
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("release client row lock: %v", err)
+	}
+	committed = true
+
+	wg.Wait()
+	close(results)
+	for result := range results {
+		if result.status != nethttp.StatusOK {
+			t.Fatalf("PATCH %s status = %d, want %d; body=%s", result.name, result.status, nethttp.StatusOK, string(result.body))
+		}
+	}
+
+	updated := getInvoicingClient(t, h, client.ID)
+	if updated.TermsDays != 14 {
+		t.Fatalf("updated TermsDays = %d, want 14", updated.TermsDays)
+	}
+	if updated.DayRate == nil || updated.DayRate.AmountMinor != 70000 || updated.DayRate.Currency != invoicing.CurrencyGBP {
+		t.Fatalf("updated DayRate = %+v, want GBP 700.00", updated.DayRate)
 	}
 }
 
