@@ -150,16 +150,27 @@ func clonePack(in *Pack) *Pack {
 	out.Tax.CorporateIncome = cloneMap(in.Tax.CorporateIncome)
 	out.Tax.PersonalIncome = make(map[string]PersonalIncomeYear, len(in.Tax.PersonalIncome))
 	for year, value := range in.Tax.PersonalIncome {
-		value.Bands = append([]TaxBand(nil), value.Bands...)
-		out.Tax.PersonalIncome[year] = value
+		out.Tax.PersonalIncome[year] = clonePersonalIncomeYear(value)
 	}
 	out.Tax.Dividends = cloneMap(in.Tax.Dividends)
 	out.Tax.VAT.Years = cloneMap(in.Tax.VAT.Years)
 	out.Tax.VAT.ReverseCharge = cloneMap(in.Tax.VAT.ReverseCharge)
 	out.Filings = cloneMap(in.Filings)
-	out.DirectorLoans = cloneMap(in.DirectorLoans)
 	out.AdvisorRules = append([]AdvisorRule(nil), in.AdvisorRules...)
 	return &out
+}
+
+func clonePersonalIncomeYear(in PersonalIncomeYear) PersonalIncomeYear {
+	out := in
+	out.Bands = make([]TaxBand, len(in.Bands))
+	for index, band := range in.Bands {
+		out.Bands[index] = band
+		if band.UpToMinorUnits != nil {
+			upTo := *band.UpToMinorUnits
+			out.Bands[index].UpToMinorUnits = &upTo
+		}
+	}
+	return out
 }
 
 func cloneMap[K comparable, V any](in map[K]V) map[K]V {

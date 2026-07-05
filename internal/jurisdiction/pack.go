@@ -14,11 +14,11 @@ type PackMeta struct {
 
 // Pack is the typed YAML schema for a jurisdiction rules pack.
 type Pack struct {
-	Meta          PackMeta                    `yaml:"meta"`
-	Tax           Tax                         `yaml:"tax"`
-	Filings       map[string]Filing           `yaml:"filings"`
-	DirectorLoans map[string]DirectorLoanYear `yaml:"director_loans"`
-	AdvisorRules  []AdvisorRule               `yaml:"advisor_rules"`
+	Meta          PackMeta          `yaml:"meta"`
+	Tax           Tax               `yaml:"tax"`
+	Filings       map[string]Filing `yaml:"filings"`
+	DirectorLoans DLAPolicy         `yaml:"director_loans"`
+	AdvisorRules  []AdvisorRule     `yaml:"advisor_rules"`
 }
 
 // Tax contains tax-year keyed rules. Rate and allowance values always live
@@ -30,35 +30,43 @@ type Tax struct {
 	VAT             VAT                            `yaml:"vat"`
 }
 
+// Rate is a decimal string from the pack, for example "0.20".
+// Keeping rates as strings avoids binary floating point in compliance data.
+type Rate string
+
 type CorporateIncomeYear struct {
-	StandardRate float64 `yaml:"standard_rate"`
+	StandardRate Rate `yaml:"standard_rate"`
 }
 
 type PersonalIncomeYear struct {
-	PersonalAllowance int64     `yaml:"personal_allowance"`
-	Bands             []TaxBand `yaml:"bands"`
+	// PersonalAllowanceMinorUnits is stored as integer GBP minor units (pence).
+	PersonalAllowanceMinorUnits int64     `yaml:"personal_allowance_minor_units"`
+	Bands                       []TaxBand `yaml:"bands"`
 }
 
 type TaxBand struct {
-	UpTo *int64  `yaml:"upto,omitempty"`
-	Rate float64 `yaml:"rate"`
+	// UpToMinorUnits is stored as integer GBP minor units (pence). A nil value
+	// marks the open-ended final band.
+	UpToMinorUnits *int64 `yaml:"upto_minor_units,omitempty"`
+	Rate           Rate   `yaml:"rate"`
 }
 
 type DividendYear struct {
-	WithholdingRate float64 `yaml:"withholding_rate"`
+	Withholding string `yaml:"withholding"`
 }
 
 type VAT struct {
-	Regime        string                          `yaml:"regime"`
-	Years         map[string]VATYear              `yaml:"-"`
-	ReverseCharge map[string]ReverseChargeWording `yaml:"reverse_charge"`
+	Regime        string             `yaml:"regime"`
+	Authority     string             `yaml:"authority"`
+	Years         map[string]VATYear `yaml:"-"`
+	ReverseCharge map[string]Wording `yaml:"reverse_charge"`
 }
 
 type VATYear struct {
-	StandardRate float64 `yaml:"standard_rate"`
+	StandardRate Rate `yaml:"standard_rate"`
 }
 
-type ReverseChargeWording struct {
+type Wording struct {
 	Article        string `yaml:"article"`
 	InvoiceWording string `yaml:"invoice_wording"`
 }
@@ -70,7 +78,7 @@ type Filing struct {
 	RequiredAtZeroRate bool   `yaml:"required_at_zero_rate,omitempty"`
 }
 
-type DirectorLoanYear struct {
+type DLAPolicy struct {
 	S455Charge bool            `yaml:"s455_charge"`
 	Overdrawn  OverdrawnPolicy `yaml:"overdrawn"`
 }

@@ -178,21 +178,22 @@ const malformedJurisdictionPack = `meta:
 tax:
   corporate_income:
     "2025-26":
-      standard_rate: 0.19
+      standard_rate: "0.19"
   personal_income:
     "2025-26":
-      personal_allowance: 1234
+      personal_allowance_minor_units: 1234
       bands:
-        - upto: 1000
-          rate: 0.05
-        - rate: 0.25
+        - upto_minor_units: 1000
+          rate: "0.05"
+        - rate: "0.25"
   dividends:
     "2025-26":
-      withholding_rate: 0.04
+      withholding: test-withholding
   vat:
     regime: test-shared
+    authority: Testland Customs
     "2025-26":
-      standard_rate: 0.17
+      standard_rate: "0.17"
     reverse_charge:
       b2b_services_eu:
         article: Test Article 42
@@ -202,11 +203,10 @@ filings:
     due: incorporation_anniversary + 1 month
     authority: Testland Companies Office
 director_loans:
-  "2025-26":
-    s455_charge: true
-    overdrawn:
-      warn: test_director_loan_warning
-      remedy: test_clear_or_repay
+  s455_charge: true
+  overdrawn:
+    warn: test_director_loan_warning
+    remedy: test_clear_or_repay
 advisor_rules:
   - id: test-rule
     severity: amber

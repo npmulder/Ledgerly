@@ -1,0 +1,76 @@
+# Money amounts use integer minor units: GBP pence. Rates use quoted decimal
+# strings so compliance data is never decoded through binary floating point.
+meta:
+  id: isle-of-man
+  version: "1.0"
+  name: Isle of Man
+  currency: GBP
+tax:
+  corporate_income:
+    "2025-26":
+      standard_rate: "0.0"
+  personal_income:
+    "2025-26":
+      personal_allowance_minor_units: 1475000
+      bands:
+        - upto_minor_units: 650000
+          rate: "0.10"
+        - rate: "0.21"
+  dividends:
+    "2025-26":
+      withholding: none
+  vat:
+    regime: uk-shared
+    authority: Isle of Man Customs & Excise
+    "2025-26":
+      standard_rate: "0.20"
+    reverse_charge:
+      b2b_services_eu:
+        article: Article 196, Directive 2006/112/EC
+        invoice_wording: 'VAT reverse charge applies: VAT to be accounted for by the recipient under Article 196, Council Directive 2006/112/EC. Supplier is established in the Isle of Man.'
+filings:
+  annual_return:
+    due: incorporation_anniversary + 1 month
+    authority: IoM Companies Registry
+  company_tax_return:
+    due: accounting_year_end + 12 months + 1 day
+    required_at_zero_rate: true
+  vat_return:
+    cadence: quarterly
+    authority: Isle of Man Customs & Excise
+director_loans:
+  s455_charge: false
+  overdrawn:
+    warn: benefit_in_kind_interest_free
+    remedy: clear_with_dividend
+advisor_rules:
+  - id: overdue_invoice
+    severity: amber
+    fact_query: invoicing.overdue_invoices
+    condition: count > 0
+    text_template: 'Invoice {{ invoice_number }} is {{ days_overdue }} days overdue. Send a reminder to {{ client_name }}.'
+    cta: send_reminder
+  - id: dla_overdrawn_bik
+    severity: amber
+    fact_query: dla.current_balance
+    condition: status == overdrawn
+    text_template: 'Your loan account is {{ balance }} overdrawn. The Isle of Man has no UK-style s455 charge, but an interest-free loan can create a taxable benefit in kind - charge interest at the official rate or clear it with a dividend.'
+    cta: clear_with_dividend
+  - id: filing_deadline_window
+    severity: amber
+    fact_query: jurisdiction.filing_deadlines
+    condition: days_until_due <= 30
+    text_template: '{{ filing_name }} due {{ due_date }} - file with {{ authority }}.'
+    cta: open_filing_calendar
+  - id: dividend_set_aside
+    severity: teal
+    fact_query: dividends.personal_tax_set_aside
+    condition: estimate_minor_units > 0
+    text_template: 'Set aside {{ estimate }} personally for IoM income tax on {{ dividends_ytd }} dividends YTD (10% band, then 21%).'
+    cta: open_dividends
+  - id: rates_stale
+    severity: amber
+    fact_query: moneyfx.ecb_rates
+    condition: stale_days > 0
+    text_template: 'ECB rates are stale. Refresh rates before issuing or settling foreign-currency transactions.'
+    cta: refresh_rates
