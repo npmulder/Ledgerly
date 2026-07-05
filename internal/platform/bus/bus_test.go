@@ -81,6 +81,26 @@ func TestPublishPropagatesHandlerError(t *testing.T) {
 	}
 }
 
+func TestPublishRejectsUnknownEventModule(t *testing.T) {
+	b := bus.New(bus.WithLogger(discardLogger()))
+	called := false
+	b.Subscribe(invoiceSettledName, func(context.Context, db.Tx, bus.Event) error {
+		called = true
+		return nil
+	})
+
+	err := b.Publish(context.Background(), &fakeTx{}, namedEvent("invoicng.InvoiceSettled"))
+	if err == nil {
+		t.Fatal("Publish() error = nil, want unknown module error")
+	}
+	if !strings.Contains(err.Error(), `unknown Ledgerly module "invoicng"`) {
+		t.Fatalf("Publish() error = %v, want unknown module error", err)
+	}
+	if called {
+		t.Fatal("handler was called for unknown event module")
+	}
+}
+
 func TestPublishLogsDispatchTelemetry(t *testing.T) {
 	var out bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&out, nil))
@@ -196,6 +216,12 @@ func discardLogger() *slog.Logger {
 }
 
 type fakeTx struct{}
+
+type namedEvent string
+
+func (e namedEvent) Name() string {
+	return string(e)
+}
 
 func (*fakeTx) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
 	panic("fakeTx.Exec called")

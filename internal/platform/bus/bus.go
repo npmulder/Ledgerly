@@ -145,5 +145,8 @@ func normalizeName(name string) (string, string, error) {
 	if !ok || module == "" || event == "" {
 		return "", "", fmt.Errorf("bus: event name %q must follow <module>.<PascalCaseEvent>", normalized)
 	}
+	if err := db.ValidateModule(module); err != nil {
+		return "", "", fmt.Errorf("bus: event name %q: %w", normalized, err)
+	}
 	return normalized, module, nil
 }
