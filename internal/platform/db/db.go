@@ -17,6 +17,7 @@ import (
 const DefaultDevDatabaseURL = "postgres://postgres:postgres@localhost:5432/ledgerly_dev?sslmode=disable"
 
 var moduleNames = []string{
+	"demo",
 	"ledger",
 	"moneyfx",
 	"invoicing",
@@ -30,6 +31,7 @@ var moduleNames = []string{
 }
 
 var moduleSet = map[string]struct{}{
+	"demo":         {},
 	"ledger":       {},
 	"moneyfx":      {},
 	"invoicing":    {},

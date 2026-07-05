@@ -37,8 +37,8 @@ func TestWithModuleRejectsUnknownModule(t *testing.T) {
 
 func TestModulesAndRoles(t *testing.T) {
 	modules := Modules()
-	if len(modules) != 10 {
-		t.Fatalf("len(Modules()) = %d, want 10", len(modules))
+	if len(modules) != 11 {
+		t.Fatalf("len(Modules()) = %d, want 11", len(modules))
 	}
 
 	for _, module := range modules {

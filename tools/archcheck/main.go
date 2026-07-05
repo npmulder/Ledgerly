@@ -24,6 +24,7 @@ var (
 	moduleDependencies = map[string]map[string]struct{}{
 		"advisor":      dependencySet("jurisdiction", "invoicing", "banking", "dla", "dividends", "reports", "moneyfx", "identity"),
 		"banking":      dependencySet("ledger", "moneyfx", "invoicing", "dla"),
+		"demo":         dependencySet(),
 		"dividends":    dependencySet("ledger", "reports", "jurisdiction", "identity"),
 		"dla":          dependencySet("ledger", "jurisdiction", "moneyfx"),
 		"identity":     dependencySet(),

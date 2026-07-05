@@ -10,6 +10,48 @@ permissions:
   contents: read
 
 jobs:
+  integration:
+    name: integration
+    runs-on: ubuntu-latest
+    env:
+      LEDGERLY_TEST_DB: postgres://postgres:postgres@localhost:5432/ledgerly_dev?sslmode=disable
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Task
+        uses: arduino/setup-task@v2
+
+      - name: Start compose database
+        run: docker compose up -d db
+
+      - name: Wait for compose database
+        run: |
+          for i in {1..30}; do
+            if docker compose exec -T db pg_isready -U postgres -d ledgerly_dev; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker compose logs db
+          exit 1
+
+      - name: IT-0 demo walking skeleton
+        run: go test -tags=integration ./cmd/ledgerly -run TestDemoWalkingSkeletonE2E -count=1
+
+      - name: Integration tests
+        run: task test:integration
+
+      - name: Stop compose services
+        if: always()
+        run: docker compose down -v
+
   build:
     name: build
     runs-on: ubuntu-latest
@@ -47,27 +89,6 @@ jobs:
 
       - name: Unit tests
         run: task test
-
-  integration:
-    name: integration
-    runs-on: ubuntu-latest
-    env:
-      LEDGERLY_TEST_DB: ${{ secrets.LEDGERLY_TEST_DB }}
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Set up Task
-        uses: arduino/setup-task@v2
-
-      - name: Integration tests
-        run: task test:integration
 
   lint:
     name: lint

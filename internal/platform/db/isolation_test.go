@@ -93,8 +93,8 @@ func assertSchemaAndRoleCounts(t *testing.T, ctx context.Context, pool *pgxpool.
 	).Scan(&schemaCount); err != nil {
 		t.Fatalf("count module schemas: %v", err)
 	}
-	if schemaCount != 10 {
-		t.Fatalf("module schema count = %d, want 10", schemaCount)
+	if schemaCount != 11 {
+		t.Fatalf("module schema count = %d, want 11", schemaCount)
 	}
 
 	var roleCount int
@@ -104,8 +104,8 @@ func assertSchemaAndRoleCounts(t *testing.T, ctx context.Context, pool *pgxpool.
 	).Scan(&roleCount); err != nil {
 		t.Fatalf("count ledgerly roles: %v", err)
 	}
-	if roleCount != 10 {
-		t.Fatalf("ledgerly role count = %d, want 10", roleCount)
+	if roleCount != 11 {
+		t.Fatalf("ledgerly role count = %d, want 11", roleCount)
 	}
 }
 
