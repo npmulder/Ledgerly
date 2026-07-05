@@ -14,10 +14,14 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const migrationAdvisoryLockKey int64 = 240247
+const (
+	migrationAdvisoryLockKey        int64 = 240247
+	clusterMigrationAdvisoryLockKey int64 = 0x6c65646765726c79
+)
 
 // AppliedMigration describes a migration applied by this run.
 type AppliedMigration struct {
@@ -39,6 +43,16 @@ func MigrateDir(ctx context.Context, pool *pgxpool.Pool, dir string) ([]AppliedM
 // MigrateFS applies module migrations from fsys. The root must contain one
 // directory per Ledgerly database module.
 func MigrateFS(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) (applied []AppliedMigration, err error) {
+	clusterLockConn, err := acquireClusterMigrationLock(ctx, pool)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if unlockErr := releaseClusterMigrationLock(clusterLockConn); err == nil && unlockErr != nil {
+			err = unlockErr
+		}
+	}()
+
 	conn, err := pool.Acquire(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("acquire migration connection: %w", err)
@@ -85,20 +99,76 @@ func MigrateFS(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) (applied []A
 	return applied, nil
 }
 
+type advisoryLockConn interface {
+	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+func acquireClusterMigrationLock(ctx context.Context, pool *pgxpool.Pool) (*pgx.Conn, error) {
+	cfg := pool.Config().ConnConfig.Copy()
+	var errs []error
+	for _, databaseName := range clusterLockDatabases(cfg.Database) {
+		lockCfg := cfg.Copy()
+		lockCfg.Database = databaseName
+
+		conn, err := pgx.ConnectConfig(ctx, lockCfg)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("connect migration lock database %s: %w", databaseName, err))
+			continue
+		}
+		if err := lockAdvisory(ctx, conn, clusterMigrationAdvisoryLockKey, "lock cluster migrations"); err != nil {
+			_ = conn.Close(context.Background())
+			return nil, err
+		}
+		return conn, nil
+	}
+
+	return nil, fmt.Errorf("connect migration lock database: %w", errors.Join(errs...))
+}
+
+func releaseClusterMigrationLock(conn *pgx.Conn) error {
+	unlockCtx, unlockCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	unlockErr := unlockAdvisory(unlockCtx, conn, clusterMigrationAdvisoryLockKey, "unlock cluster migrations")
+	unlockCancel()
+
+	closeCtx, closeCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	closeErr := conn.Close(closeCtx)
+	closeCancel()
+
+	return errors.Join(unlockErr, closeErr)
+}
+
+func clusterLockDatabases(current string) []string {
+	candidates := []string{"postgres", "template1"}
+	current = strings.TrimSpace(current)
+	if current != "" && !slices.Contains(candidates, current) {
+		candidates = append(candidates, current)
+	}
+	return candidates
+}
+
 func lockMigrations(ctx context.Context, conn *pgxpool.Conn) error {
-	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", migrationAdvisoryLockKey); err != nil {
-		return fmt.Errorf("lock migrations: %w", err)
+	return lockAdvisory(ctx, conn, migrationAdvisoryLockKey, "lock migrations")
+}
+
+func unlockMigrations(ctx context.Context, conn *pgxpool.Conn) error {
+	return unlockAdvisory(ctx, conn, migrationAdvisoryLockKey, "unlock migrations")
+}
+
+func lockAdvisory(ctx context.Context, conn advisoryLockConn, key int64, label string) error {
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", key); err != nil {
+		return fmt.Errorf("%s: %w", label, err)
 	}
 	return nil
 }
 
-func unlockMigrations(ctx context.Context, conn *pgxpool.Conn) error {
+func unlockAdvisory(ctx context.Context, conn advisoryLockConn, key int64, label string) error {
 	var unlocked bool
-	if err := conn.QueryRow(ctx, "SELECT pg_advisory_unlock($1)", migrationAdvisoryLockKey).Scan(&unlocked); err != nil {
-		return fmt.Errorf("unlock migrations: %w", err)
+	if err := conn.QueryRow(ctx, "SELECT pg_advisory_unlock($1)", key).Scan(&unlocked); err != nil {
+		return fmt.Errorf("%s: %w", label, err)
 	}
 	if !unlocked {
-		return fmt.Errorf("unlock migrations: advisory lock was not held")
+		return fmt.Errorf("%s: advisory lock was not held", label)
 	}
 	return nil
 }

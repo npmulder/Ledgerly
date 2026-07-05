@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+
+	"github.com/npmulder/ledgerly/internal/platform/clock"
 )
 
 const (
@@ -37,6 +39,7 @@ type Config struct {
 	Version          string
 	Logger           *slog.Logger
 	DB               Pinger
+	Clock            clock.Clock
 	APIAuth          func(nethttp.Handler) nethttp.Handler
 	StaticAssets     fs.FS
 	Modules          []Module
@@ -94,6 +97,9 @@ func normalizeConfig(cfg Config) Config {
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+	if cfg.Clock == nil {
+		cfg.Clock = clock.New()
 	}
 	if cfg.HandlerTimeout == 0 {
 		cfg.HandlerTimeout = defaultHandlerTimeout

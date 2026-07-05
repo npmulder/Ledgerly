@@ -24,6 +24,9 @@ type Event interface {
 // Handler reacts to an event inside the publisher's transaction.
 type Handler func(context.Context, db.Tx, Event) error
 
+// Middleware wraps a subscriber during startup wiring.
+type Middleware func(eventName string, next Handler) Handler
+
 // Bus dispatches domain events to in-process subscribers.
 //
 // Subscribe during application wiring. Publish executes matching handlers
@@ -33,6 +36,7 @@ type Bus struct {
 	mu       sync.RWMutex
 	handlers map[string][]Handler
 	logger   *slog.Logger
+	wrappers []Middleware
 }
 
 // Option customizes a Bus.
@@ -56,6 +60,17 @@ func WithLogger(logger *slog.Logger) Option {
 	}
 }
 
+// WithMiddleware registers subscriber wrappers applied during Subscribe.
+func WithMiddleware(wrappers ...Middleware) Option {
+	return func(b *Bus) {
+		for _, wrapper := range wrappers {
+			if wrapper != nil {
+				b.wrappers = append(b.wrappers, wrapper)
+			}
+		}
+	}
+}
+
 // Subscribe registers h for events named name.
 //
 // Subscribe panics on invalid wiring input because callers should subscribe at
@@ -67,6 +82,12 @@ func (b *Bus) Subscribe(name string, h Handler) {
 	}
 	if h == nil {
 		panic("bus: nil handler")
+	}
+	for i := len(b.wrappers) - 1; i >= 0; i-- {
+		h = b.wrappers[i](name, h)
+		if h == nil {
+			panic("bus: middleware returned nil handler")
+		}
 	}
 
 	b.mu.Lock()
