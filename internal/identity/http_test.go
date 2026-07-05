@@ -6,9 +6,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"mime/multipart"
 	nethttp "net/http"
 	"net/http/httptest"
+	"net/textproto"
 	"strings"
 	"sync"
 	"testing"
@@ -167,6 +170,175 @@ func TestAuthMiddlewareProtectsAPIRoutes(t *testing.T) {
 	}
 }
 
+func TestIdentityProfileRoutesRequireAuthentication(t *testing.T) {
+	router, _, _ := newTestRouter(t, LoginRateLimit{Capacity: 100, RefillEvery: time.Hour})
+
+	for _, tc := range []struct {
+		name   string
+		method string
+		path   string
+		body   any
+	}{
+		{name: "profile get", method: nethttp.MethodGet, path: "/api/identity/profile"},
+		{name: "profile patch", method: nethttp.MethodPatch, path: "/api/identity/profile", body: map[string]string{"trading_name": "NPM Trading"}},
+		{name: "logo put", method: nethttp.MethodPut, path: "/api/identity/logo"},
+		{name: "asset get", method: nethttp.MethodGet, path: "/api/identity/assets/" + string(testSeedLogoAssetID)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			response := performJSON(router, tc.method, tc.path, tc.body, nil)
+			if response.Code != nethttp.StatusUnauthorized {
+				t.Fatalf("%s %s status = %d, want %d; body=%s", tc.method, tc.path, response.Code, nethttp.StatusUnauthorized, response.Body.String())
+			}
+			if got := response.Header().Get("Content-Type"); got != httpserver.ProblemContentType {
+				t.Fatalf("Content-Type = %q, want %s", got, httpserver.ProblemContentType)
+			}
+		})
+	}
+}
+
+func TestProfileGetPatchRoundTrip(t *testing.T) {
+	router, _, _, _ := newTestRouterWithProfile(t, LoginRateLimit{Capacity: 100, RefillEvery: time.Hour})
+	registerOwner(t, router)
+	cookie := loginOwner(t, router)
+
+	initial := performJSON(router, nethttp.MethodGet, "/api/identity/profile", nil, cookie)
+	if initial.Code != nethttp.StatusOK {
+		t.Fatalf("initial profile status = %d, want %d; body=%s", initial.Code, nethttp.StatusOK, initial.Body.String())
+	}
+	initialProfile := decodeProfileResponse(t, initial)
+	if initialProfile.TradingName != "NPM Limited" {
+		t.Fatalf("initial trading_name = %q, want NPM Limited", initialProfile.TradingName)
+	}
+	if initialProfile.LogoAssetURL == nil || *initialProfile.LogoAssetURL != assetURL(testSeedLogoAssetID) {
+		t.Fatalf("initial logo_asset_url = %v, want %s", initialProfile.LogoAssetURL, assetURL(testSeedLogoAssetID))
+	}
+
+	patch := performJSON(router, nethttp.MethodPatch, "/api/identity/profile", map[string]any{
+		"trading_name": "NPM Trading",
+		"vat_number":   "IM1234567",
+		"year_end": map[string]int{
+			"month": 12,
+			"day":   31,
+		},
+	}, cookie)
+	if patch.Code != nethttp.StatusOK {
+		t.Fatalf("patch profile status = %d, want %d; body=%s", patch.Code, nethttp.StatusOK, patch.Body.String())
+	}
+	patchedProfile := decodeProfileResponse(t, patch)
+	if patchedProfile.TradingName != "NPM Trading" {
+		t.Fatalf("patched trading_name = %q, want NPM Trading", patchedProfile.TradingName)
+	}
+	if patchedProfile.VATNumber == nil || *patchedProfile.VATNumber != "IM1234567" {
+		t.Fatalf("patched vat_number = %v, want IM1234567", patchedProfile.VATNumber)
+	}
+	if patchedProfile.YearEnd.Month != 12 || patchedProfile.YearEnd.Day != 31 {
+		t.Fatalf("patched year_end = %+v, want month=12 day=31", patchedProfile.YearEnd)
+	}
+
+	roundTrip := performJSON(router, nethttp.MethodGet, "/api/identity/profile", nil, cookie)
+	if roundTrip.Code != nethttp.StatusOK {
+		t.Fatalf("round-trip profile status = %d, want %d; body=%s", roundTrip.Code, nethttp.StatusOK, roundTrip.Body.String())
+	}
+	roundTripProfile := decodeProfileResponse(t, roundTrip)
+	if roundTripProfile.TradingName != "NPM Trading" {
+		t.Fatalf("round-trip trading_name = %q, want NPM Trading", roundTripProfile.TradingName)
+	}
+}
+
+func TestLogoUploadUpdatesProfileAndAssetIsImmutable(t *testing.T) {
+	router, _, _, _ := newTestRouterWithProfile(t, LoginRateLimit{Capacity: 100, RefillEvery: time.Hour})
+	registerOwner(t, router)
+	cookie := loginOwner(t, router)
+
+	logoBytes := []byte(`<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><rect width="1" height="1"/></svg>`)
+	upload := performMultipartLogo(router, "/api/identity/logo", "logo.svg", "image/svg+xml", logoBytes, cookie)
+	if upload.Code != nethttp.StatusOK {
+		t.Fatalf("logo upload status = %d, want %d; body=%s", upload.Code, nethttp.StatusOK, upload.Body.String())
+	}
+	var uploadBody logoResponse
+	if err := json.Unmarshal(upload.Body.Bytes(), &uploadBody); err != nil {
+		t.Fatalf("decode logo upload response: %v; body=%s", err, upload.Body.String())
+	}
+	if uploadBody.AssetURL == "" {
+		t.Fatalf("logo upload response missing asset_url: %+v", uploadBody)
+	}
+
+	profile := performJSON(router, nethttp.MethodGet, "/api/identity/profile", nil, cookie)
+	if profile.Code != nethttp.StatusOK {
+		t.Fatalf("profile after logo upload status = %d, want %d; body=%s", profile.Code, nethttp.StatusOK, profile.Body.String())
+	}
+	profileBody := decodeProfileResponse(t, profile)
+	if profileBody.LogoAssetURL == nil || *profileBody.LogoAssetURL != uploadBody.AssetURL {
+		t.Fatalf("profile logo_asset_url = %v, want %s", profileBody.LogoAssetURL, uploadBody.AssetURL)
+	}
+
+	asset := performJSON(router, nethttp.MethodGet, uploadBody.AssetURL, nil, cookie)
+	if asset.Code != nethttp.StatusOK {
+		t.Fatalf("asset status = %d, want %d; body=%s", asset.Code, nethttp.StatusOK, asset.Body.String())
+	}
+	if got := asset.Header().Get("Content-Type"); got != "image/svg+xml" {
+		t.Fatalf("asset Content-Type = %q, want image/svg+xml", got)
+	}
+	if got := asset.Header().Get("Cache-Control"); !strings.Contains(got, "immutable") {
+		t.Fatalf("asset Cache-Control = %q, want immutable directive", got)
+	}
+	if !bytes.Equal(asset.Body.Bytes(), logoBytes) {
+		t.Fatalf("asset bytes = %q, want uploaded SVG bytes", asset.Body.String())
+	}
+}
+
+func TestInvalidProfilePatchReturnsFieldPointers(t *testing.T) {
+	router, _, _, _ := newTestRouterWithProfile(t, LoginRateLimit{Capacity: 100, RefillEvery: time.Hour})
+	registerOwner(t, router)
+	cookie := loginOwner(t, router)
+
+	response := performJSON(router, nethttp.MethodPatch, "/api/identity/profile", map[string]string{
+		"trading_name": " ",
+	}, cookie)
+	if response.Code != nethttp.StatusUnprocessableEntity {
+		t.Fatalf("invalid patch status = %d, want %d; body=%s", response.Code, nethttp.StatusUnprocessableEntity, response.Body.String())
+	}
+	if got := response.Header().Get("Content-Type"); got != httpserver.ProblemContentType {
+		t.Fatalf("Content-Type = %q, want %s", got, httpserver.ProblemContentType)
+	}
+
+	var problem struct {
+		Type   string       `json:"type"`
+		Status int          `json:"status"`
+		Errors []fieldError `json:"errors"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil {
+		t.Fatalf("decode validation problem: %v; body=%s", err, response.Body.String())
+	}
+	if problem.Type != problemTypeValidation {
+		t.Fatalf("problem type = %q, want %s", problem.Type, problemTypeValidation)
+	}
+	if problem.Status != nethttp.StatusUnprocessableEntity {
+		t.Fatalf("problem status = %d, want %d", problem.Status, nethttp.StatusUnprocessableEntity)
+	}
+	if len(problem.Errors) != 1 || problem.Errors[0].Pointer != "/trading_name" {
+		t.Fatalf("problem errors = %+v, want pointer /trading_name", problem.Errors)
+	}
+}
+
+func TestLogoUploadRejectsOversizedPayloadAtHTTPBoundary(t *testing.T) {
+	router, _, _, _ := newTestRouterWithProfile(t, LoginRateLimit{Capacity: 100, RefillEvery: time.Hour})
+	registerOwner(t, router)
+	cookie := loginOwner(t, router)
+
+	response := performMultipartLogo(
+		router,
+		"/api/identity/logo",
+		"huge.svg",
+		"image/svg+xml",
+		bytes.Repeat([]byte("x"), MaxLogoAssetBytes+1),
+		cookie,
+	)
+	if response.Code != nethttp.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized logo status = %d, want %d; body=%s", response.Code, nethttp.StatusRequestEntityTooLarge, response.Body.String())
+	}
+}
+
 func TestLoginAttemptsAreRateLimitedPerIP(t *testing.T) {
 	router, _, _ := newTestRouter(t, LoginRateLimit{Capacity: 1, RefillEvery: time.Hour})
 
@@ -251,12 +423,46 @@ func TestOpenAPIIncludesIdentityRequestBodies(t *testing.T) {
 	if register["requestBody"] == nil {
 		t.Fatal("register requestBody missing from OpenAPI fragment")
 	}
+
+	profile := paths["/api/identity/profile"].(map[string]any)
+	if profile["get"] == nil {
+		t.Fatal("profile GET missing from OpenAPI fragment")
+	}
+	if profile["patch"].(map[string]any)["requestBody"] == nil {
+		t.Fatal("profile PATCH requestBody missing from OpenAPI fragment")
+	}
+
+	logo := paths["/api/identity/logo"].(map[string]any)["put"].(map[string]any)
+	if logo["requestBody"] == nil {
+		t.Fatal("logo PUT multipart requestBody missing from OpenAPI fragment")
+	}
+
+	assets := paths["/api/identity/assets/{id}"].(map[string]any)["get"].(map[string]any)
+	if assets["parameters"] == nil {
+		t.Fatal("asset GET path parameters missing from OpenAPI fragment")
+	}
+
+	components := document["components"].(map[string]any)
+	schemas := components["schemas"].(map[string]any)
+	for _, schema := range []string{"IdentityProfile", "IdentityProfilePatch", "IdentityLogoUploadResponse", "ValidationProblem"} {
+		if schemas[schema] == nil {
+			t.Fatalf("%s schema missing from OpenAPI fragment", schema)
+		}
+	}
 }
 
 func newTestRouter(t *testing.T, limit LoginRateLimit) (nethttp.Handler, *memoryStore, *clock.FakeClock) {
 	t.Helper()
 
+	router, store, fakeClock, _ := newTestRouterWithProfile(t, limit)
+	return router, store, fakeClock
+}
+
+func newTestRouterWithProfile(t *testing.T, limit LoginRateLimit) (nethttp.Handler, *memoryStore, *clock.FakeClock, *memoryIdentity) {
+	t.Helper()
+
 	store := newMemoryStore()
+	profile := newMemoryIdentity()
 	fakeClock := clock.NewFake(time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC))
 	service := NewService(store, fakeClock, WithPasswordParams(PasswordParams{
 		MemoryKiB: 64,
@@ -265,7 +471,11 @@ func newTestRouter(t *testing.T, limit LoginRateLimit) (nethttp.Handler, *memory
 		SaltLen:   8,
 		KeyLen:    16,
 	}))
-	handler := NewHTTPHandler(service, WithLoginRateLimiter(NewLoginRateLimiter(limit)))
+	handler := NewHTTPHandler(
+		service,
+		WithLoginRateLimiter(NewLoginRateLimiter(limit)),
+		WithProfileAPI(profile),
+	)
 
 	router := httpserver.NewRouter(httpserver.Config{
 		Version: "test-version",
@@ -287,7 +497,7 @@ func newTestRouter(t *testing.T, limit LoginRateLimit) (nethttp.Handler, *memory
 		},
 		OpenAPIFragments: []httpserver.OpenAPIFragment{OpenAPIFragment()},
 	})
-	return router, store, fakeClock
+	return router, store, fakeClock, profile
 }
 
 func registerOwner(t *testing.T, router nethttp.Handler) {
@@ -349,6 +559,45 @@ func performRequest(router nethttp.Handler, method, path string, body io.Reader,
 	return response
 }
 
+func performMultipartLogo(router nethttp.Handler, path, filename, mime string, data []byte, cookie *nethttp.Cookie) *httptest.ResponseRecorder {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	header := textproto.MIMEHeader{}
+	header.Set("Content-Disposition", fmt.Sprintf(`form-data; name="%s"; filename="%s"`, logoMultipartFieldName, filename))
+	header.Set("Content-Type", mime)
+	part, err := writer.CreatePart(header)
+	if err != nil {
+		panic(err)
+	}
+	if _, err := part.Write(data); err != nil {
+		panic(err)
+	}
+	if err := writer.Close(); err != nil {
+		panic(err)
+	}
+
+	request := httptest.NewRequest(nethttp.MethodPut, path, &body)
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	request.RemoteAddr = "203.0.113.10:58124"
+	if cookie != nil {
+		request.AddCookie(cookie)
+	}
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	return response
+}
+
+func decodeProfileResponse(t *testing.T, response *httptest.ResponseRecorder) profileResponse {
+	t.Helper()
+
+	var body profileResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode profile response: %v; body=%s", err, response.Body.String())
+	}
+	return body
+}
+
 func sessionCookieFrom(response *httptest.ResponseRecorder) *nethttp.Cookie {
 	var found *nethttp.Cookie
 	for _, cookie := range response.Result().Cookies() {
@@ -357,6 +606,137 @@ func sessionCookieFrom(response *httptest.ResponseRecorder) *nethttp.Cookie {
 		}
 	}
 	return found
+}
+
+const (
+	testSeedLogoAssetID AssetID = "17830098-8109-4a00-8b00-000000000111"
+	testNextLogoAssetID AssetID = "17830098-8109-4a00-8b00-000000000222"
+)
+
+var testSeedLogoBytes = []byte(`<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"></svg>`)
+
+type memoryIdentity struct {
+	mu      sync.Mutex
+	profile CompanyProfile
+	assets  map[AssetID]Asset
+}
+
+func newMemoryIdentity() *memoryIdentity {
+	logoID := testSeedLogoAssetID
+	seedAsset := Asset{
+		ID:        logoID,
+		SHA256:    sha256Hex(testSeedLogoBytes),
+		MIME:      "image/svg+xml",
+		Size:      int64(len(testSeedLogoBytes)),
+		CreatedAt: time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC),
+		Bytes:     append([]byte{}, testSeedLogoBytes...),
+	}
+	return &memoryIdentity{
+		profile: CompanyProfile{
+			TradingName:   "NPM Limited",
+			LegalName:     "NPM Limited",
+			CompanyNumber: "137792C",
+			RegisteredOffice: RegisteredOffice{
+				Line1:      "18 Athol St",
+				Line2:      "",
+				Locality:   "Douglas",
+				Region:     "",
+				PostalCode: "",
+				Country:    "IM",
+			},
+			IncorporationDate: time.Date(2020, 7, 14, 0, 0, 0, 0, time.UTC),
+			YearEnd:           YearEnd{Month: time.March, Day: 31},
+			BankDetails: BankDetails{
+				IBAN:     "",
+				BIC:      "",
+				BankName: "",
+			},
+			Shareholders: []Shareholder{
+				{Name: "N. Meyer", Shares: 100, Class: "ordinary GBP 1"},
+			},
+			LogoAssetID: &logoID,
+		},
+		assets: map[AssetID]Asset{
+			logoID: seedAsset,
+		},
+	}
+}
+
+func (s *memoryIdentity) Profile(context.Context) (CompanyProfile, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return cloneCompanyProfile(s.profile), nil
+}
+
+func (s *memoryIdentity) UpdateProfile(_ context.Context, patch UpdateProfilePatch) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	updated, err := patch.apply(s.profile)
+	if err != nil {
+		return err
+	}
+	s.profile = cloneCompanyProfile(updated)
+	return nil
+}
+
+func (s *memoryIdentity) ReplaceLogo(_ context.Context, upload LogoUpload) (AssetID, error) {
+	validated, err := validateLogoUpload(upload)
+	if err != nil {
+		return "", err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	id := testNextLogoAssetID
+	s.assets[id] = Asset{
+		ID:        id,
+		SHA256:    validated.sha256,
+		MIME:      validated.mime,
+		Size:      validated.size,
+		CreatedAt: time.Date(2026, 7, 5, 12, 1, 0, 0, time.UTC),
+		Bytes:     append([]byte{}, validated.bytes...),
+	}
+	s.profile.LogoAssetID = &id
+	return id, nil
+}
+
+func (s *memoryIdentity) Asset(_ context.Context, id AssetID) (Asset, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	asset, ok := s.assets[id]
+	if !ok {
+		return Asset{}, ErrAssetNotFound
+	}
+	asset.Bytes = append([]byte{}, asset.Bytes...)
+	return asset, nil
+}
+
+func (s *memoryIdentity) CompanyFacts(context.Context) (CompanyFacts, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return CompanyFacts{
+		IncorporationDate: s.profile.IncorporationDate,
+		YearEnd:           s.profile.YearEnd,
+	}, nil
+}
+
+func cloneCompanyProfile(profile CompanyProfile) CompanyProfile {
+	clone := profile
+	if profile.VATNumber != nil {
+		vatNumber := *profile.VATNumber
+		clone.VATNumber = &vatNumber
+	}
+	if profile.LogoAssetID != nil {
+		logoID := *profile.LogoAssetID
+		clone.LogoAssetID = &logoID
+	}
+	clone.Shareholders = append([]Shareholder{}, profile.Shareholders...)
+	return clone
 }
 
 type memoryStore struct {

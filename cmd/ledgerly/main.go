@@ -179,6 +179,7 @@ type applicationWiring struct {
 	Version          string
 	Logger           *slog.Logger
 	HealthDB         httpserver.Pinger
+	EventBus         *bus.Bus
 	IdentityService  *identity.Service
 	IdentityHandler  *identity.HTTPHandler
 	DemoPool         *pgxpool.Pool
@@ -196,7 +197,10 @@ func buildApplicationRouter(cfg applicationWiring) (nethttp.Handler, error) {
 		return nil, fmt.Errorf("demo database pool is required")
 	}
 
-	eventBus := bus.New(bus.WithLogger(cfg.Logger))
+	eventBus := cfg.EventBus
+	if eventBus == nil {
+		eventBus = bus.New(bus.WithLogger(cfg.Logger))
+	}
 	demoModule, err := demo.New(demo.Config{
 		Pool:         cfg.DemoPool,
 		Bus:          eventBus,
@@ -269,13 +273,16 @@ func runServe(ctx context.Context) (err error) {
 	}
 	defer demoPool.Close()
 
+	eventBus := bus.New(bus.WithLogger(logger))
 	identityService := identity.NewService(identity.NewPostgresStore(identityPool), clock.New())
-	identityHandler := identity.NewHTTPHandler(identityService)
+	identityProfile := identity.NewProfileService(identityPool, eventBus)
+	identityHandler := identity.NewHTTPHandler(identityService, identity.WithProfileAPI(identityProfile))
 
 	router, err := buildApplicationRouter(applicationWiring{
 		Version:         version,
 		Logger:          logger,
 		HealthDB:        sqlDB,
+		EventBus:        eventBus,
 		IdentityService: identityService,
 		IdentityHandler: identityHandler,
 		DemoPool:        demoPool,

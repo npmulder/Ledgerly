@@ -21,6 +21,7 @@ import (
 
 	"github.com/npmulder/ledgerly/internal/demo"
 	"github.com/npmulder/ledgerly/internal/identity"
+	"github.com/npmulder/ledgerly/internal/platform/bus"
 	"github.com/npmulder/ledgerly/internal/platform/clock"
 	"github.com/npmulder/ledgerly/internal/platform/db"
 )
@@ -60,14 +61,17 @@ func TestDemoWalkingSkeletonE2E(t *testing.T) {
 	}
 	defer demoPool.Close()
 
+	eventBus := bus.New(bus.WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
 	identityService := identity.NewService(identity.NewPostgresStore(identityPool), clock.New())
-	identityHandler := identity.NewHTTPHandler(identityService)
+	identityProfile := identity.NewProfileService(identityPool, eventBus, identity.WithDataDir(t.TempDir()))
+	identityHandler := identity.NewHTTPHandler(identityService, identity.WithProfileAPI(identityProfile))
 
 	rollbackBody := "force rollback from subscriber"
 	router, err := buildApplicationRouter(applicationWiring{
 		Version:         "test",
 		Logger:          slog.New(slog.NewTextHandler(io.Discard, nil)),
 		HealthDB:        pgxPinger{pool: adminPool},
+		EventBus:        eventBus,
 		IdentityService: identityService,
 		IdentityHandler: identityHandler,
 		DemoPool:        demoPool,
