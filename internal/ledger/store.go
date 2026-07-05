@@ -82,7 +82,7 @@ type ensuredAccount struct {
 
 func ensureAccount(ctx context.Context, tx db.Tx, spec AccountSpec) (ensuredAccount, error) {
 	const query = `
-SELECT code, name, account_type, currency
+SELECT account_code, account_name, account_type, account_currency
 FROM ledger.ensure_account($1, $2, $3, $4)`
 
 	var (

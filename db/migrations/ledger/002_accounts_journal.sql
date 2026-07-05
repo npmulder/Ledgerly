@@ -41,10 +41,10 @@ CREATE OR REPLACE FUNCTION ledger.ensure_account(
 	p_currency text
 )
 RETURNS TABLE (
-	code text,
-	name text,
+	account_code text,
+	account_name text,
 	account_type text,
-	currency text
+	account_currency text
 )
 LANGUAGE plpgsql
 SECURITY DEFINER
