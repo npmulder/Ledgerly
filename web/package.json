@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc --noEmit -p tsconfig.json && vite build",
     "test": "vitest run",
-    "lint": "eslint .",
+    "lint": "eslint . && stylelint \"src/**/*.css\"",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "type": "module",
@@ -32,6 +32,7 @@
     "globals": "^17.7.0",
     "jsdom": "^29.1.1",
     "prettier": "^3.9.4",
+    "stylelint": "^17.14.0",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.62.1",
     "vite": "^8.1.3",
