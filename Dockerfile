@@ -20,6 +20,7 @@ RUN set -eux; \
 FROM chromedp/headless-shell:latest AS runtime
 
 ENV CHROME_BIN=/headless-shell/headless-shell \
+	LEDGERLY_MIGRATIONS_DIR=/usr/local/share/ledgerly/db/migrations \
 	LEDGERLY_HTTP_ADDR=:8080 \
 	HOME=/tmp \
 	XDG_CACHE_HOME=/tmp/.cache \
@@ -27,6 +28,7 @@ ENV CHROME_BIN=/headless-shell/headless-shell \
 
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=build /out/ledgerly /usr/local/bin/ledgerly
+COPY --from=build /src/db/migrations /usr/local/share/ledgerly/db/migrations
 
 USER 65532:65532
 

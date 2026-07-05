@@ -37,7 +37,7 @@ Run migrations as a one-off command:
 docker compose -f docker-compose.prod.yml run --rm app migrate
 ```
 
-The current skeleton has no SQL migrations yet; the command validates DB connectivity and exits successfully.
+The production image includes `db/migrations` and defaults `LEDGERLY_MIGRATIONS_DIR` to that packaged path, so the one-off command applies the bootstrap schema migrations inside the container.
 
 ## Environment Variables
 
@@ -48,6 +48,7 @@ The current skeleton has no SQL migrations yet; the command validates DB connect
 | `POSTGRES_PASSWORD` | yes | `ledgerly` | PostgreSQL password for the app role. Replace for any shared environment. |
 | `POSTGRES_DB` | yes | `ledgerly` | PostgreSQL database name. |
 | `LEDGERLY_DATABASE_URL` | yes | `postgres://ledgerly:ledgerly@db:5432/ledgerly?sslmode=disable` | App database connection string. |
+| `LEDGERLY_MIGRATIONS_DIR` | no | `/usr/local/share/ledgerly/db/migrations` | Container path to packaged SQL migrations for one-off `ledgerly migrate` runs. |
 | `LEDGERLY_ENV` | yes | `prod` | Runtime environment; valid values are `dev` and `prod`. |
 | `LEDGERLY_LOG_LEVEL` | yes | `info` | Structured log level: `debug`, `info`, `warn`, or `error`. |
 | `LEDGERLY_HTTP_ADDR` | no | `:8080` | Address the app listens on inside the container. |

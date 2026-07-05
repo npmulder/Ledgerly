@@ -9,18 +9,24 @@ import (
 	nethttp "net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/lib/pq"
 
 	"github.com/npmulder/ledgerly/internal/platform/chrome"
 	"github.com/npmulder/ledgerly/internal/platform/config"
+	"github.com/npmulder/ledgerly/internal/platform/db"
 	httpserver "github.com/npmulder/ledgerly/internal/platform/http"
 	platformlog "github.com/npmulder/ledgerly/internal/platform/log"
 )
 
 var version = "dev"
+
+const migrationsDirEnv = "LEDGERLY_MIGRATIONS_DIR"
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -40,16 +46,16 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 	}
 
 	switch args[0] {
+	case "migrate":
+		if len(args) != 1 {
+			return fmt.Errorf("usage: ledgerly migrate")
+		}
+		return runMigrate(ctx, stdout)
 	case "serve":
 		if len(args) > 1 {
 			return fmt.Errorf("serve accepts no arguments")
 		}
 		return runServe(ctx)
-	case "migrate":
-		if len(args) > 1 {
-			return fmt.Errorf("migrate accepts no arguments")
-		}
-		return runMigrate(ctx, stdout)
 	case "chrome-smoke":
 		if len(args) > 2 {
 			return fmt.Errorf("chrome-smoke accepts at most one output path")
@@ -59,9 +65,7 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 			outputPath = args[1]
 		}
 		return runChromeSmoke(ctx, stdout, outputPath)
-	case "version":
-		return printVersion(stdout)
-	case "--version":
+	case "version", "--version", "-v":
 		return printVersion(stdout)
 	default:
 		return fmt.Errorf("unknown command %q", args[0])
@@ -73,31 +77,97 @@ func printVersion(stdout io.Writer) error {
 	return err
 }
 
-func runMigrate(ctx context.Context, stdout io.Writer) (err error) {
-	cfg, err := config.Load()
+func runMigrate(ctx context.Context, stdout io.Writer) error {
+	databaseURL := strings.TrimSpace(os.Getenv("LEDGERLY_DATABASE_URL"))
+	if databaseURL == "" {
+		databaseURL = db.DefaultDevDatabaseURL
+	}
+	migrationsDir, err := resolveMigrationsDir()
 	if err != nil {
 		return err
 	}
 
-	db, err := sql.Open("postgres", cfg.DatabaseURL)
-	if err != nil {
-		return fmt.Errorf("open database handle: %w", err)
-	}
-	defer func() {
-		closeErr := db.Close()
-		if err == nil && closeErr != nil {
-			err = fmt.Errorf("close database handle: %w", closeErr)
-		}
-	}()
-
-	pingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
-	if err := db.PingContext(pingCtx); err != nil {
-		return fmt.Errorf("ping database before migrations: %w", err)
+
+	pool, err := openPoolWithRetry(ctx, databaseURL)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+
+	applied, err := db.MigrateDir(ctx, pool, migrationsDir)
+	if err != nil {
+		return err
 	}
 
-	_, err = fmt.Fprintln(stdout, "ledgerly migrations: no migrations to apply")
+	_, err = fmt.Fprintf(stdout, "applied %d migrations\n", len(applied))
 	return err
+}
+
+func resolveMigrationsDir() (string, error) {
+	if dir := strings.TrimSpace(os.Getenv(migrationsDirEnv)); dir != "" {
+		return dir, nil
+	}
+
+	var starts []string
+	if cwd, err := os.Getwd(); err == nil {
+		starts = append(starts, cwd)
+	}
+	if executable, err := os.Executable(); err == nil {
+		starts = append(starts, filepath.Dir(executable))
+	}
+
+	seen := make(map[string]struct{}, len(starts))
+	for _, start := range starts {
+		dir, err := filepath.Abs(start)
+		if err != nil {
+			continue
+		}
+		if _, ok := seen[dir]; ok {
+			continue
+		}
+		seen[dir] = struct{}{}
+
+		if migrationsDir, ok := findMigrationsDirFrom(dir); ok {
+			return migrationsDir, nil
+		}
+	}
+
+	return "", fmt.Errorf("locate db/migrations: set %s or run ledgerly from a repository checkout", migrationsDirEnv)
+}
+
+func findMigrationsDirFrom(start string) (string, bool) {
+	dir := start
+	for {
+		candidate := filepath.Join(dir, "db", "migrations")
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			return candidate, true
+		}
+
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", false
+		}
+		dir = parent
+	}
+}
+
+func openPoolWithRetry(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
+	var lastErr error
+	for {
+		pool, err := db.OpenURL(ctx, databaseURL)
+		if err == nil {
+			return pool, nil
+		}
+		lastErr = err
+
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("connect to postgres: %w", errors.Join(lastErr, ctx.Err()))
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
 }
 
 func runChromeSmoke(ctx context.Context, stdout io.Writer, outputPath string) error {
@@ -120,12 +190,12 @@ func runServe(ctx context.Context) (err error) {
 		Level: cfg.LogLevel,
 	})
 
-	db, err := sql.Open("postgres", cfg.DatabaseURL)
+	sqlDB, err := sql.Open("postgres", cfg.DatabaseURL)
 	if err != nil {
 		return fmt.Errorf("open database handle: %w", err)
 	}
 	defer func() {
-		closeErr := db.Close()
+		closeErr := sqlDB.Close()
 		if err == nil && closeErr != nil {
 			err = fmt.Errorf("close database handle: %w", closeErr)
 		}
@@ -134,7 +204,7 @@ func runServe(ctx context.Context) (err error) {
 	router := httpserver.NewRouter(httpserver.Config{
 		Version: version,
 		Logger:  logger,
-		DB:      db,
+		DB:      sqlDB,
 	})
 	server := httpserver.Server(cfg.HTTPAddr, router)
 

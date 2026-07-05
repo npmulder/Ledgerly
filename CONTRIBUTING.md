@@ -12,7 +12,7 @@ task setup       # one-time setup (Python env sync, etc.)
 task --list      # everything that's automated
 ```
 
-PostgreSQL runs as a service, not a host install: `task db:start` brings up Postgres 16 via [Docker Compose](compose.yaml) (Docker required).
+PostgreSQL runs as a service, not a host install: `docker compose up -d` brings up Postgres 16 via [Docker Compose](docker-compose.yml) (Docker required).
 
 mise also auto-creates and activates a Python virtualenv at `.venv/` when you `cd` into the repo (used by agent tooling under `.agents/`). Python dependencies are managed with [uv](https://docs.astral.sh/uv/) via `pyproject.toml`.
 
@@ -21,9 +21,9 @@ Common tasks:
 | Command | What it does |
 |---|---|
 | `task setup` | One-time project setup |
-| `task db:start` / `task db:stop` | Run PostgreSQL 16 in Docker (creates `ledgerly_dev`) |
-| `task db:psql` | Open a psql shell into the dev database |
-| `task db:reset` | Destroy the DB container and its data volume |
+| `docker compose up -d` / `docker compose stop` | Run PostgreSQL 16 in Docker (creates `ledgerly_dev`) |
+| `docker compose exec db psql -U postgres -d ledgerly_dev` | Open a psql shell into the dev database |
+| `docker compose down -v` | Destroy the DB container and its data volume |
 | `task lint` / `task fmt` | Lint / format the Go backend |
 | `task test` | Run backend tests |
 | `task build` | Build the `ledgerly` binary |

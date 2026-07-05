@@ -1,0 +1,18 @@
+DO $ledgerly$
+BEGIN
+	EXECUTE 'CREATE SCHEMA IF NOT EXISTS invoicing';
+	EXECUTE 'REVOKE ALL ON SCHEMA invoicing FROM PUBLIC';
+
+	IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ledgerly_invoicing') THEN
+		EXECUTE 'CREATE ROLE ledgerly_invoicing LOGIN PASSWORD ''ledgerly_invoicing''';
+	END IF;
+
+	EXECUTE 'ALTER ROLE ledgerly_invoicing WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION';
+	EXECUTE 'GRANT USAGE, CREATE ON SCHEMA invoicing TO ledgerly_invoicing';
+	EXECUTE 'GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA invoicing TO ledgerly_invoicing';
+	EXECUTE 'GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA invoicing TO ledgerly_invoicing';
+	EXECUTE 'ALTER DEFAULT PRIVILEGES IN SCHEMA invoicing GRANT ALL PRIVILEGES ON TABLES TO ledgerly_invoicing';
+	EXECUTE 'ALTER DEFAULT PRIVILEGES IN SCHEMA invoicing GRANT ALL PRIVILEGES ON SEQUENCES TO ledgerly_invoicing';
+	EXECUTE 'ALTER ROLE ledgerly_invoicing SET search_path = invoicing';
+END
+$ledgerly$;
