@@ -170,21 +170,60 @@ func (profileStore) profileForUpdate(ctx context.Context, tx db.Tx) (CompanyProf
 	return scanProfile(ctx, tx, " FOR UPDATE")
 }
 
+func (profileStore) createProfile(ctx context.Context, tx db.Tx, profile CompanyProfile) error {
+	values, err := profileStorageValuesFrom(profile)
+	if err != nil {
+		return err
+	}
+
+	_, err = tx.Exec(ctx, `
+INSERT INTO identity.company_profile (
+	id,
+	trading_name,
+	legal_name,
+	company_number,
+	registered_office,
+	incorporation_date,
+	year_end_month,
+	year_end_day,
+	vat_number,
+	bank_details,
+	shareholders,
+	logo_asset_id
+) VALUES (
+	1,
+	$1,
+	$2,
+	$3,
+	$4::jsonb,
+	$5,
+	$6,
+	$7,
+	$8,
+	$9::jsonb,
+	$10::jsonb,
+	$11
+)`,
+		profile.TradingName,
+		profile.LegalName,
+		profile.CompanyNumber,
+		string(values.office),
+		profile.IncorporationDate,
+		int(profile.YearEnd.Month),
+		profile.YearEnd.Day,
+		values.vatNumber,
+		string(values.bankDetails),
+		string(values.shareholders),
+		values.logoAssetID,
+	)
+	if err != nil {
+		return fmt.Errorf("create company profile: %w", err)
+	}
+	return nil
+}
+
 func (profileStore) updateProfile(ctx context.Context, tx db.Tx, profile CompanyProfile) error {
-	office, err := json.Marshal(profile.RegisteredOffice)
-	if err != nil {
-		return fmt.Errorf("marshal registered office: %w", err)
-	}
-	bankDetails, err := json.Marshal(profile.BankDetails)
-	if err != nil {
-		return fmt.Errorf("marshal bank details: %w", err)
-	}
-	shareholders, err := json.Marshal(profile.Shareholders)
-	if err != nil {
-		return fmt.Errorf("marshal shareholders: %w", err)
-	}
-	vatNumber := nullableText(profile.VATNumber)
-	logoAssetID, err := nullableUUID(profile.LogoAssetID)
+	values, err := profileStorageValuesFrom(profile)
 	if err != nil {
 		return err
 	}
@@ -207,19 +246,57 @@ WHERE id = 1`,
 		profile.TradingName,
 		profile.LegalName,
 		profile.CompanyNumber,
-		string(office),
+		string(values.office),
 		profile.IncorporationDate,
 		int(profile.YearEnd.Month),
 		profile.YearEnd.Day,
-		vatNumber,
-		string(bankDetails),
-		string(shareholders),
-		logoAssetID,
+		values.vatNumber,
+		string(values.bankDetails),
+		string(values.shareholders),
+		values.logoAssetID,
 	)
 	if err != nil {
 		return fmt.Errorf("update company profile: %w", err)
 	}
 	return nil
+}
+
+type profileStorageValues struct {
+	office       []byte
+	bankDetails  []byte
+	shareholders []byte
+	vatNumber    sql.NullString
+	logoAssetID  pgtype.UUID
+}
+
+func profileStorageValuesFrom(profile CompanyProfile) (profileStorageValues, error) {
+	office, err := json.Marshal(profile.RegisteredOffice)
+	if err != nil {
+		return profileStorageValues{}, fmt.Errorf("marshal registered office: %w", err)
+	}
+	bankDetails, err := json.Marshal(profile.BankDetails)
+	if err != nil {
+		return profileStorageValues{}, fmt.Errorf("marshal bank details: %w", err)
+	}
+	shareholdersValue := profile.Shareholders
+	if shareholdersValue == nil {
+		shareholdersValue = []Shareholder{}
+	}
+	shareholders, err := json.Marshal(shareholdersValue)
+	if err != nil {
+		return profileStorageValues{}, fmt.Errorf("marshal shareholders: %w", err)
+	}
+	logoAssetID, err := nullableUUID(profile.LogoAssetID)
+	if err != nil {
+		return profileStorageValues{}, err
+	}
+	return profileStorageValues{
+		office:       office,
+		bankDetails:  bankDetails,
+		shareholders: shareholders,
+		vatNumber:    nullableText(profile.VATNumber),
+		logoAssetID:  logoAssetID,
+	}, nil
 }
 
 func scanProfile(ctx context.Context, tx db.Tx, lockClause string) (CompanyProfile, error) {

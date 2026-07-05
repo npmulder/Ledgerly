@@ -120,7 +120,11 @@ func (s *ProfileService) Profile(ctx context.Context) (CompanyProfile, error) {
 // inside the same caller-owned transaction.
 func (s *ProfileService) UpdateProfile(ctx context.Context, patch UpdateProfilePatch) error {
 	profile, err := s.store.profileForUpdate(ctx, s.tx)
-	if err != nil {
+	create := false
+	if errors.Is(err, ErrProfileNotFound) {
+		create = true
+		profile = CompanyProfile{}
+	} else if err != nil {
 		return err
 	}
 
@@ -128,8 +132,14 @@ func (s *ProfileService) UpdateProfile(ctx context.Context, patch UpdateProfileP
 	if err != nil {
 		return err
 	}
-	if err := s.store.updateProfile(ctx, s.tx, updated); err != nil {
-		return err
+	if create {
+		if err := s.store.createProfile(ctx, s.tx, updated); err != nil {
+			return err
+		}
+	} else {
+		if err := s.store.updateProfile(ctx, s.tx, updated); err != nil {
+			return err
+		}
 	}
 	if s.bus == nil {
 		return nil
@@ -272,17 +282,13 @@ func (s *Service) CheckCredential(ctx context.Context, credential Credential) (C
 
 func (patch UpdateProfilePatch) apply(profile CompanyProfile) (CompanyProfile, error) {
 	if patch.TradingName != nil {
-		profile.TradingName = *patch.TradingName
+		profile.TradingName = strings.TrimSpace(*patch.TradingName)
 	}
 	if patch.LegalName != nil {
-		profile.LegalName = *patch.LegalName
+		profile.LegalName = strings.TrimSpace(*patch.LegalName)
 	}
 	if patch.CompanyNumber != nil {
-		companyNumber := strings.TrimSpace(*patch.CompanyNumber)
-		if companyNumber == "" {
-			return CompanyProfile{}, fmt.Errorf("identity: company number is required")
-		}
-		profile.CompanyNumber = companyNumber
+		profile.CompanyNumber = strings.TrimSpace(*patch.CompanyNumber)
 	}
 	if patch.RegisteredOffice != nil {
 		profile.RegisteredOffice = *patch.RegisteredOffice
@@ -312,7 +318,7 @@ func (patch UpdateProfilePatch) apply(profile CompanyProfile) (CompanyProfile, e
 		profile.BankDetails = *patch.BankDetails
 	}
 	if patch.Shareholders != nil {
-		profile.Shareholders = append([]Shareholder(nil), (*patch.Shareholders)...)
+		profile.Shareholders = append([]Shareholder{}, (*patch.Shareholders)...)
 	}
 	if patch.LogoAssetID != nil {
 		logoAssetID := AssetID(strings.TrimSpace(string(*patch.LogoAssetID)))
@@ -323,13 +329,31 @@ func (patch UpdateProfilePatch) apply(profile CompanyProfile) (CompanyProfile, e
 		}
 	}
 
-	if strings.TrimSpace(profile.CompanyNumber) == "" {
-		return CompanyProfile{}, fmt.Errorf("identity: company number is required")
+	var err error
+	if profile.TradingName, err = requiredProfileText("trading name", profile.TradingName); err != nil {
+		return CompanyProfile{}, err
+	}
+	if profile.LegalName, err = requiredProfileText("legal name", profile.LegalName); err != nil {
+		return CompanyProfile{}, err
+	}
+	if profile.CompanyNumber, err = requiredProfileText("company number", profile.CompanyNumber); err != nil {
+		return CompanyProfile{}, err
+	}
+	if profile.IncorporationDate.IsZero() {
+		return CompanyProfile{}, fmt.Errorf("identity: incorporation date is required")
 	}
 	if err := profile.YearEnd.validate(); err != nil {
 		return CompanyProfile{}, err
 	}
 	return profile, nil
+}
+
+func requiredProfileText(field string, value string) (string, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "", fmt.Errorf("identity: %s is required", field)
+	}
+	return trimmed, nil
 }
 
 func normalizeEmail(value string) (string, error) {

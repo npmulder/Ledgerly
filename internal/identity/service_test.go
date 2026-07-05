@@ -2,6 +2,7 @@ package identity
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -20,6 +21,16 @@ import (
 func TestUpdateProfilePatchValidation(t *testing.T) {
 	profile := npmProfile()
 
+	blankTradingName := "  "
+	if _, err := (UpdateProfilePatch{TradingName: &blankTradingName}).apply(profile); err == nil {
+		t.Fatal("UpdateProfilePatch.apply() trading name error = nil, want error")
+	}
+
+	blankLegalName := "  "
+	if _, err := (UpdateProfilePatch{LegalName: &blankLegalName}).apply(profile); err == nil {
+		t.Fatal("UpdateProfilePatch.apply() legal name error = nil, want error")
+	}
+
 	blankCompanyNumber := "  "
 	if _, err := (UpdateProfilePatch{CompanyNumber: &blankCompanyNumber}).apply(profile); err == nil {
 		t.Fatal("UpdateProfilePatch.apply() company number error = nil, want error")
@@ -33,6 +44,15 @@ func TestUpdateProfilePatchValidation(t *testing.T) {
 	badYearEnd := YearEnd{Month: time.February, Day: 30}
 	if _, err := (UpdateProfilePatch{YearEnd: &badYearEnd}).apply(profile); err == nil {
 		t.Fatal("UpdateProfilePatch.apply() year end error = nil, want error")
+	}
+
+	var nilShareholders []Shareholder
+	updated, err := (UpdateProfilePatch{Shareholders: &nilShareholders}).apply(profile)
+	if err != nil {
+		t.Fatalf("UpdateProfilePatch.apply() nil shareholders error = %v", err)
+	}
+	if updated.Shareholders == nil || len(updated.Shareholders) != 0 {
+		t.Fatalf("Shareholders = %#v, want non-nil empty slice", updated.Shareholders)
 	}
 }
 
@@ -151,6 +171,24 @@ func TestUpdateProfilePartialRoundTrip(t *testing.T) {
 	}
 }
 
+func TestUpdateProfileClearsShareholders(t *testing.T) {
+	ctx, tx := migratedIdentityTx(t)
+	service := New(tx, discardBus())
+
+	shareholders := []Shareholder{}
+	if err := service.UpdateProfile(ctx, UpdateProfilePatch{Shareholders: &shareholders}); err != nil {
+		t.Fatalf("UpdateProfile() clear shareholders error = %v", err)
+	}
+
+	got, err := service.Profile(ctx)
+	if err != nil {
+		t.Fatalf("Profile() error = %v", err)
+	}
+	if got.Shareholders == nil || len(got.Shareholders) != 0 {
+		t.Fatalf("Shareholders = %#v, want non-nil empty slice", got.Shareholders)
+	}
+}
+
 func TestUpdateProfilePublishesEventInSameTransaction(t *testing.T) {
 	ctx, tx := migratedIdentityTx(t)
 	eventBus := discardBus()
@@ -182,6 +220,54 @@ func TestUpdateProfilePublishesEventInSameTransaction(t *testing.T) {
 	}
 	if !handlerRan {
 		t.Fatal("ProfileUpdated handler did not run")
+	}
+}
+
+func TestUpdateProfileInitializesMissingProductionProfile(t *testing.T) {
+	ctx, pool := temporaryMigratedDatabaseNamed(t, fmt.Sprintf("ledgerly_prod_identity_%d", time.Now().UnixNano()))
+	service := New(pool, discardBus())
+
+	if _, err := service.Profile(ctx); !errors.Is(err, ErrProfileNotFound) {
+		t.Fatalf("Profile() error = %v, want ErrProfileNotFound before initialization", err)
+	}
+
+	tradingName := "Acme Trading"
+	legalName := "Acme Limited"
+	companyNumber := "ACME123"
+	incorporationDate := "2024-01-15"
+	yearEnd := YearEnd{Month: time.December, Day: 31}
+	registeredOffice := RegisteredOffice{
+		Line1:    "1 Athol Street",
+		Locality: "Douglas",
+		Country:  "IM",
+	}
+	shareholders := []Shareholder{}
+
+	if err := service.UpdateProfile(ctx, UpdateProfilePatch{
+		TradingName:       &tradingName,
+		LegalName:         &legalName,
+		CompanyNumber:     &companyNumber,
+		RegisteredOffice:  &registeredOffice,
+		IncorporationDate: &incorporationDate,
+		YearEnd:           &yearEnd,
+		Shareholders:      &shareholders,
+	}); err != nil {
+		t.Fatalf("UpdateProfile() initialize missing production profile error = %v", err)
+	}
+
+	got, err := service.Profile(ctx)
+	if err != nil {
+		t.Fatalf("Profile() after initialization error = %v", err)
+	}
+	if got.TradingName != tradingName || got.LegalName != legalName || got.CompanyNumber != companyNumber {
+		t.Fatalf("Profile() = %#v, want initialized names and company number", got)
+	}
+	assertDate(t, got.IncorporationDate, 2024, time.January, 15)
+	if got.YearEnd != yearEnd {
+		t.Fatalf("YearEnd = %#v, want %#v", got.YearEnd, yearEnd)
+	}
+	if got.Shareholders == nil || len(got.Shareholders) != 0 {
+		t.Fatalf("Shareholders = %#v, want non-nil empty slice", got.Shareholders)
 	}
 }
 
@@ -217,6 +303,12 @@ func migratedIdentityTx(t *testing.T) (context.Context, pgx.Tx) {
 func temporaryMigratedDatabase(t *testing.T) (context.Context, *pgxpool.Pool) {
 	t.Helper()
 
+	return temporaryMigratedDatabaseNamed(t, fmt.Sprintf("ledgerly_test_identity_%d", time.Now().UnixNano()))
+}
+
+func temporaryMigratedDatabaseNamed(t *testing.T, dbName string) (context.Context, *pgxpool.Pool) {
+	t.Helper()
+
 	databaseURL := testDatabaseURL(t)
 	adminPool, err := db.OpenURL(context.Background(), databaseURL)
 	if err != nil {
@@ -224,7 +316,6 @@ func temporaryMigratedDatabase(t *testing.T) (context.Context, *pgxpool.Pool) {
 	}
 	t.Cleanup(adminPool.Close)
 
-	dbName := fmt.Sprintf("ledgerly_test_identity_%d", time.Now().UnixNano())
 	if _, err := adminPool.Exec(context.Background(), "CREATE DATABASE "+pgx.Identifier{dbName}.Sanitize()); err != nil {
 		t.Skipf("CREATE DATABASE unavailable for seed migration test: %v", err)
 	}
