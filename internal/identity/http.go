@@ -84,11 +84,7 @@ func (h *HTTPHandler) register(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 
-	user, err := h.service.Register(r.Context(), RegisterInput{
-		Email:    request.Email,
-		Password: request.Password,
-		Name:     request.Name,
-	})
+	user, err := h.service.Register(r.Context(), RegisterInput(request))
 	if err != nil {
 		if errors.Is(err, ErrRegistrationClosed) {
 			httpserver.WriteProblem(w, r, httpserver.Problem{
@@ -128,10 +124,7 @@ func (h *HTTPHandler) login(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 
-	result, err := h.service.Login(r.Context(), LoginInput{
-		Email:    request.Email,
-		Password: request.Password,
-	})
+	result, err := h.service.Login(r.Context(), LoginInput(request))
 	if err != nil {
 		if errors.Is(err, ErrInvalidCredentials) {
 			writeUnauthenticated(w, r)
@@ -198,7 +191,9 @@ func ExpiredSessionCookie() *nethttp.Cookie {
 }
 
 func decodeJSON(r *nethttp.Request, dst any) error {
-	defer r.Body.Close()
+	defer func() {
+		_ = r.Body.Close()
+	}()
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(dst); err != nil {
