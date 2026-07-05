@@ -1,3 +1,13 @@
+FROM node:22-bookworm-slim AS web-build
+
+WORKDIR /src/web
+
+COPY web/.npmrc web/package.json web/package-lock.json ./
+RUN npm ci
+
+COPY web ./
+RUN npm run build && mkdir -p dist && touch dist/.ledgerly-embed
+
 FROM golang:1.24-bookworm AS build
 
 WORKDIR /src
@@ -6,6 +16,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
+COPY --from=web-build /src/web/dist ./web/dist
 
 ARG GIT_SHA=dev
 ARG TARGETOS=linux

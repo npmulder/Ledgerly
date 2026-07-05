@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -27,6 +28,7 @@ import (
 	"github.com/npmulder/ledgerly/internal/platform/db"
 	httpserver "github.com/npmulder/ledgerly/internal/platform/http"
 	platformlog "github.com/npmulder/ledgerly/internal/platform/log"
+	"github.com/npmulder/ledgerly/web"
 )
 
 var version = "dev"
@@ -70,6 +72,11 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 			outputPath = args[1]
 		}
 		return runChromeSmoke(ctx, stdout, outputPath)
+	case "openapi":
+		if len(args) != 1 {
+			return fmt.Errorf("usage: ledgerly openapi")
+		}
+		return runOpenAPI(stdout)
 	case "version", "--version", "-v":
 		return printVersion(stdout)
 	default:
@@ -206,12 +213,17 @@ func buildApplicationRouter(cfg applicationWiring) (nethttp.Handler, error) {
 		return nil, err
 	}
 	demoModule.SubscribeEvents(eventBus)
+	staticAssets, err := web.Dist()
+	if err != nil {
+		return nil, fmt.Errorf("load web assets: %w", err)
+	}
 
 	return httpserver.NewRouter(httpserver.Config{
-		Version: cfg.Version,
-		Logger:  cfg.Logger,
-		DB:      cfg.HealthDB,
-		APIAuth: identity.AuthMiddleware(cfg.IdentityService),
+		Version:      cfg.Version,
+		Logger:       cfg.Logger,
+		DB:           cfg.HealthDB,
+		APIAuth:      identity.AuthMiddleware(cfg.IdentityService),
+		StaticAssets: staticAssets,
 		Modules: []httpserver.Module{
 			identity.HTTPModule(cfg.IdentityHandler),
 			demoModule.HTTPModule(),
@@ -221,6 +233,16 @@ func buildApplicationRouter(cfg applicationWiring) (nethttp.Handler, error) {
 			demoModule.OpenAPIFragment(),
 		},
 	}), nil
+}
+
+func runOpenAPI(stdout io.Writer) error {
+	encoder := json.NewEncoder(stdout)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(httpserver.OpenAPIDocument(
+		version,
+		identity.OpenAPIFragment(),
+		demo.OpenAPIFragment(),
+	))
 }
 
 func runChromeSmoke(ctx context.Context, stdout io.Writer, outputPath string) error {

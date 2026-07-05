@@ -29,6 +29,12 @@ Common tasks:
 | `task build` | Build the `ledgerly` binary |
 | `task dev` | Run the app in development mode |
 
+`task build` installs frontend dependencies when the package manifests change,
+runs the checksum-aware `web:build` task, then embeds `web/dist` into the
+`ledgerly` binary. Go-task records `web:build` `sources`/`generates` checksums
+under `.task/`, so a second `task build` skips the npm/Vite build when `web/`
+inputs are unchanged.
+
 Backend/frontend tasks check for `go.mod` / `web/package.json` and tell you plainly if that part of the codebase isn't scaffolded yet.
 
 ## Repository layout
