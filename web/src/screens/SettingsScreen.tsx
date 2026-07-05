@@ -133,6 +133,8 @@ function CompanySettings() {
     queryKey: queryKeys.identity.profile(),
   });
   const profile = profileQuery.data;
+  const profileNotFound =
+    isApiError(profileQuery.error) && profileQuery.error.status === 404;
   const [formDraft, setFormDraft] = useState<CompanyFormState | null>(null);
   const form = formDraft ?? profileToForm(profile);
 
@@ -266,7 +268,7 @@ function CompanySettings() {
     );
   }
 
-  if (profileQuery.isError) {
+  if (profileQuery.isError && !profileNotFound) {
     return (
       <div className="settings-detail">
         <PageTitle id="settings-page-title">Company</PageTitle>
@@ -322,13 +324,13 @@ function CompanySettings() {
               </Button>
               <input
                 aria-label="Company logo file"
-                accept="image/png,image/svg+xml"
+                accept="image/png,image/jpeg"
                 className="company-logo-input"
                 onChange={handleFileSelection}
                 ref={fileInputRef}
                 type="file"
               />
-              <span>PNG or SVG, appears on invoices, vouchers and emails</span>
+              <span>PNG or JPEG, appears on invoices, vouchers and emails</span>
             </div>
           </div>
           {logoProblem ? <ProblemPanel problem={logoProblem} /> : null}

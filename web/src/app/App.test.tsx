@@ -1,4 +1,5 @@
 import { cleanup, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -53,13 +54,17 @@ function renderAt(path: string) {
 }
 
 function renderAtUnauthenticated(path: string) {
+  renderAtWithFetch(path, unauthenticatedFetch());
+}
+
+function renderAtWithFetch(path: string, fetchImpl: typeof fetch) {
   const queryClient = new QueryClient({
     defaultOptions: {
       mutations: { retry: false },
       queries: { retry: false },
     },
   });
-  vi.stubGlobal("fetch", unauthenticatedFetch());
+  vi.stubGlobal("fetch", fetchImpl);
 
   render(
     <MemoryRouter initialEntries={[path]}>
@@ -146,6 +151,63 @@ describe("App routing shell", () => {
     expect(screen.queryByRole("banner")).not.toBeInTheDocument();
     expect(
       screen.queryByRole("navigation", { name: "Primary" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the session visible when logout fails", async () => {
+    const user = userEvent.setup();
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const path = pathFromRequest(input);
+      if (path === "/api/identity/me") {
+        return jsonResponse({
+          created_at: "2026-07-05T12:00:00Z",
+          email: "owner@example.com",
+          id: 1,
+          name: "N. Meyer",
+        });
+      }
+      if (path === "/api/identity/profile") {
+        return jsonResponse(identityProfile());
+      }
+      if (path === "/api/identity/logout") {
+        return jsonResponse(
+          {
+            detail: "session cookie was not cleared",
+            status: 503,
+            title: "Service unavailable",
+            type: "about:blank",
+          },
+          503,
+          "application/problem+json",
+        );
+      }
+      return jsonResponse(
+        {
+          status: 404,
+          title: "Not Found",
+          type: "about:blank",
+        },
+        404,
+        "application/problem+json",
+      );
+    });
+    renderAtWithFetch("/", fetchImpl);
+
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Dashboard" }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Open account menu" }));
+    await user.click(screen.getByRole("menuitem", { name: "Logout" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Service unavailable",
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "session cookie was not cleared",
+    );
+    expect(screen.getByRole("banner")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { level: 1, name: "Login" }),
     ).not.toBeInTheDocument();
   });
 });

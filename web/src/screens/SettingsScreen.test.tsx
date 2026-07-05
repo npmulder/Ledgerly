@@ -11,7 +11,7 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "@/app/App";
-import type { IdentityProfile } from "@/api/identity";
+import type { IdentityProfile, IdentityProfilePatch } from "@/api/identity";
 
 afterEach(() => {
   cleanup();
@@ -145,9 +145,13 @@ describe("Company settings", () => {
     renderAt("/settings/company");
 
     await screen.findByLabelText("Trading name");
+    expect(screen.getByLabelText("Company logo file")).toHaveAttribute(
+      "accept",
+      "image/png,image/jpeg",
+    );
     await user.upload(
       screen.getByLabelText("Company logo file"),
-      new File(["<svg></svg>"], "logo.svg", { type: "image/svg+xml" }),
+      new File(["logo"], "logo.jpg", { type: "image/jpeg" }),
     );
 
     await waitFor(() => {
@@ -157,6 +161,88 @@ describe("Company settings", () => {
       expect(headerLogo).not.toBeNull();
       expect(headerLogo as HTMLElement).toHaveAttribute("src", logoUrl);
     });
+  });
+
+  it("allows a missing company profile to be initialized by saving", async () => {
+    const user = userEvent.setup();
+    let profile: IdentityProfile | null = null;
+    const fetchImpl = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = pathFromRequest(input);
+        if (path === "/api/identity/me") {
+          return jsonResponse({
+            created_at: "2026-07-05T12:00:00Z",
+            email: "owner@example.com",
+            id: 1,
+            name: "N. Meyer",
+          });
+        }
+        if (path === "/api/identity/profile" && init?.method === "PATCH") {
+          const patch = JSON.parse(String(init.body)) as IdentityProfilePatch;
+          profile = {
+            ...identityProfile(),
+            company_number: patch.company_number ?? "",
+            incorporation_date: patch.incorporation_date ?? "",
+            legal_name: patch.legal_name ?? "",
+            registered_office: patch.registered_office ?? {
+              country: "",
+              line1: "",
+              line2: "",
+              locality: "",
+              postal_code: "",
+              region: "",
+            },
+            trading_name: patch.trading_name ?? "",
+            vat_number: patch.vat_number ?? null,
+            year_end: patch.year_end ?? { day: 31, month: 3 },
+          };
+          return jsonResponse(profile);
+        }
+        if (path === "/api/identity/profile" && profile) {
+          return jsonResponse(profile);
+        }
+        if (path === "/api/identity/profile") {
+          return jsonResponse(
+            { status: 404, title: "Not Found", type: "about:blank" },
+            404,
+            "application/problem+json",
+          );
+        }
+        return jsonResponse(
+          { status: 404, title: "Not Found", type: "about:blank" },
+          404,
+          "application/problem+json",
+        );
+      },
+    );
+    vi.stubGlobal("fetch", fetchImpl);
+
+    renderAt("/settings/company");
+
+    await user.type(await screen.findByLabelText("Trading name"), "Keel Newco");
+    await user.type(screen.getByLabelText("Legal name"), "Keel Newco Limited");
+    await user.type(screen.getByLabelText("Company number"), "020263C");
+    await user.type(
+      screen.getByLabelText("Registered office line 1"),
+      "1 Quay",
+    );
+    await user.type(
+      screen.getByLabelText("Registered office locality"),
+      "Douglas",
+    );
+    await user.type(screen.getByLabelText("Registered office country"), "IM");
+    await user.type(screen.getByLabelText("Incorporation date"), "2026-07-05");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => {
+      expect(
+        within(screen.getByRole("banner")).getByText("Keel Newco"),
+      ).toBeInTheDocument();
+    });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "/api/identity/profile",
+      expect.objectContaining({ method: "PATCH" }),
+    );
   });
 });
 

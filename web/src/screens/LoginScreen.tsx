@@ -1,6 +1,6 @@
 import { FormEvent, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 
 import { isApiError } from "@/api/client";
 import { loginIdentity } from "@/api/identity";
@@ -10,6 +10,7 @@ import { Button, Field, Input } from "@/components";
 export function LoginScreen() {
   const location = useLocation();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -22,7 +23,7 @@ export function LoginScreen() {
           queryKey: queryKeys.identity.profile(),
         }),
       ]);
-      navigate(redirectPathFromState(location.state), { replace: true });
+      navigate(redirectPath(location.state, searchParams), { replace: true });
     },
   });
   const problem = isApiError(loginMutation.error)
@@ -78,12 +79,30 @@ export function LoginScreen() {
   );
 }
 
+function redirectPath(state: unknown, searchParams: URLSearchParams) {
+  const statePath = redirectPathFromState(state);
+  if (statePath) {
+    return statePath;
+  }
+
+  const returnTo = searchParams.get("returnTo");
+  if (returnTo && isSafeRelativePath(returnTo)) {
+    return returnTo;
+  }
+
+  return "/";
+}
+
 function redirectPathFromState(state: unknown) {
   if (!isLocationState(state)) {
-    return "/";
+    return null;
   }
 
   return `${state.from.pathname}${state.from.search}${state.from.hash}`;
+}
+
+function isSafeRelativePath(path: string) {
+  return path.startsWith("/") && !path.startsWith("//");
 }
 
 function isLocationState(state: unknown): state is {

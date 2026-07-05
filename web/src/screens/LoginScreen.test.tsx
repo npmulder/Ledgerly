@@ -1,7 +1,7 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { LoginScreen } from "@/screens/LoginScreen";
@@ -41,9 +41,38 @@ describe("LoginScreen", () => {
       "authentication required",
     );
   });
+
+  it("returns to the URL query target after login", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          created_at: "2026-07-05T12:00:00Z",
+          email: "owner@example.com",
+          id: 1,
+          name: "N. Meyer",
+        }),
+      ),
+    );
+
+    renderLogin(
+      `/login?returnTo=${encodeURIComponent("/settings/company?source=api")}`,
+    );
+
+    await user.type(screen.getByLabelText("Email"), "owner@example.com");
+    await user.type(screen.getByLabelText("Password"), "correct password");
+    await user.click(screen.getByRole("button", { name: "Login" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("location")).toHaveTextContent(
+        "/settings/company?source=api",
+      );
+    });
+  });
 });
 
-function renderLogin() {
+function renderLogin(initialEntry = "/login") {
   const queryClient = new QueryClient({
     defaultOptions: {
       mutations: { retry: false },
@@ -52,11 +81,23 @@ function renderLogin() {
   });
 
   render(
-    <MemoryRouter initialEntries={["/login"]}>
+    <MemoryRouter initialEntries={[initialEntry]}>
       <QueryClientProvider client={queryClient}>
         <LoginScreen />
+        <LocationProbe />
       </QueryClientProvider>
     </MemoryRouter>,
+  );
+}
+
+function LocationProbe() {
+  const location = useLocation();
+  return (
+    <span data-testid="location">
+      {location.pathname}
+      {location.search}
+      {location.hash}
+    </span>
   );
 }
 

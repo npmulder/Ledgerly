@@ -2,6 +2,7 @@ import { Suspense, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 
+import { isApiError } from "@/api/client";
 import {
   getIdentityProfile,
   logoutIdentity,
@@ -41,11 +42,14 @@ export function AppShell({ user }: AppShellProps) {
   const userInitial = initialFor(user.name || user.email);
   const logoutMutation = useMutation({
     mutationFn: logoutIdentity,
-    onSettled: () => {
+    onSuccess: () => {
       queryClient.removeQueries({ queryKey: ["identity"] });
       navigate("/login", { replace: true });
     },
   });
+  const logoutProblem = isApiError(logoutMutation.error)
+    ? logoutMutation.error.problem
+    : null;
 
   return (
     <div className="app-shell">
@@ -112,6 +116,14 @@ export function AppShell({ user }: AppShellProps) {
                 >
                   Logout
                 </button>
+                {logoutProblem ? (
+                  <div className="problem-alert" role="alert">
+                    <strong>{logoutProblem.title}</strong>
+                    {logoutProblem.detail ? (
+                      <span>{logoutProblem.detail}</span>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
             ) : null}
           </div>
