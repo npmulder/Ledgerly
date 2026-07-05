@@ -3,6 +3,11 @@ version: "3"
 vars:
   GOLANGCI_LINT_VERSION: v2.8.0
 
+includes:
+  web:
+    taskfile: ./web/Taskfile.yml
+    dir: ./web
+
 tasks:
   build:
     desc: Build and vet all Go packages
