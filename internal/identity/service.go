@@ -12,8 +12,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/npmulder/ledgerly/internal/platform/bus"
 	"github.com/npmulder/ledgerly/internal/platform/clock"
+	"github.com/npmulder/ledgerly/internal/platform/db"
 )
+
+const dateLayout = "2006-01-02"
+
+// ErrProfileNotFound is returned when the single profile row has not been
+// initialised yet.
+var ErrProfileNotFound = errors.New("identity: company profile not found")
 
 type storedUser struct {
 	User
@@ -21,7 +29,7 @@ type storedUser struct {
 }
 
 type storedSession struct {
-	User      User
+	User
 	ExpiresAt time.Time
 	CreatedAt time.Time
 }
@@ -76,6 +84,82 @@ func NewService(store Store, clk clock.Clock, opts ...ServiceOption) *Service {
 		opt(service)
 	}
 	return service
+}
+
+// ProfileService implements the company-profile API.
+type ProfileService struct {
+	tx    db.Tx
+	bus   *bus.Bus
+	store profileStore
+}
+
+var _ Identity = (*ProfileService)(nil)
+
+// New returns a profile API bound to tx. The caller owns the transaction
+// lifetime; UpdateProfile publishes its event on the supplied transaction.
+func New(tx db.Tx, eventBus *bus.Bus) *ProfileService {
+	return NewProfileService(tx, eventBus)
+}
+
+// NewProfileService returns a profile API bound to tx. The caller owns the
+// transaction lifetime; UpdateProfile publishes its event on tx.
+func NewProfileService(tx db.Tx, eventBus *bus.Bus) *ProfileService {
+	return &ProfileService{
+		tx:    tx,
+		bus:   eventBus,
+		store: profileStore{},
+	}
+}
+
+// Profile returns the current company profile.
+func (s *ProfileService) Profile(ctx context.Context) (CompanyProfile, error) {
+	return s.store.profile(ctx, s.tx)
+}
+
+// UpdateProfile applies a partial profile update and publishes ProfileUpdated
+// inside the same caller-owned transaction.
+func (s *ProfileService) UpdateProfile(ctx context.Context, patch UpdateProfilePatch) error {
+	profile, err := s.store.profileForUpdate(ctx, s.tx)
+	create := false
+	if errors.Is(err, ErrProfileNotFound) {
+		create = true
+		profile = CompanyProfile{}
+	} else if err != nil {
+		return err
+	}
+
+	updated, err := patch.apply(profile)
+	if err != nil {
+		return err
+	}
+	if create {
+		if err := s.store.createProfile(ctx, s.tx, updated); err != nil {
+			return err
+		}
+	} else {
+		if err := s.store.updateProfile(ctx, s.tx, updated); err != nil {
+			return err
+		}
+	}
+	if s.bus == nil {
+		return nil
+	}
+	if err := s.bus.Publish(ctx, s.tx, ProfileUpdated{}); err != nil {
+		return fmt.Errorf("publish profile updated: %w", err)
+	}
+	return nil
+}
+
+// CompanyFacts returns identity facts consumed by jurisdiction and reports.
+func (s *ProfileService) CompanyFacts(ctx context.Context) (CompanyFacts, error) {
+	profile, err := s.Profile(ctx)
+	if err != nil {
+		return CompanyFacts{}, err
+	}
+	return CompanyFacts{
+		IncorporationDate: profile.IncorporationDate,
+		YearEnd:           profile.YearEnd,
+	}, nil
 }
 
 func (s *Service) Register(ctx context.Context, input RegisterInput) (User, error) {
@@ -196,6 +280,82 @@ func (s *Service) CheckCredential(ctx context.Context, credential Credential) (C
 	}, nil
 }
 
+func (patch UpdateProfilePatch) apply(profile CompanyProfile) (CompanyProfile, error) {
+	if patch.TradingName != nil {
+		profile.TradingName = strings.TrimSpace(*patch.TradingName)
+	}
+	if patch.LegalName != nil {
+		profile.LegalName = strings.TrimSpace(*patch.LegalName)
+	}
+	if patch.CompanyNumber != nil {
+		profile.CompanyNumber = strings.TrimSpace(*patch.CompanyNumber)
+	}
+	if patch.RegisteredOffice != nil {
+		profile.RegisteredOffice = *patch.RegisteredOffice
+	}
+	if patch.IncorporationDate != nil {
+		incorporationDate, err := parseDate(*patch.IncorporationDate)
+		if err != nil {
+			return CompanyProfile{}, err
+		}
+		profile.IncorporationDate = incorporationDate
+	}
+	if patch.YearEnd != nil {
+		if err := patch.YearEnd.validate(); err != nil {
+			return CompanyProfile{}, err
+		}
+		profile.YearEnd = *patch.YearEnd
+	}
+	if patch.VATNumber != nil {
+		vatNumber := strings.TrimSpace(*patch.VATNumber)
+		if vatNumber == "" {
+			profile.VATNumber = nil
+		} else {
+			profile.VATNumber = &vatNumber
+		}
+	}
+	if patch.BankDetails != nil {
+		profile.BankDetails = *patch.BankDetails
+	}
+	if patch.Shareholders != nil {
+		profile.Shareholders = append([]Shareholder{}, (*patch.Shareholders)...)
+	}
+	if patch.LogoAssetID != nil {
+		logoAssetID := AssetID(strings.TrimSpace(string(*patch.LogoAssetID)))
+		if logoAssetID == "" {
+			profile.LogoAssetID = nil
+		} else {
+			profile.LogoAssetID = &logoAssetID
+		}
+	}
+
+	var err error
+	if profile.TradingName, err = requiredProfileText("trading name", profile.TradingName); err != nil {
+		return CompanyProfile{}, err
+	}
+	if profile.LegalName, err = requiredProfileText("legal name", profile.LegalName); err != nil {
+		return CompanyProfile{}, err
+	}
+	if profile.CompanyNumber, err = requiredProfileText("company number", profile.CompanyNumber); err != nil {
+		return CompanyProfile{}, err
+	}
+	if profile.IncorporationDate.IsZero() {
+		return CompanyProfile{}, fmt.Errorf("identity: incorporation date is required")
+	}
+	if err := profile.YearEnd.validate(); err != nil {
+		return CompanyProfile{}, err
+	}
+	return profile, nil
+}
+
+func requiredProfileText(field string, value string) (string, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "", fmt.Errorf("identity: %s is required", field)
+	}
+	return trimmed, nil
+}
+
 func normalizeEmail(value string) (string, error) {
 	email := strings.ToLower(strings.TrimSpace(value))
 	if email == "" {
@@ -206,6 +366,40 @@ func normalizeEmail(value string) (string, error) {
 		return "", fmt.Errorf("email is invalid")
 	}
 	return email, nil
+}
+
+func parseDate(value string) (time.Time, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return time.Time{}, fmt.Errorf("identity: date is required")
+	}
+	parsed, err := time.Parse(dateLayout, trimmed)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("identity: parse date %q as YYYY-MM-DD: %w", trimmed, err)
+	}
+	return parsed, nil
+}
+
+func (yearEnd YearEnd) validate() error {
+	month := int(yearEnd.Month)
+	if month < 1 || month > 12 {
+		return fmt.Errorf("identity: year-end month %d out of range", month)
+	}
+	if yearEnd.Day < 1 || yearEnd.Day > daysInMonth(yearEnd.Month) {
+		return fmt.Errorf("identity: year-end day %d out of range for month %d", yearEnd.Day, month)
+	}
+	return nil
+}
+
+func daysInMonth(month time.Month) int {
+	switch month {
+	case time.April, time.June, time.September, time.November:
+		return 30
+	case time.February:
+		return 29
+	default:
+		return 31
+	}
 }
 
 func newSessionToken(reader io.Reader) (string, error) {
