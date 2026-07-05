@@ -122,6 +122,7 @@ func TestResolveMigrationsDirWalksUpFromCWD(t *testing.T) {
 
 func TestRunServeFailsOnMalformedJurisdictionPack(t *testing.T) {
 	t.Setenv("LEDGERLY_DATABASE_URL", "postgres://ledgerly@example/ledgerly")
+	t.Setenv("LEDGERLY_DATA_DIR", t.TempDir())
 	t.Setenv("LEDGERLY_ENV", "dev")
 	t.Setenv("LEDGERLY_LOG_LEVEL", "info")
 	t.Setenv("LEDGERLY_JURISDICTION", "testland@0.1")
