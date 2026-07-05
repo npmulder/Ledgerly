@@ -2,7 +2,6 @@ package ledger
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"unicode"
@@ -13,7 +12,8 @@ import (
 	"github.com/npmulder/ledgerly/internal/platform/db"
 )
 
-// Store owns ledger persistence. All SQL relies on the module search_path.
+// Store owns ledger persistence. SQL qualifies ledger objects so callers can
+// share transactions from other module pools.
 type Store struct{}
 
 // EnsureAccount creates spec.Code or returns the existing account code when it is consistent.
@@ -23,31 +23,17 @@ func (Store) EnsureAccount(ctx context.Context, tx db.Tx, spec AccountSpec) (Acc
 		return "", err
 	}
 
-	const insertQuery = `
-INSERT INTO accounts (code, name, type, currency)
-VALUES ($1, $2, $3, $4)
-ON CONFLICT (code) DO NOTHING
-RETURNING code`
-
-	var createdCode string
-	err = tx.QueryRow(
-		ctx,
-		insertQuery,
-		string(normalized.Code),
-		normalized.Name,
-		string(normalized.Type),
-		nullableText(normalized.Currency),
-	).Scan(&createdCode)
-	if err == nil {
-		return AccountCode(createdCode), nil
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
-		return "", fmt.Errorf("ledger: insert account %s: %w", normalized.Code, err)
-	}
-
-	existing, err := accountByCode(ctx, tx, normalized.Code)
+	existing, err := ensureAccount(ctx, tx, normalized)
 	if err != nil {
 		return "", err
+	}
+	if existing.Name != normalized.Name {
+		return "", &AccountConflictError{
+			Code:      normalized.Code,
+			Field:     "name",
+			Existing:  existing.Name,
+			Requested: normalized.Name,
+		}
 	}
 	if existing.Type != normalized.Type {
 		return "", &AccountConflictError{
@@ -73,7 +59,7 @@ RETURNING code`
 func (Store) ListAccounts(ctx context.Context, tx db.Tx) ([]Account, error) {
 	rows, err := tx.Query(ctx, `
 SELECT id, code, name, type, currency, created_at
-FROM accounts
+FROM ledger.accounts
 ORDER BY code`)
 	if err != nil {
 		return nil, fmt.Errorf("ledger: list accounts: %w", err)
@@ -87,15 +73,43 @@ ORDER BY code`)
 	return accounts, nil
 }
 
-func accountByCode(ctx context.Context, tx db.Tx, code AccountCode) (Account, error) {
-	const query = `
-SELECT id, code, name, type, currency, created_at
-FROM accounts
-WHERE code = $1`
+type ensuredAccount struct {
+	Code     AccountCode
+	Name     string
+	Type     AccountType
+	Currency *string
+}
 
-	account, err := scanSingleAccount(tx.QueryRow(ctx, query, string(code)))
-	if err != nil {
-		return Account{}, fmt.Errorf("ledger: read account %s: %w", code, err)
+func ensureAccount(ctx context.Context, tx db.Tx, spec AccountSpec) (ensuredAccount, error) {
+	const query = `
+SELECT code, name, account_type, currency
+FROM ledger.ensure_account($1, $2, $3, $4)`
+
+	var (
+		code      string
+		name      string
+		typeValue string
+		currency  pgtype.Text
+	)
+	if err := tx.QueryRow(
+		ctx,
+		query,
+		string(spec.Code),
+		spec.Name,
+		string(spec.Type),
+		nullableText(spec.Currency),
+	).Scan(&code, &name, &typeValue, &currency); err != nil {
+		return ensuredAccount{}, fmt.Errorf("ledger: ensure account %s: %w", spec.Code, err)
+	}
+
+	account := ensuredAccount{
+		Code: AccountCode(code),
+		Name: name,
+		Type: AccountType(typeValue),
+	}
+	if currency.Valid {
+		value := currency.String
+		account.Currency = &value
 	}
 	return account, nil
 }

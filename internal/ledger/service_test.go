@@ -98,6 +98,11 @@ func TestEnsureAccountIdempotentAndConflicts(t *testing.T) {
 		t.Fatalf("ensured account count = %d, want 1", created)
 	}
 
+	conflictingName := spec
+	conflictingName.Name = "Different USD account"
+	_, err = service.EnsureAccount(ctx, tx, conflictingName)
+	assertAccountConflict(t, err, "name", "Revolut USD", "Different USD account")
+
 	conflictingType := spec
 	conflictingType.Type = AccountTypeLiability
 	_, err = service.EnsureAccount(ctx, tx, conflictingType)
@@ -108,6 +113,72 @@ func TestEnsureAccountIdempotentAndConflicts(t *testing.T) {
 	conflictingCurrency.Currency = &conflictingCurrencyValue
 	_, err = service.EnsureAccount(ctx, tx, conflictingCurrency)
 	assertAccountConflict(t, err, "currency", "USD", "EUR")
+}
+
+func TestEnsureAccountWorksFromBankingTransaction(t *testing.T) {
+	ctx, _, ledgerPool := temporaryMigratedLedgerDatabase(t)
+	service := New(ledgerPool)
+
+	bankingPool := openDatabasePool(
+		t,
+		ctx,
+		testDatabaseURL(t),
+		ledgerPool.Config().ConnConfig.Database,
+		db.WithModule("banking"),
+	)
+	t.Cleanup(bankingPool.Close)
+
+	tx, err := bankingPool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("Begin() banking error = %v", err)
+	}
+	defer func() {
+		_ = tx.Rollback(context.Background())
+	}()
+
+	var searchPath string
+	if err := tx.QueryRow(ctx, "SHOW search_path").Scan(&searchPath); err != nil {
+		t.Fatalf("SHOW search_path in banking tx: %v", err)
+	}
+	if searchPath != "banking" {
+		t.Fatalf("banking tx search_path = %q, want banking", searchPath)
+	}
+
+	currency := "gbp"
+	code, err := service.EnsureAccount(ctx, tx, AccountSpec{
+		Code:     "1000-cash-banking-gbp",
+		Name:     "Banking cash GBP",
+		Type:     AccountTypeAsset,
+		Currency: &currency,
+	})
+	if err != nil {
+		t.Fatalf("EnsureAccount() from banking tx error = %v", err)
+	}
+	if code != "1000-cash-banking-gbp" {
+		t.Fatalf("EnsureAccount() from banking tx code = %q, want 1000-cash-banking-gbp", code)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("Commit() banking tx error = %v", err)
+	}
+
+	var created int
+	if err := ledgerPool.QueryRow(ctx, `
+SELECT count(*)
+FROM ledger.accounts
+WHERE code = $1
+	AND name = 'Banking cash GBP'
+	AND type = 'asset'
+	AND currency = 'GBP'`, string(code)).Scan(&created); err != nil {
+		t.Fatalf("count banking-created account: %v", err)
+	}
+	if created != 1 {
+		t.Fatalf("banking-created account count = %d, want 1", created)
+	}
+
+	_, err = bankingPool.Exec(ctx, `
+INSERT INTO ledger.accounts (code, name, type, currency)
+VALUES ('1001-direct-banking-gbp', 'Direct banking cash GBP', 'asset', 'GBP')`)
+	assertPermissionDenied(t, err)
 }
 
 func TestJournalEntriesAndPostingsAppendOnlyForAppRole(t *testing.T) {
