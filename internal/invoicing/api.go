@@ -153,6 +153,12 @@ func (m *Module) InvoiceByNumber(ctx context.Context, number string) (Invoice, e
 	return m.service.InvoiceByNumber(ctx, number)
 }
 
+// InvoicesIssuedBetween returns sent/paid invoices issued in an inclusive
+// date range that already have immutable PDF assets.
+func (m *Module) InvoicesIssuedBetween(ctx context.Context, from time.Time, to time.Time) ([]Invoice, error) {
+	return m.service.InvoicesIssuedBetween(ctx, from, to)
+}
+
 // InvoiceVATContextBySendEntryID returns VAT context for a sent-invoice posting.
 func (m *Module) InvoiceVATContextBySendEntryID(ctx context.Context, entryID ledger.EntryID) (InvoiceVATContext, error) {
 	return m.service.InvoiceVATContextBySendEntryID(ctx, entryID)

@@ -33,7 +33,15 @@ const (
 	DefaultECBRetryBackoff = 250 * time.Millisecond
 )
 
-const ratesStaleEventName = "moneyfx.RatesStale"
+const (
+	// RatesStaleName is the bus event name for stale ECB-rate facts.
+	RatesStaleName = "moneyfx.RatesStale"
+
+	// RatesUpdatedName is the bus event name for successful ECB rate updates.
+	RatesUpdatedName = "moneyfx.RatesUpdated"
+
+	ratesStaleEventName = RatesStaleName
+)
 
 // RatesStale is published after a failed ECB run when stored rates are more
 // than three calendar days behind the current ECB date.
@@ -44,6 +52,17 @@ type RatesStale struct {
 // Name implements bus.Event.
 func (RatesStale) Name() string {
 	return ratesStaleEventName
+}
+
+// RatesUpdated is published after a successful ECB run stores rates. Advisor
+// consumes it to re-evaluate and resolve stale-rate insights promptly.
+type RatesUpdated struct {
+	RateDate time.Time
+}
+
+// Name implements bus.Event.
+func (RatesUpdated) Name() string {
+	return RatesUpdatedName
 }
 
 // ECBRate is one EUR-base reference rate published by the ECB.
@@ -195,13 +214,30 @@ func (f *ECBFetcher) Run(ctx context.Context) error {
 		err = f.store.StoreECBRates(ctx, daily.Rates)
 	}
 	if err == nil {
-		return nil
+		return f.publishRatesUpdated(ctx, daily.Rates)
 	}
 
 	if staleErr := f.publishStaleIfNeeded(ctx); staleErr != nil {
 		return errors.Join(err, staleErr)
 	}
 	return err
+}
+
+func (f *ECBFetcher) publishRatesUpdated(ctx context.Context, rates []ECBRate) error {
+	if f.bus == nil {
+		return nil
+	}
+	normalized, err := normalizeECBRates(rates)
+	if err != nil {
+		return err
+	}
+	latest := normalized[0].Date
+	for _, rate := range normalized[1:] {
+		if rate.Date.After(latest) {
+			latest = rate.Date
+		}
+	}
+	return f.bus.Publish(ctx, nil, RatesUpdated{RateDate: latest})
 }
 
 func (f *ECBFetcher) fetchWithRetry(ctx context.Context) (ECBDailyRates, error) {

@@ -29,7 +29,7 @@ func (s *Service) FilingCalendarContext(ctx context.Context) ([]Filing, error) {
 	if s == nil {
 		return nil, fmt.Errorf("reports: service is nil")
 	}
-	if s.identity == nil {
+	if s.facts == nil {
 		return nil, fmt.Errorf("reports: identity facts provider is required")
 	}
 	clk := s.clock
@@ -37,7 +37,7 @@ func (s *Service) FilingCalendarContext(ctx context.Context) ([]Filing, error) {
 		clk = clock.New()
 	}
 
-	facts, err := s.identity.CompanyFacts(ctx)
+	facts, err := s.facts.CompanyFacts(ctx)
 	if err != nil {
 		return nil, err
 	}

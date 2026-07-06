@@ -4,7 +4,9 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -77,7 +80,13 @@ type ModuleDeps struct {
 	PDFBaseURL     string
 	MailSender     mail.Sender
 
-	ReportsInvoicing reports.Invoicing
+	ReportsInvoicing  reports.Invoicing
+	ReportsDLA        reports.DLA
+	ReportsDocuments  reports.DividendDocumentProvider
+	ReportsArchive    reports.ExportArchiveStore
+	ReportsPDFEngine  reports.PLPDFEngine
+	ReportsShareLimit int64
+	AppVersion        string
 }
 
 // Module is a module contribution to the HTTP router and in-process bus.
@@ -112,6 +121,7 @@ type Dependencies struct {
 	LedgerPool    *pgxpool.Pool
 	MoneyFXPool   *pgxpool.Pool
 	InvoicingPool *pgxpool.Pool
+	AdvisorPool   *pgxpool.Pool
 
 	Bus        *bus.Bus
 	BusOptions []bus.Option
@@ -130,10 +140,14 @@ type Dependencies struct {
 	InvoicingPDFEngine     invoicing.InvoicePDFEngine
 	InvoicingPDFBaseURL    string
 	InvoicingMailSender    mail.Sender
+	ReportsPDFEngine       reports.PLPDFEngine
+	ReportsShareSizeLimit  int64
 
 	DividendsPDFAssetStore dividends.DividendDocumentAssetStore
 	DividendsPDFEngine     dividends.DividendDocumentPDFEngine
 	DividendsPDFBaseURL    string
+
+	AdvisorOptions []advisor.ServiceOption
 
 	JurisdictionLoader func(string) error
 
@@ -159,8 +173,10 @@ type App struct {
 	LedgerPool      *pgxpool.Pool
 	MoneyFXPool     *pgxpool.Pool
 	InvoicingPool   *pgxpool.Pool
+	AdvisorPool     *pgxpool.Pool
 	IdentityService *identity.Service
 	AdvisorFacts    advisor.FactRegistry
+	Advisor         *advisor.Service
 
 	cron   *platformcron.Runner
 	jobs   map[string]Job
@@ -224,6 +240,10 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		return nil, err
 	}
 	invoicingPool, err := modulePool(ctx, cfg.Runtime.DatabaseURL, invoicing.ModuleName, deps.InvoicingPool, openPool, &closeFuncs)
+	if err != nil {
+		return nil, err
+	}
+	advisorPool, err := modulePool(ctx, cfg.Runtime.DatabaseURL, advisor.ModuleName, deps.AdvisorPool, openPool, &closeFuncs)
 	if err != nil {
 		return nil, err
 	}
@@ -293,8 +313,9 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 	pdfAssetWriter := identityInvoicePDFAssetStore{}
 	if strings.TrimSpace(cfg.Runtime.DataDir) != "" {
 		pdfAssetWriter = identityInvoicePDFAssetStore{
-			writer:  identity.NewAssetWriter(identityPool, cfg.Runtime.DataDir),
-			profile: identityProfile,
+			writer:         identity.NewAssetWriter(identityPool, cfg.Runtime.DataDir),
+			profile:        identityProfile,
+			exportArchives: newExportArchiveCache(),
 		}
 	}
 	pdfAssetStore := deps.InvoicingPDFAssetStore
@@ -316,6 +337,10 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 	mailSender := deps.InvoicingMailSender
 	if mailSender == nil {
 		mailSender = mail.NewSMTPSenderFromEnv()
+	}
+	reportsPDFEngine := deps.ReportsPDFEngine
+	if reportsPDFEngine == nil && strings.TrimSpace(pdfBaseURL) != "" {
+		reportsPDFEngine = reports.NewChromePLPDFEngine(pdfBaseURL)
 	}
 
 	jurisdictionFacts := func(ctx context.Context) (jurisdiction.CompanyFacts, error) {
@@ -378,6 +403,9 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		banking.WithDLAFileDrawer(dlaService),
 		banking.WithEventBus(eventBus),
 	)
+	bankingHTTPModule := banking.NewHTTPModule(bankingService)
+	modules = append(modules, bankingHTTPModule.HTTPModule())
+	fragments = append(fragments, bankingHTTPModule.OpenAPIFragment())
 
 	ledgerBuilder := buildLedgerModule
 	if deps.ModuleBuilders != nil && deps.ModuleBuilders[ledger.ModuleName] != nil {
@@ -452,22 +480,6 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 	modules = append(modules, invoicingModule.HTTPModule)
 	fragments = append(fragments, invoicingModule.OpenAPIFragment)
 
-	reportsBuilder := buildReportsModule
-	if deps.ModuleBuilders != nil && deps.ModuleBuilders[reports.ModuleName] != nil {
-		reportsBuilder = deps.ModuleBuilders[reports.ModuleName]
-	}
-	reportsModule, err := reportsBuilder(ctx, ModuleDeps{
-		Clock:            clk,
-		Ledger:           ledgerService,
-		Identity:         identityProfile,
-		ReportsInvoicing: dashboardInvoicingService,
-	})
-	if err != nil {
-		return nil, err
-	}
-	modules = append(modules, reportsModule.HTTPModule)
-	fragments = append(fragments, reportsModule.OpenAPIFragment)
-
 	dividendsModule, err := dividends.NewModule(dividends.Config{
 		Pool:               dividendsPool,
 		Clock:              clk,
@@ -487,6 +499,32 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 	dividendsService := dividendsModule.Service()
 	modules = append(modules, dividendsModule.HTTPModule())
 	fragments = append(fragments, dividendsModule.OpenAPIFragment())
+
+	reportsBuilder := buildReportsModule
+	if deps.ModuleBuilders != nil && deps.ModuleBuilders[reports.ModuleName] != nil {
+		reportsBuilder = deps.ModuleBuilders[reports.ModuleName]
+	}
+	reportsModule, err := reportsBuilder(ctx, ModuleDeps{
+		Clock:            clk,
+		Ledger:           ledgerService,
+		Identity:         identityProfile,
+		ReportsInvoicing: dashboardInvoicingService,
+		ReportsDLA:       dlaService,
+		ReportsDocuments: reportsDividendDocumentProvider{
+			dividends: dividendsService,
+			assets:    identityProfile,
+		},
+		ReportsArchive:    pdfAssetWriter,
+		ReportsPDFEngine:  reportsPDFEngine,
+		ReportsShareLimit: deps.ReportsShareSizeLimit,
+		MailSender:        mailSender,
+		AppVersion:        cfg.Version,
+	})
+	if err != nil {
+		return nil, err
+	}
+	modules = append(modules, reportsModule.HTTPModule)
+	fragments = append(fragments, reportsModule.OpenAPIFragment)
 
 	factProviders := []advisor.RegisteredFactProvider{}
 	if invoicingRead, ok := invoicingModule.ReadAPI.(advisor.InvoicingReadAPI); ok {
@@ -509,6 +547,30 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		advisor.RegisteredFactProvider{Name: "identity", Provider: advisor.NewIdentityFactProvider(identityProfile)},
 	)
 	advisorFacts := advisor.NewFactRegistry(factProviders...)
+	advisorOptions := []advisor.ServiceOption{
+		advisor.WithClock(clk),
+		advisor.WithLogger(logger),
+	}
+	advisorOptions = append(advisorOptions, deps.AdvisorOptions...)
+	advisorService, err := advisor.NewService(advisor.ServiceConfig{
+		Pool:  advisorPool,
+		Facts: advisorFacts,
+	}, advisorOptions...)
+	if err != nil {
+		return nil, err
+	}
+	if err := cronRunner.Register(advisor.EvaluateJobName, advisor.EvaluateSchedule, func(ctx context.Context) error {
+		_, err := advisorService.RunEvaluation(ctx, advisor.EvaluateJobName)
+		return err
+	}); err != nil {
+		return nil, err
+	}
+	subscribeAdvisorTriggers(eventBus, advisorService)
+	stopAdvisorListener, err := advisorService.StartPostCommitListener(ctx)
+	if err != nil {
+		return nil, err
+	}
+	closeFuncs = append(closeFuncs, stopAdvisorListener)
 
 	modules = append(modules, dashboardHTTPModule(dashboardDependencies{
 		clock:     clk,
@@ -565,8 +627,10 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		LedgerPool:      ledgerPool,
 		MoneyFXPool:     moneyFXPool,
 		InvoicingPool:   invoicingPool,
+		AdvisorPool:     advisorPool,
 		IdentityService: identityService,
 		AdvisorFacts:    advisorFacts,
+		Advisor:         advisorService,
 		cron:            cronRunner,
 		jobs:            copyJobs(deps.Jobs),
 		closer: func() error {
@@ -596,6 +660,7 @@ func OpenAPIDocument(version string) map[string]any {
 		identity.OpenAPIFragment(),
 		jurisdictionOpenAPIFragment(),
 		moneyfx.OpenAPIFragment(),
+		banking.OpenAPIFragment(),
 		ledger.OpenAPIFragment(),
 		dla.OpenAPIFragment(),
 		invoicing.OpenAPIFragment(),
@@ -671,10 +736,17 @@ func buildInvoicingModule(_ context.Context, deps ModuleDeps) (Module, error) {
 
 func buildReportsModule(_ context.Context, deps ModuleDeps) (Module, error) {
 	reportsModule, err := reports.NewModule(reports.Config{
-		Ledger:    deps.Ledger,
-		Identity:  deps.Identity,
-		Invoicing: deps.ReportsInvoicing,
-		Clock:     deps.Clock,
+		Ledger:            deps.Ledger,
+		Identity:          deps.Identity,
+		Invoicing:         deps.ReportsInvoicing,
+		DLA:               deps.ReportsDLA,
+		DividendDocuments: deps.ReportsDocuments,
+		ArchiveStore:      deps.ReportsArchive,
+		PDFEngine:         deps.ReportsPDFEngine,
+		Mailer:            deps.MailSender,
+		Clock:             deps.Clock,
+		AppVersion:        deps.AppVersion,
+		ShareSizeLimit:    deps.ReportsShareLimit,
 	})
 	if err != nil {
 		return Module{}, err
@@ -692,6 +764,29 @@ func registerScheduledJobs(runner *platformcron.Runner, jobs []ScheduledJob) err
 		}
 	}
 	return nil
+}
+
+func subscribeAdvisorTriggers(eventBus *bus.Bus, service *advisor.Service) {
+	if eventBus == nil || service == nil {
+		return
+	}
+	for _, eventName := range []string{
+		invoicing.InvoiceOverdueName,
+		invoicing.InvoiceSettledName,
+		dla.WentOverdrawnName,
+		dla.BackInCreditName,
+		dividends.DeclaredName,
+		ledger.EntryPostedName,
+		moneyfx.RatesStaleName,
+		moneyfx.RatesUpdatedName,
+		identity.ProfileUpdatedEventName,
+	} {
+		eventName := eventName
+		eventBus.Subscribe(eventName, func(ctx context.Context, tx db.Tx, _ bus.Event) error {
+			service.TriggerAfterCommit(ctx, tx, eventName)
+			return nil
+		})
+	}
 }
 
 type invoicingMoneyFXLocker struct {
@@ -762,6 +857,7 @@ type identityInvoicePDFAssetStore struct {
 	profile interface {
 		Asset(context.Context, identity.AssetID) (identity.Asset, error)
 	}
+	exportArchives *exportArchiveCache
 }
 
 func (s identityInvoicePDFAssetStore) StoreInvoicePDF(ctx context.Context, pdf []byte) (string, error) {
@@ -806,6 +902,81 @@ func (s identityInvoicePDFAssetStore) LoadInvoicePDF(ctx context.Context, assetU
 	return append([]byte{}, asset.Bytes...), nil
 }
 
+func (s identityInvoicePDFAssetStore) ExistingExportArchive(_ context.Context, key string) (reports.ArchiveRef, bool, error) {
+	if s.exportArchives == nil {
+		return reports.ArchiveRef{}, false, nil
+	}
+	return s.exportArchives.get(key)
+}
+
+func (s identityInvoicePDFAssetStore) StoreExportArchive(ctx context.Context, key string, data []byte) (reports.ArchiveRef, error) {
+	if s.writer == nil {
+		return reports.ArchiveRef{}, fmt.Errorf("app: identity asset writer is required for export archives")
+	}
+	if s.exportArchives != nil {
+		if existing, ok, _ := s.exportArchives.get(key); ok {
+			return existing, nil
+		}
+	}
+	id, err := s.writer.StoreAsset(ctx, identity.AssetUpload{
+		MIME:  "application/zip",
+		Bytes: data,
+	})
+	if err != nil {
+		return reports.ArchiveRef{}, err
+	}
+	ref := reports.ArchiveRef{
+		URL:         "/api/identity/assets/" + string(id),
+		SHA256:      sha256Hex(data),
+		Size:        int64(len(data)),
+		GeneratedAt: time.Now().UTC(),
+	}
+	if s.exportArchives != nil {
+		s.exportArchives.set(key, ref)
+	}
+	return ref, nil
+}
+
+func (s identityInvoicePDFAssetStore) LoadAsset(ctx context.Context, ref string) (reports.StoredAsset, error) {
+	if s.profile == nil {
+		return reports.StoredAsset{}, fmt.Errorf("app: identity profile API is required for assets")
+	}
+	id, err := identityAssetIDFromURL(ref)
+	if err != nil {
+		return reports.StoredAsset{}, err
+	}
+	asset, err := s.profile.Asset(ctx, id)
+	if err != nil {
+		return reports.StoredAsset{}, err
+	}
+	return reports.StoredAsset{
+		ContentType: asset.MIME,
+		Bytes:       append([]byte{}, asset.Bytes...),
+	}, nil
+}
+
+type exportArchiveCache struct {
+	mu    sync.Mutex
+	byKey map[string]reports.ArchiveRef
+}
+
+func newExportArchiveCache() *exportArchiveCache {
+	return &exportArchiveCache{byKey: map[string]reports.ArchiveRef{}}
+}
+
+func (c *exportArchiveCache) get(key string) (reports.ArchiveRef, bool, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	ref, ok := c.byKey[strings.TrimSpace(key)]
+	return ref, ok, nil
+}
+
+func (c *exportArchiveCache) set(key string, ref reports.ArchiveRef) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.byKey[strings.TrimSpace(key)] = ref
+}
+
 func identityAssetIDFromURL(assetURL string) (identity.AssetID, error) {
 	raw := strings.TrimSpace(assetURL)
 	if raw == "" {
@@ -824,6 +995,95 @@ func identityAssetIDFromURL(assetURL string) (identity.AssetID, error) {
 		return "", fmt.Errorf("app: invalid invoice PDF asset id")
 	}
 	return identity.AssetID(id), nil
+}
+
+type reportsDividendDocumentProvider struct {
+	dividends interface {
+		History(context.Context) ([]dividends.Declaration, error)
+	}
+	assets interface {
+		Asset(context.Context, identity.AssetID) (identity.Asset, error)
+	}
+}
+
+func (p reportsDividendDocumentProvider) DividendDocuments(ctx context.Context, period reports.Period) ([]reports.StoredDocument, error) {
+	if p.dividends == nil || p.assets == nil {
+		return nil, nil
+	}
+	declarations, err := p.dividends.History(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var documents []reports.StoredDocument
+	for _, declaration := range declarations {
+		declared := dateOnly(declaration.DeclaredDate)
+		if declared.Before(dateOnly(period.From)) || declared.After(dateOnly(period.To)) {
+			continue
+		}
+		base := safeReportDocumentName(string(declaration.ID))
+		if declaration.VoucherAsset != nil {
+			document, err := p.loadDividendDocument(ctx, *declaration.VoucherAsset, "dividends/"+base+"-voucher.pdf")
+			if err != nil {
+				return nil, err
+			}
+			documents = append(documents, document)
+		}
+		if declaration.MinutesAsset != nil {
+			document, err := p.loadDividendDocument(ctx, *declaration.MinutesAsset, "dividends/"+base+"-minutes.pdf")
+			if err != nil {
+				return nil, err
+			}
+			documents = append(documents, document)
+		}
+	}
+	return documents, nil
+}
+
+func (p reportsDividendDocumentProvider) loadDividendDocument(ctx context.Context, id identity.AssetID, name string) (reports.StoredDocument, error) {
+	asset, err := p.assets.Asset(ctx, id)
+	if err != nil {
+		return reports.StoredDocument{}, err
+	}
+	return reports.StoredDocument{
+		Path:        name,
+		ContentType: asset.MIME,
+		Bytes:       append([]byte{}, asset.Bytes...),
+	}, nil
+}
+
+func safeReportDocumentName(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	var out strings.Builder
+	lastDash := false
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			out.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			out.WriteByte('-')
+			lastDash = true
+		}
+	}
+	result := strings.Trim(out.String(), "-")
+	if result == "" {
+		return "dividend"
+	}
+	return result
+}
+
+func dateOnly(value time.Time) time.Time {
+	if value.IsZero() {
+		return time.Time{}
+	}
+	year, month, day := value.UTC().Date()
+	return time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
+}
+
+func sha256Hex(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
 
 func localHTTPBaseURL(addr string) string {
@@ -940,6 +1200,22 @@ func (a *App) RunJob(ctx context.Context, name string) error {
 		return fmt.Errorf("app: unknown job %q", name)
 	}
 	return job(ctx)
+}
+
+// RefreshAdvisorNow runs the manual advisor refresh entry point.
+func (a *App) RefreshAdvisorNow(ctx context.Context) (advisor.EvaluationRun, error) {
+	if a == nil || a.Advisor == nil {
+		return advisor.EvaluationRun{}, fmt.Errorf("app: advisor is not configured")
+	}
+	return a.Advisor.RefreshNow(ctx)
+}
+
+// WaitAdvisorIdle waits for debounced advisor work to drain.
+func (a *App) WaitAdvisorIdle(ctx context.Context) error {
+	if a == nil || a.Advisor == nil {
+		return nil
+	}
+	return a.Advisor.WaitIdle(ctx)
 }
 
 // OpenPoolWithRetry opens a module pool, retrying until ctx is cancelled.

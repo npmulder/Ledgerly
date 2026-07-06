@@ -91,12 +91,12 @@ advisor_rules:
   - id: dla_overdrawn_bik
     severity: amber
     surfaces: [dashboard, dla]
-    fact_query: [balance, status]
+    fact_query: [balance, clearance_amount_minor_units, status]
     condition: status = "overdrawn"
     text_template: 'Your loan account is {{ balance }} overdrawn. The Isle of Man has no UK-style s455 charge, but an interest-free loan can create a taxable benefit in kind - charge interest at the official rate or clear it with a dividend.'
     cta:
       label: Clear with dividend
-      action: dla.clearWithDividend
+      action: 'navigate:/dividends?amount={{ clearance_amount_minor_units }}'
   - id: filing_deadline_window
     severity: amber
     surfaces: [dashboard, reports]
@@ -109,9 +109,9 @@ advisor_rules:
   - id: dividend_set_aside
     severity: teal
     surfaces: [dashboard, dividends]
-    fact_query: [dividends_ytd, estimate, estimate_minor_units]
-    condition: estimate_minor_units > 0
-    text_template: 'Set aside {{ estimate }} personally for IoM income tax on {{ dividends_ytd }} dividends YTD (10% band, then 21%).'
+    fact_query: [dividend_headroom, estimate, estimate_minor_units, headroom_minor_units]
+    condition: headroom_minor_units > 0
+    text_template: 'Set aside {{ estimate }} personally for IoM income tax if you declare the available {{ dividend_headroom }} dividend headroom.'
     cta:
       label: Open dividends
       action: dividends.open

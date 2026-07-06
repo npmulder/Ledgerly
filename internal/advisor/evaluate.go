@@ -329,6 +329,11 @@ func renderText(rule RuleDef, bindings map[string]any) (string, error) {
 func renderCTA(cta CTA, bindings map[string]any) (CTA, error) {
 	out := cta
 	out.Params = nil
+	renderedAction, err := renderTemplateString("cta.action", cta.Action, bindings)
+	if err != nil {
+		return CTA{}, err
+	}
+	out.Action = renderedAction
 	if len(cta.Params) == 0 {
 		return out, nil
 	}

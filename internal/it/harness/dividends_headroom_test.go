@@ -832,6 +832,10 @@ func (dividendsTestInvoicing) InvoiceByNumber(context.Context, string) (invoicin
 	return invoicing.Invoice{}, errors.New("unexpected invoice lookup")
 }
 
+func (dividendsTestInvoicing) InvoicesIssuedBetween(context.Context, time.Time, time.Time) ([]invoicing.Invoice, error) {
+	return nil, errors.New("unexpected issued invoice lookup")
+}
+
 func (dividendsTestInvoicing) InvoiceVATContextBySendEntryID(context.Context, ledger.EntryID) (invoicing.InvoiceVATContext, error) {
 	return invoicing.InvoiceVATContext{}, errors.New("unexpected invoice VAT context lookup")
 }

@@ -54,6 +54,15 @@ returns the error and the caller rolls back the shared transaction.
 Subscribers must be synchronous and deterministic. Do not start goroutines,
 retry in the handler, or write outside the supplied `db.Tx`.
 
+Advisor is the deliberate exception. Financial handlers keep using the same
+transaction, but advisor insights are derived recommendations and must never
+roll back source work. Advisor subscriptions register a PostgreSQL notification
+inside the source transaction and return nil; PostgreSQL delivers the
+notification only after commit, and the advisor evaluator then reads committed
+state through public module APIs. A failed advisor run is recorded in
+`advisor.evaluation_runs` and does not affect the source settlement, ledger
+posting, dividend declaration, or identity update.
+
 ## HTTP Shape
 
 Module routes are mounted by the platform under `/api/<module>`. The ledger read

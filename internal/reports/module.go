@@ -9,10 +9,17 @@ import (
 
 // Config contains the read APIs required by the reports HTTP module.
 type Config struct {
-	Ledger    Ledger
-	Identity  Identity
-	Invoicing Invoicing
-	Clock     clock.Clock
+	Ledger            Ledger
+	Identity          Identity
+	Invoicing         Invoicing
+	DLA               DLA
+	DividendDocuments DividendDocumentProvider
+	ArchiveStore      ExportArchiveStore
+	PDFEngine         PLPDFEngine
+	Mailer            Mailer
+	Clock             clock.Clock
+	AppVersion        string
+	ShareSizeLimit    int64
 }
 
 // Module is the reports HTTP wiring surface used by the app builder.
@@ -33,7 +40,19 @@ func NewModule(cfg Config) (*Module, error) {
 		return nil, fmt.Errorf("reports: invoicing provider is required")
 	}
 	return &Module{
-		service: New(cfg.Ledger, cfg.Identity, cfg.Invoicing, WithClock(cfg.Clock)),
+		service: New(
+			cfg.Ledger,
+			cfg.Identity,
+			cfg.Invoicing,
+			WithClock(cfg.Clock),
+			WithDLA(cfg.DLA),
+			WithDividendDocuments(cfg.DividendDocuments),
+			WithExportArchiveStore(cfg.ArchiveStore),
+			WithPLPDFEngine(cfg.PDFEngine),
+			WithMailer(cfg.Mailer),
+			WithAppVersion(cfg.AppVersion),
+			WithShareSizeLimit(cfg.ShareSizeLimit),
+		),
 	}, nil
 }
 

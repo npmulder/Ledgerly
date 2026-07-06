@@ -19,6 +19,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/npmulder/ledgerly/internal/advisor"
 	"github.com/npmulder/ledgerly/internal/app"
 	"github.com/npmulder/ledgerly/internal/banking"
 	"github.com/npmulder/ledgerly/internal/dividends"
@@ -32,6 +33,7 @@ import (
 	"github.com/npmulder/ledgerly/internal/platform/config"
 	"github.com/npmulder/ledgerly/internal/platform/db"
 	"github.com/npmulder/ledgerly/internal/platform/mail"
+	"github.com/npmulder/ledgerly/internal/reports"
 )
 
 const (
@@ -52,9 +54,12 @@ type Options struct {
 	BalanceCheck  BalanceCheckOption
 	Logger        *slog.Logger
 
-	ModuleBuilders map[string]app.ModuleBuilder
-	Jobs           map[string]app.Job
-	MailSender     mail.Sender
+	ModuleBuilders    map[string]app.ModuleBuilder
+	Jobs              map[string]app.Job
+	MailSender        mail.Sender
+	ReportsPDF        reports.PLPDFEngine
+	ReportsShareLimit int64
+	AdvisorOptions    []advisor.ServiceOption
 }
 
 // BalanceCheckOption controls the default teardown trial-balance assertion.
@@ -79,6 +84,7 @@ type Harness struct {
 	DLAPool         *pgxpool.Pool
 	DividendsPool   *pgxpool.Pool
 	LedgerPool      *pgxpool.Pool
+	AdvisorPool     *pgxpool.Pool
 	Clock           *clock.FakeClock
 	Bus             *bus.Bus
 	IdentityDataDir string
@@ -103,6 +109,7 @@ func New(t testing.TB, opts Options) *Harness {
 	ledgerPool := testdb.AsModule(t, ledger.ModuleName)
 	moneyFXPool := testdb.AsModule(t, moneyfx.ModuleName)
 	invoicingPool := testdb.AsModule(t, "invoicing")
+	advisorPool := testdb.AsModule(t, advisor.ModuleName)
 
 	startAt := opts.ClockStart
 	if startAt.IsZero() {
@@ -126,17 +133,21 @@ func New(t testing.TB, opts Options) *Harness {
 		},
 		Version: "test",
 	}, app.Dependencies{
-		Logger:              logger,
-		Clock:               fakeClock,
-		HealthDB:            pgxPinger{pool: rawPool},
-		IdentityPool:        identityPool,
-		BankingPool:         bankingPool,
-		DLAPool:             dlaPool,
-		DividendsPool:       dividendsPool,
-		LedgerPool:          ledgerPool,
-		MoneyFXPool:         moneyFXPool,
-		InvoicingPool:       invoicingPool,
-		InvoicingMailSender: opts.MailSender,
+		Logger:                logger,
+		Clock:                 fakeClock,
+		HealthDB:              pgxPinger{pool: rawPool},
+		IdentityPool:          identityPool,
+		BankingPool:           bankingPool,
+		DLAPool:               dlaPool,
+		DividendsPool:         dividendsPool,
+		LedgerPool:            ledgerPool,
+		MoneyFXPool:           moneyFXPool,
+		InvoicingPool:         invoicingPool,
+		AdvisorPool:           advisorPool,
+		InvoicingMailSender:   opts.MailSender,
+		AdvisorOptions:        opts.AdvisorOptions,
+		ReportsPDFEngine:      opts.ReportsPDF,
+		ReportsShareSizeLimit: opts.ReportsShareLimit,
 		BusOptions: []bus.Option{
 			bus.WithMiddleware(faults.middleware),
 		},
@@ -166,6 +177,7 @@ func New(t testing.TB, opts Options) *Harness {
 		DLAPool:         dlaPool,
 		DividendsPool:   dividendsPool,
 		LedgerPool:      ledgerPool,
+		AdvisorPool:     advisorPool,
 		Clock:           fakeClock,
 		Bus:             built.Bus,
 		IdentityDataDir: identityDataDir,
@@ -275,6 +287,20 @@ func (h *Harness) RunJob(name string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultJobTimeout)
 	defer cancel()
 	return h.app.RunJob(ctx, name)
+}
+
+// RefreshAdvisorNow runs the advisor manual refresh entry point.
+func (h *Harness) RefreshAdvisorNow() (advisor.EvaluationRun, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultJobTimeout)
+	defer cancel()
+	return h.app.RefreshAdvisorNow(ctx)
+}
+
+// WaitAdvisorIdle waits for debounced advisor evaluations to finish.
+func (h *Harness) WaitAdvisorIdle() error {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultJobTimeout)
+	defer cancel()
+	return h.app.WaitAdvisorIdle(ctx)
 }
 
 // FailNextBusSubscriber makes the next subscriber for eventName return err after
