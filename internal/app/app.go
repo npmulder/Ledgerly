@@ -71,6 +71,14 @@ type Module struct {
 	HTTPModule      httpserver.Module
 	OpenAPIFragment httpserver.OpenAPIFragment
 	SubscribeEvents func(*bus.Bus)
+	ScheduledJobs   []ScheduledJob
+}
+
+// ScheduledJob is a module-owned deterministic cron job contribution.
+type ScheduledJob struct {
+	Name     string
+	Schedule string
+	Run      Job
 }
 
 // Dependencies optionally replace production dependencies. Nil fields use
@@ -342,6 +350,9 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 	if invoicingModule.SubscribeEvents != nil {
 		invoicingModule.SubscribeEvents(eventBus)
 	}
+	if err := registerScheduledJobs(cronRunner, invoicingModule.ScheduledJobs); err != nil {
+		return nil, err
+	}
 	modules = append(modules, invoicingModule.HTTPModule)
 	fragments = append(fragments, invoicingModule.OpenAPIFragment)
 
@@ -467,7 +478,21 @@ func buildInvoicingModule(_ context.Context, deps ModuleDeps) (Module, error) {
 	return Module{
 		HTTPModule:      invoicingModule.HTTPModule(),
 		OpenAPIFragment: invoicingModule.OpenAPIFragment(),
+		ScheduledJobs: []ScheduledJob{{
+			Name:     invoicing.OverdueSweepJobName,
+			Schedule: invoicing.OverdueSweepSchedule,
+			Run:      invoicingModule.RunOverdueSweep,
+		}},
 	}, nil
+}
+
+func registerScheduledJobs(runner *platformcron.Runner, jobs []ScheduledJob) error {
+	for _, job := range jobs {
+		if err := runner.Register(job.Name, job.Schedule, platformcron.Job(job.Run)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type invoicingMoneyFXLocker struct {
