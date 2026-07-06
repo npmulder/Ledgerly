@@ -85,6 +85,7 @@ func TestModuleRoleIsolation(t *testing.T) {
 func assertSchemaAndRoleCounts(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
 
+	wantModuleCount := len(Modules())
 	var schemaCount int
 	if err := pool.QueryRow(
 		ctx,
@@ -93,8 +94,8 @@ func assertSchemaAndRoleCounts(t *testing.T, ctx context.Context, pool *pgxpool.
 	).Scan(&schemaCount); err != nil {
 		t.Fatalf("count module schemas: %v", err)
 	}
-	if schemaCount != 11 {
-		t.Fatalf("module schema count = %d, want 11", schemaCount)
+	if schemaCount != wantModuleCount {
+		t.Fatalf("module schema count = %d, want %d", schemaCount, wantModuleCount)
 	}
 
 	var roleCount int
@@ -104,8 +105,8 @@ func assertSchemaAndRoleCounts(t *testing.T, ctx context.Context, pool *pgxpool.
 	).Scan(&roleCount); err != nil {
 		t.Fatalf("count ledgerly roles: %v", err)
 	}
-	if roleCount != 11 {
-		t.Fatalf("ledgerly role count = %d, want 11", roleCount)
+	if roleCount != wantModuleCount {
+		t.Fatalf("ledgerly role count = %d, want %d", roleCount, wantModuleCount)
 	}
 }
 
