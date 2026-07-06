@@ -11,6 +11,7 @@ import (
 	nethttp "net/http"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -174,7 +175,7 @@ func TestDLAStatusPolicyAndTransitionEvents(t *testing.T) {
 
 	fixture.fileDrawingFromBanking(t, dla.TxnRef{
 		Ref:             "banking:cross-overdrawn",
-		Date:            entryDate.AddDate(0, 0, 1),
+		Date:            entryDate,
 		Amount:          gbp(6_000),
 		CashAccountCode: dlaCashAccount,
 	})
@@ -186,7 +187,7 @@ func TestDLAStatusPolicyAndTransitionEvents(t *testing.T) {
 
 	fixture.fileDrawingFromBanking(t, dla.TxnRef{
 		Ref:             "banking:further-overdrawn",
-		Date:            entryDate.AddDate(0, 0, 2),
+		Date:            entryDate,
 		Amount:          gbp(500),
 		CashAccountCode: dlaCashAccount,
 	})
@@ -201,7 +202,7 @@ func TestDLAStatusPolicyAndTransitionEvents(t *testing.T) {
 	}
 
 	if err := fixture.dla.AddEntry(fixture.ctx, dla.NewEntry{
-		Date:            entryDate.AddDate(0, 0, 3),
+		Date:            entryDate,
 		Kind:            dla.EntryKindRepayment,
 		Description:     "Director clears balance",
 		Amount:          gbp(1_500),
@@ -293,6 +294,127 @@ WHERE source = $1`, source); err != nil {
 		t.Fatalf("RunJob(%s) recovery error = %v", dla.ConsistencyCheckJobName, err)
 	}
 	assertDLAHealthStatus(t, fixture.harness, nethttp.StatusOK, "")
+	it.AssertLedgerBalanced(t, fixture.harness)
+}
+
+func TestDLAFutureDatedEntriesDoNotAffectCurrentFacts(t *testing.T) {
+	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	fixture := newDLAFixtureFromHarness(t, harness.New(t, harness.Options{ClockStart: now}))
+
+	fixture.fileDrawingFromBanking(t, dla.TxnRef{
+		Ref:             "banking:current-drawing",
+		Date:            now,
+		Amount:          gbp(1_000),
+		CashAccountCode: dlaCashAccount,
+	})
+	if err := fixture.dla.AddEntry(fixture.ctx, dla.NewEntry{
+		Date:            now.AddDate(0, 0, 1),
+		Kind:            dla.EntryKindRepayment,
+		Description:     "Scheduled director repayment",
+		Amount:          gbp(1_000),
+		Source:          "manual:future-repayment",
+		CashAccountCode: dlaCashAccount,
+	}); err != nil {
+		t.Fatalf("AddEntry(future repayment) error = %v", err)
+	}
+
+	assertCurrentBalance(t, fixture.dla, gbp(-1_000), dla.StatusOverdrawn)
+	clearance, err := fixture.dla.SuggestedClearanceAmount(fixture.ctx)
+	if err != nil {
+		t.Fatalf("SuggestedClearanceAmount() before future date error = %v", err)
+	}
+	if clearance != gbp(1_000) {
+		t.Fatalf("SuggestedClearanceAmount() before future date = %#v, want %#v", clearance, gbp(1_000))
+	}
+
+	fixture.harness.Clock.Set(now.AddDate(0, 0, 1))
+	assertCurrentBalance(t, fixture.dla, gbp(0), dla.StatusCredit)
+	it.AssertLedgerBalanced(t, fixture.harness)
+}
+
+func TestDLAConcurrentTransitionEventsAreSerialized(t *testing.T) {
+	fixture := newDLAFixture(t)
+	entryDate := fixture.harness.Clock.Now()
+	if err := fixture.dla.AddEntry(fixture.ctx, dla.NewEntry{
+		Date:               entryDate,
+		Kind:               dla.EntryKindExpenseOwed,
+		Description:        "Seed credit balance",
+		Amount:             gbp(100),
+		Source:             "manual:seed-credit",
+		ExpenseAccountCode: "5010-software",
+	}); err != nil {
+		t.Fatalf("AddEntry(seed credit) error = %v", err)
+	}
+
+	var (
+		mu            sync.Mutex
+		wentOverdrawn []dla.WentOverdrawn
+		blockFirst    sync.Once
+		firstEvent    = make(chan struct{})
+		releaseFirst  = make(chan struct{})
+	)
+	fixture.harness.Bus.Subscribe(dla.WentOverdrawnName, func(ctx context.Context, tx db.Tx, evt bus.Event) error {
+		mu.Lock()
+		wentOverdrawn = append(wentOverdrawn, evt.(dla.WentOverdrawn))
+		mu.Unlock()
+
+		blockFirst.Do(func() {
+			close(firstEvent)
+			<-releaseFirst
+		})
+		return nil
+	})
+
+	firstErr := make(chan error, 1)
+	go func() {
+		firstErr <- fixture.tryFileDrawingFromBanking(dla.TxnRef{
+			Ref:             "banking:concurrent-crossing-1",
+			Date:            entryDate,
+			Amount:          gbp(150),
+			CashAccountCode: dlaCashAccount,
+		})
+	}()
+
+	select {
+	case <-firstEvent:
+	case <-time.After(5 * time.Second):
+		t.Fatal("first concurrent crossing did not publish WentOverdrawn")
+	}
+
+	secondErr := make(chan error, 1)
+	go func() {
+		secondErr <- fixture.tryFileDrawingFromBanking(dla.TxnRef{
+			Ref:             "banking:concurrent-crossing-2",
+			Date:            entryDate,
+			Amount:          gbp(150),
+			CashAccountCode: dlaCashAccount,
+		})
+	}()
+
+	select {
+	case err := <-secondErr:
+		t.Fatalf("second drawing completed before first transaction released; transition serialization missing, err=%v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(releaseFirst)
+	if err := <-firstErr; err != nil {
+		t.Fatalf("first concurrent FileDrawing error = %v", err)
+	}
+	if err := <-secondErr; err != nil {
+		t.Fatalf("second concurrent FileDrawing error = %v", err)
+	}
+
+	mu.Lock()
+	gotEvents := append([]dla.WentOverdrawn(nil), wentOverdrawn...)
+	mu.Unlock()
+	if len(gotEvents) != 1 {
+		t.Fatalf("concurrent WentOverdrawn count = %d (%#v), want 1", len(gotEvents), gotEvents)
+	}
+	if gotEvents[0].Balance != gbp(-50) {
+		t.Fatalf("concurrent WentOverdrawn balance = %#v, want %#v", gotEvents[0].Balance, gbp(-50))
+	}
+	assertCurrentBalance(t, fixture.dla, gbp(-200), dla.StatusOverdrawn)
 	it.AssertLedgerBalanced(t, fixture.harness)
 }
 
@@ -439,7 +561,7 @@ func newDLAFixtureFromHarness(t *testing.T, h *harness.Harness) dlaFixture {
 		harness: h,
 		dlaPool: h.DLAPool,
 		banking: bankingPool,
-		dla:     dla.NewWithBus(h.DLAPool, h.Bus, ledgerService),
+		dla:     dla.NewWithBusAndClock(h.DLAPool, h.Bus, h.Clock, ledgerService),
 	}
 }
 

@@ -8,6 +8,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
+	ledgerapi "github.com/npmulder/ledgerly/internal/ledger"
 	"github.com/npmulder/ledgerly/internal/moneyfx/money"
 )
 
@@ -43,19 +46,27 @@ func (s *Service) CheckConsistency(ctx context.Context, asOf time.Time) (Consist
 	if s.pool == nil {
 		return ConsistencyReport{}, fmt.Errorf("dla: consistency check requires pool")
 	}
-	if s.ledger == nil {
-		return ConsistencyReport{}, fmt.Errorf("dla: consistency check requires ledger")
-	}
 	date, err := normalizeDate(asOf)
 	if err != nil {
 		return ConsistencyReport{}, err
 	}
 
-	derivedBalance, err := s.store.CurrentBalanceAsOf(ctx, s.pool, date)
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{
+		IsoLevel:   pgx.RepeatableRead,
+		AccessMode: pgx.ReadOnly,
+	})
+	if err != nil {
+		return ConsistencyReport{}, fmt.Errorf("dla: begin consistency check transaction: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback(context.Background())
+	}()
+
+	derivedBalance, err := s.store.CurrentBalanceAsOf(ctx, tx, date)
 	if err != nil {
 		return ConsistencyReport{}, err
 	}
-	ledgerBalance, err := s.ledger.AccountBalance(ctx, DLAAccountCode, date)
+	ledgerBalance, err := (ledgerapi.Store{}).AccountBalance(ctx, tx, DLAAccountCode, date)
 	if err != nil {
 		return ConsistencyReport{}, err
 	}
@@ -73,6 +84,9 @@ func (s *Service) CheckConsistency(ctx context.Context, asOf time.Time) (Consist
 	}
 	if !report.Consistent {
 		return report, &ConsistencyViolationError{Report: report}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ConsistencyReport{}, fmt.Errorf("dla: commit consistency check transaction: %w", err)
 	}
 	return report, nil
 }

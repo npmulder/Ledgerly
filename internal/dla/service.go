@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/npmulder/ledgerly/internal/platform/clock"
 
 	ledgerapi "github.com/npmulder/ledgerly/internal/ledger"
 	"github.com/npmulder/ledgerly/internal/moneyfx/money"
@@ -22,21 +23,33 @@ type Service struct {
 	ledger ledgerapi.Ledger
 	bus    *bus.Bus
 	store  Store
+	clock  clock.Clock
 }
 
 // New creates a DLA service. If ledgerService is nil or omitted, a ledger
 // service backed by pool is used for transaction-scoped postings.
 func New(pool *pgxpool.Pool, ledgerService ...ledgerapi.Ledger) *Service {
-	return newService(pool, nil, ledgerService...)
+	return newService(pool, nil, nil, ledgerService...)
 }
 
 // NewWithBus creates a DLA service that publishes DLA transition events through
 // eventBus.
 func NewWithBus(pool *pgxpool.Pool, eventBus *bus.Bus, ledgerService ...ledgerapi.Ledger) *Service {
-	return newService(pool, eventBus, ledgerService...)
+	return newService(pool, eventBus, nil, ledgerService...)
 }
 
-func newService(pool *pgxpool.Pool, eventBus *bus.Bus, ledgerService ...ledgerapi.Ledger) *Service {
+// NewWithBusAndClock creates a DLA service with explicit event and time
+// dependencies for app wiring and deterministic tests.
+func NewWithBusAndClock(
+	pool *pgxpool.Pool,
+	eventBus *bus.Bus,
+	clk clock.Clock,
+	ledgerService ...ledgerapi.Ledger,
+) *Service {
+	return newService(pool, eventBus, clk, ledgerService...)
+}
+
+func newService(pool *pgxpool.Pool, eventBus *bus.Bus, clk clock.Clock, ledgerService ...ledgerapi.Ledger) *Service {
 	var l ledgerapi.Ledger
 	if len(ledgerService) > 0 {
 		l = ledgerService[0]
@@ -44,7 +57,10 @@ func newService(pool *pgxpool.Pool, eventBus *bus.Bus, ledgerService ...ledgerap
 	if l == nil {
 		l = ledgerapi.New(pool, eventBus)
 	}
-	return &Service{pool: pool, ledger: l, bus: eventBus}
+	if clk == nil {
+		clk = clock.New()
+	}
+	return &Service{pool: pool, ledger: l, bus: eventBus, clock: clk}
 }
 
 // FileDrawing appends a banking-origin drawing and posts Dr DLA / Cr Cash
@@ -110,7 +126,15 @@ func (s *Service) CurrentBalance(ctx context.Context) (money.Money, Status, erro
 	if s.pool == nil {
 		return money.Money{}, "", fmt.Errorf("dla: current balance requires pool")
 	}
-	balance, err := s.store.CurrentBalance(ctx, s.pool)
+	clk := s.clock
+	if clk == nil {
+		clk = clock.New()
+	}
+	asOf, err := normalizeDate(clk.Now())
+	if err != nil {
+		return money.Money{}, "", err
+	}
+	balance, err := s.store.CurrentBalanceAsOf(ctx, s.pool, asOf)
 	if err != nil {
 		return money.Money{}, "", err
 	}
@@ -149,6 +173,9 @@ func (s *Service) appendEntry(ctx context.Context, tx db.Tx, entry NewEntry, all
 	if err != nil {
 		return err
 	}
+	if err := lockBalanceMutation(ctx, tx); err != nil {
+		return err
+	}
 	preBalance, err := s.store.CurrentBalance(ctx, tx)
 	if err != nil {
 		return err
@@ -165,6 +192,13 @@ func (s *Service) appendEntry(ctx context.Context, tx db.Tx, entry NewEntry, all
 	}
 	if err := s.publishTransition(ctx, tx, preBalance, postBalance); err != nil {
 		return err
+	}
+	return nil
+}
+
+func lockBalanceMutation(ctx context.Context, tx db.Tx) error {
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1, $2)`, int32(0x444c4102), int32(1)); err != nil {
+		return fmt.Errorf("dla: lock balance mutation: %w", err)
 	}
 	return nil
 }

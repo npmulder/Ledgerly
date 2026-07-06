@@ -197,7 +197,7 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 
 	ledgerService := ledger.New(ledgerPool, eventBus)
 	trialBalanceStatus := ledger.NewTrialBalanceStatus()
-	dlaService := dla.NewWithBus(dlaPool, eventBus, ledgerService)
+	dlaService := dla.NewWithBusAndClock(dlaPool, eventBus, clk, ledgerService)
 	dlaConsistencyStatus := dla.NewConsistencyStatus()
 	moneyFXFetcher, err := moneyfx.NewECBFetcher(moneyfx.ECBFetcherConfig{
 		Pool:         moneyFXPool,
