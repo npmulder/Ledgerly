@@ -19,7 +19,11 @@ export const queryKeys = {
       "feed",
       { accountId },
     ],
-    recent: (limit = 10): ApiQueryKey => ["banking", "recent", { limit }],
+    recent: (limit = 10, accountId: number | null = null): ApiQueryKey => [
+      "banking",
+      "recent",
+      { accountId, limit },
+    ],
     review: (): ApiQueryKey => ["banking", "review", {}],
   },
   dashboard: {

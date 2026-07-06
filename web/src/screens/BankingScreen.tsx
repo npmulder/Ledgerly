@@ -74,17 +74,21 @@ export function BankingScreen() {
     queryFn: getBankingReviewQueue,
     queryKey: queryKeys.banking.review(),
   });
-  const recentQuery = useQuery({
-    queryFn: () => getRecentlyReconciled(recentLimit),
-    queryKey: queryKeys.banking.recent(recentLimit),
-  });
-
   const accounts = accountsQuery.data?.accounts ?? [];
   const selectedAccount = selectedAccountID
     ? (accounts.find((account) => account.id === selectedAccountID) ??
       accounts[0] ??
       null)
     : (accounts[0] ?? null);
+  const recentQuery = useQuery({
+    enabled: selectedAccount !== null,
+    queryFn: () =>
+      getRecentlyReconciled(recentLimit, selectedAccount?.id ?? null),
+    queryKey: queryKeys.banking.recent(
+      recentLimit,
+      selectedAccount?.id ?? null,
+    ),
+  });
   const allReviewCards = useMemo(
     () => flattenReviewQueue(reviewQuery.data),
     [reviewQuery.data],
@@ -102,15 +106,9 @@ export function BankingScreen() {
         : [],
     [allReviewCards, selectedAccount],
   );
-  const scopedRecent = useMemo(
-    () =>
-      selectedAccount
-        ? (recentQuery.data?.transactions ?? []).filter(
-            (item) => item.transaction.account_id === selectedAccount.id,
-          )
-        : [],
-    [recentQuery.data?.transactions, selectedAccount],
-  );
+  const scopedRecent = selectedAccount
+    ? (recentQuery.data?.transactions ?? [])
+    : [];
 
   const importMutation = useMutation({
     mutationFn: ({ accountID, file }: { accountID: number; file: File }) =>
@@ -134,7 +132,7 @@ export function BankingScreen() {
     },
     onSuccess: (response) => {
       rememberRecentKind(response);
-      const fxMessage = response.realised_fx_amount
+      const fxMessage = hasNonZeroMoney(response.realised_fx_amount)
         ? ` - auto-posted FX ${formatFXResult(response.realised_fx_amount)}`
         : "";
       setToast({
@@ -236,10 +234,19 @@ export function BankingScreen() {
     dlaMutation.isPending ||
     recodeMutation.isPending ||
     excludeMutation.isPending;
+  const selectedWorkCount = selectedAccount
+    ? Math.max(scopedReviewCards.length, selectedAccount.unreconciled_count)
+    : 0;
   const isEmptyQueue =
     !reviewQuery.isPending &&
     selectedAccount !== null &&
-    scopedReviewCards.length === 0;
+    scopedReviewCards.length === 0 &&
+    selectedAccount.unreconciled_count === 0;
+  const hasUnmatchedImports =
+    !reviewQuery.isPending &&
+    selectedAccount !== null &&
+    scopedReviewCards.length === 0 &&
+    selectedAccount.unreconciled_count > 0;
   const queueTitle = selectedAccount
     ? `${selectedAccount.name} review queue`
     : "Review queue";
@@ -345,7 +352,7 @@ export function BankingScreen() {
               <p className="type-uppercase-label">Review queue</p>
               <h2>{selectedAccount?.name ?? "No account selected"}</h2>
             </div>
-            <Badge variant="count">{scopedReviewCards.length}</Badge>
+            <Badge variant="count">{selectedWorkCount}</Badge>
           </div>
 
           {reviewQuery.isPending ? (
@@ -381,6 +388,12 @@ export function BankingScreen() {
           {isEmptyQueue ? (
             <EmptyState title="All caught up…">
               No banking review cards are waiting for this account.
+            </EmptyState>
+          ) : null}
+
+          {hasUnmatchedImports ? (
+            <EmptyState title="Review pending">
+              Imported transactions are waiting for suggested matches.
             </EmptyState>
           ) : null}
         </section>
@@ -431,7 +444,10 @@ function AccountCards({
       {accounts.map((account) => {
         const selected = account.id === selectedAccountID;
         const count = useReviewCounts
-          ? (reviewCounts.get(account.id) ?? 0)
+          ? Math.max(
+              reviewCounts.get(account.id) ?? 0,
+              account.unreconciled_count,
+            )
           : account.unreconciled_count;
         return (
           <button
@@ -778,9 +794,7 @@ async function refreshBankingData(
   await Promise.all([
     queryClient.invalidateQueries({ queryKey: queryKeys.banking.accounts() }),
     queryClient.invalidateQueries({ queryKey: queryKeys.banking.review() }),
-    queryClient.invalidateQueries({
-      queryKey: queryKeys.banking.recent(recentLimit),
-    }),
+    queryClient.invalidateQueries({ queryKey: ["banking", "recent"] }),
   ]);
 }
 
@@ -930,6 +944,12 @@ function formatAbsoluteMoney(value: BankingMoney) {
     amountMinor: Math.abs(value.amount_minor),
     currency: value.currency,
   });
+}
+
+function hasNonZeroMoney(
+  value: BankingMoney | undefined,
+): value is BankingMoney {
+  return value !== undefined && value.amount_minor !== 0;
 }
 
 function formatFXResult(value: BankingMoney) {

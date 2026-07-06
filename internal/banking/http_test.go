@@ -303,6 +303,19 @@ func TestHTTPFeedRecentAndCommandsHappyAndConflict(t *testing.T) {
 	if len(recent.Transactions) != 3 {
 		t.Fatalf("recent count = %d, want 3; recent=%+v", len(recent.Transactions), recent)
 	}
+	recentForAccountResponse := performBankingRequest(router, http.MethodGet, fmt.Sprintf("/api/banking/recent?account=%d", account.ID), nil, "", true)
+	if recentForAccountResponse.Code != http.StatusOK {
+		t.Fatalf("recent account status = %d, want %d; body=%s", recentForAccountResponse.Code, http.StatusOK, recentForAccountResponse.Body.String())
+	}
+	var recentForAccount recentResponse
+	decodeBankingResponse(t, recentForAccountResponse, &recentForAccount)
+	if len(recentForAccount.Transactions) != 3 {
+		t.Fatalf("recent account count = %d, want 3; recent=%+v", len(recentForAccount.Transactions), recentForAccount)
+	}
+	badRecentResponse := performBankingRequest(router, http.MethodGet, "/api/banking/recent?account=bad", nil, "", true)
+	if badRecentResponse.Code != http.StatusBadRequest {
+		t.Fatalf("bad recent account status = %d, want %d; body=%s", badRecentResponse.Code, http.StatusBadRequest, badRecentResponse.Body.String())
+	}
 }
 
 func TestBankingOpenAPIFragmentDocumentsHTTPPaths(t *testing.T) {

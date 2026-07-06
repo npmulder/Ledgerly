@@ -23,8 +23,13 @@ export function getBankingReviewQueue() {
   return apiClient.get("/api/banking/review");
 }
 
-export function getRecentlyReconciled(limit = 10) {
-  return apiClient.get("/api/banking/recent", { query: { limit } });
+export function getRecentlyReconciled(
+  limit = 10,
+  accountID: number | null = null,
+) {
+  return apiClient.get("/api/banking/recent", {
+    query: { account: accountID ?? undefined, limit },
+  });
 }
 
 export function importBankingCSV(accountID: number, file: File) {

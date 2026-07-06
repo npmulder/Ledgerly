@@ -1,10 +1,17 @@
-import { cleanup, render, screen, within } from "@testing-library/react";
+import {
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type {
   BankingAccount,
+  BankingCommandResponse,
   BankingMoney,
   BankingRecentTransaction,
   BankingReviewCard,
@@ -81,7 +88,94 @@ describe("BankingScreen", () => {
     renderBanking();
 
     expect(await screen.findAllByText("All caught up…")).toHaveLength(2);
-    expect(screen.getByText("No reconciliations yet.")).toBeInTheDocument();
+    expect(
+      await screen.findByText("No reconciliations yet."),
+    ).toBeInTheDocument();
+  });
+
+  it("does not show caught-up state for unsuggested imports", async () => {
+    const accounts = accountsFixture().map((account) =>
+      account.id === 1 ? { ...account, unreconciled_count: 1 } : account,
+    );
+    vi.stubGlobal(
+      "fetch",
+      bankingApi({
+        accounts,
+        queue: { matches: [], rules: [], suggestions: [] },
+        recent: [],
+      }).fetch,
+    );
+
+    renderBanking();
+
+    expect(await screen.findByText("Review pending")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Imported transactions are waiting for suggested matches.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("All caught up…")).not.toBeInTheDocument();
+  });
+
+  it("requests recently reconciled rows for the selected account", async () => {
+    const api = bankingApi({
+      accounts: accountsFixture(),
+      queue: reviewQueueFixture(),
+      recent: [
+        ...recentFixture(),
+        {
+          actor: "reconciliation-command",
+          reconciled_at: "2026-07-06T11:00:00Z",
+          transaction: transactionFixture({
+            account_id: 2,
+            id: 202,
+            payee: "EUR Client",
+            reference: "EUR invoice",
+          }),
+        },
+      ],
+    });
+    const user = userEvent.setup();
+    vi.stubGlobal("fetch", api.fetch);
+
+    renderBanking();
+
+    const accountList = await screen.findByLabelText("Bank accounts");
+    await waitFor(() => {
+      expect(recentRequestAccounts(api.fetch)).toContain("1");
+    });
+
+    await user.click(within(accountList).getByText("Revolut EUR"));
+
+    await waitFor(() => {
+      expect(recentRequestAccounts(api.fetch)).toContain("2");
+    });
+    expect(await screen.findByText("EUR Client")).toBeInTheDocument();
+    expect(screen.queryByText("Fabrikam Ltd")).not.toBeInTheDocument();
+  });
+
+  it("hides zero-value realised FX notices when confirming matches", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal(
+      "fetch",
+      bankingApi({
+        accounts: accountsFixture(),
+        confirmResponse: {
+          kind: "match",
+          realised_fx_amount: money(0, "GBP"),
+          transaction: transactionFixture({ state: "reconciled" }),
+        },
+        queue: reviewQueueFixture(),
+        recent: recentFixture(),
+      }).fetch,
+    );
+
+    renderBanking();
+
+    await user.click(await screen.findByRole("button", { name: "Confirm" }));
+
+    expect(await screen.findByText("Confirmed match")).toBeInTheDocument();
+    expect(screen.queryByText(/auto-posted FX/)).not.toBeInTheDocument();
   });
 
   it("rolls back optimistic exclude when the API returns a 409", async () => {
@@ -134,18 +228,21 @@ function renderBanking() {
 
 function bankingApi({
   accounts,
+  confirmResponse,
   excludeStatus = 200,
   queue,
   recent,
 }: {
   accounts: BankingAccount[];
+  confirmResponse?: BankingCommandResponse;
   excludeStatus?: number;
   queue: BankingReviewQueue;
   recent: BankingRecentTransaction[];
 }) {
   return {
     fetch: vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const path = pathFromRequest(input);
+      const url = urlFromRequest(input);
+      const path = url.pathname;
       const method = init?.method ?? "GET";
 
       if (path === "/api/banking/accounts") {
@@ -155,7 +252,26 @@ function bankingApi({
         return jsonResponse(queue);
       }
       if (path === "/api/banking/recent") {
-        return jsonResponse({ transactions: recent });
+        const accountID = url.searchParams.get("account");
+        return jsonResponse({
+          transactions: accountID
+            ? recent.filter(
+                (item) => item.transaction.account_id === Number(accountID),
+              )
+            : recent,
+        });
+      }
+      if (
+        path === "/api/banking/transactions/101/confirm" &&
+        method === "POST"
+      ) {
+        return jsonResponse(
+          confirmResponse ?? {
+            kind: "match",
+            realised_fx_amount: money(321, "GBP"),
+            transaction: transactionFixture({ state: "reconciled" }),
+          },
+        );
       }
       if (
         path === "/api/banking/transactions/101/exclude" &&
@@ -306,14 +422,20 @@ function money(amountMinor: number, currency: string): BankingMoney {
   return { amount_minor: amountMinor, currency };
 }
 
-function pathFromRequest(input: RequestInfo | URL) {
+function recentRequestAccounts(fetchMock: ReturnType<typeof vi.fn>) {
+  return fetchMock.mock.calls
+    .map(([input]) => urlFromRequest(input).searchParams.get("account"))
+    .filter((accountID): accountID is string => accountID !== null);
+}
+
+function urlFromRequest(input: RequestInfo | URL) {
   const url =
     typeof input === "string"
       ? input
       : input instanceof URL
         ? input.toString()
         : input.url;
-  return new URL(url, "http://ledgerly.test").pathname;
+  return new URL(url, "http://ledgerly.test");
 }
 
 function jsonResponse(
