@@ -36,6 +36,8 @@ import (
 // MigrationsDirEnv overrides automatic migration-directory discovery.
 const MigrationsDirEnv = "LEDGERLY_MIGRATIONS_DIR"
 
+const cronStopTimeout = 10 * time.Second
+
 // Config is the runtime input required to build the in-process application.
 type Config struct {
 	Runtime config.Config
@@ -313,10 +315,17 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		cron:            cronRunner,
 		jobs:            copyJobs(deps.Jobs),
 		closer: func() error {
-			if cronRunner != nil {
-				cronRunner.Stop()
-			}
 			var err error
+			if cronRunner != nil {
+				stopCtx := cronRunner.Stop()
+				waitCtx, cancel := context.WithTimeout(context.Background(), cronStopTimeout)
+				select {
+				case <-stopCtx.Done():
+				case <-waitCtx.Done():
+					err = errors.Join(err, fmt.Errorf("stop cron: %w", waitCtx.Err()))
+				}
+				cancel()
+			}
 			for i := len(closeFuncs) - 1; i >= 0; i-- {
 				err = errors.Join(err, closeFuncs[i]())
 			}

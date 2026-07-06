@@ -132,11 +132,10 @@ func (r Report) ViolationReason() string {
 	if len(r.OffendingEntries) > 0 {
 		entry := r.OffendingEntries[0]
 		parts = append(parts, fmt.Sprintf(
-			"first offending entry id=%d source=%s/%s description=%q",
+			"first offending entry id=%d posting_count=%d GBP total=%d",
 			entry.ID,
-			entry.SourceModule,
-			entry.SourceRef,
-			entry.Description,
+			entry.PostingCount,
+			entry.GBPTotal,
 		))
 	}
 	return strings.Join(parts, "; ")

@@ -70,6 +70,8 @@ func TestTrialBalanceBalancedReportThenViolationAndRecovery(t *testing.T) {
 	}
 	if err := status.Check(ctx); err == nil || !strings.Contains(err.Error(), "first offending entry id=") {
 		t.Fatalf("status.Check() error = %v, want offending entry reason", err)
+	} else if strings.Contains(err.Error(), "test journal entry") || strings.Contains(err.Error(), "test-entry-1") {
+		t.Fatalf("status.Check() error = %q, want no journal description or source reference", err.Error())
 	}
 
 	corruptPosting(t, ctx, adminDBPool, entryID, -1)
@@ -82,6 +84,21 @@ func TestTrialBalanceBalancedReportThenViolationAndRecovery(t *testing.T) {
 	}
 	if err := status.Check(ctx); err != nil {
 		t.Fatalf("status.Check() after recovery = %v, want nil", err)
+	}
+
+	deletePostings(t, ctx, adminDBPool, entryID)
+	report, err = service.TrialBalance(ctx, asOf)
+	if !errors.Is(err, ErrTrialBalanceViolation) {
+		t.Fatalf("TrialBalance() zero-posting error = %v, want ErrTrialBalanceViolation", err)
+	}
+	if report.Balanced {
+		t.Fatalf("zero-posting report balanced = true; report=%+v", report)
+	}
+	if len(report.OffendingEntries) == 0 {
+		t.Fatalf("zero-posting report has no offending entries: %+v", report)
+	}
+	if got := report.OffendingEntries[0].PostingCount; got != 0 {
+		t.Fatalf("zero-posting offending posting count = %d, want 0; entry=%+v", got, report.OffendingEntries[0])
 	}
 }
 
@@ -124,6 +141,16 @@ SET amount = amount + $1,
 	amount_gbp = amount_gbp + $1
 WHERE id = $2`, delta, postingID); err != nil {
 		t.Fatalf("corrupt posting %d by %+d: %v", postingID, delta, err)
+	}
+}
+
+func deletePostings(t *testing.T, ctx context.Context, tx db.Tx, entryID EntryID) {
+	t.Helper()
+
+	if _, err := tx.Exec(ctx, `
+DELETE FROM ledger.postings
+WHERE entry_id = $1`, int64(entryID)); err != nil {
+		t.Fatalf("delete postings for entry %d: %v", entryID, err)
 	}
 }
 

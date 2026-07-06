@@ -176,6 +176,7 @@ func TestLedgerTrialBalanceJobDegradesHealthUntilCleanRun(t *testing.T) {
 		t.Fatalf("RunJob(%s) corrupt error = %v, want ErrTrialBalanceViolation", ledger.TrialBalanceJobName, err)
 	}
 	assertHealthStatus(t, h, nethttp.StatusServiceUnavailable, "first offending entry id=")
+	assertHealthStatusExcludes(t, h, "harness trial-balance entry")
 
 	corruptLedgerPosting(t, h, entryID, -1)
 	if err := h.RunJob(ledger.TrialBalanceJobName); err != nil {
@@ -313,6 +314,28 @@ func assertHealthStatus(t *testing.T, h *harness.Harness, wantStatus int, wantRe
 	reason, ok := trialBalance["error"].(string)
 	if !ok || !strings.Contains(reason, wantReason) {
 		t.Fatalf("%s health error = %v, want text %q", ledger.TrialBalanceJobName, trialBalance["error"], wantReason)
+	}
+}
+
+func assertHealthStatusExcludes(t *testing.T, h *harness.Harness, forbidden string) {
+	t.Helper()
+
+	req, err := nethttp.NewRequestWithContext(context.Background(), nethttp.MethodGet, "/healthz", nil)
+	if err != nil {
+		t.Fatalf("create GET /healthz request: %v", err)
+	}
+	resp, err := h.Do(req)
+	if err != nil {
+		t.Fatalf("GET /healthz: %v", err)
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read GET /healthz response: %v", err)
+	}
+	if strings.Contains(string(bodyBytes), forbidden) {
+		t.Fatalf("GET /healthz body contains %q: %s", forbidden, string(bodyBytes))
 	}
 }
 

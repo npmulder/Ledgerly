@@ -79,7 +79,7 @@ WITH entry_totals AS (
 		count(p.id)::integer AS posting_count,
 		COALESCE(sum(p.amount_gbp), 0)::bigint AS gbp_total
 	FROM ledger.journal_entries e
-	JOIN ledger.postings p ON p.entry_id = e.id
+	LEFT JOIN ledger.postings p ON p.entry_id = e.id
 	WHERE e.date <= $1
 	GROUP BY e.id, e.date, e.description, e.source_module, e.source_ref
 	HAVING count(p.id) < 2
