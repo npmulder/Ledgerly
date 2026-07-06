@@ -10,6 +10,7 @@ import (
 
 	"github.com/npmulder/ledgerly/internal/moneyfx/money"
 	"github.com/npmulder/ledgerly/internal/platform/clock"
+	"github.com/npmulder/ledgerly/internal/platform/db"
 )
 
 const (
@@ -25,6 +26,10 @@ var ErrNoRate = errors.New("moneyfx: no rate")
 // ErrRateUnavailable is retained for older callers that treated missing rates
 // as a soft presentation failure.
 var ErrRateUnavailable = ErrNoRate
+
+// ErrRealisedFXNotFound reports a missing realised-FX dedupe row for a
+// settlement that should already have been handled in the caller transaction.
+var ErrRealisedFXNotFound = errors.New("moneyfx: realised FX not found")
 
 // Rate is an exact FX multiplier from one currency into another.
 type Rate struct {
@@ -189,6 +194,18 @@ func (s *Service) ToGBP(ctx context.Context, m money.Money, date time.Time) (mon
 	converted := m.MulRat(rat)
 	converted.Currency = "GBP"
 	return converted, nil
+}
+
+// RealisedFXAmount returns the stored realised-FX GBP amount for invoiceID
+// inside the caller's transaction.
+func (s *Service) RealisedFXAmount(ctx context.Context, tx db.Tx, invoiceID string) (money.Money, error) {
+	if err := ctx.Err(); err != nil {
+		return money.Money{}, err
+	}
+	if s == nil || s.realised == nil {
+		return money.Money{}, fmt.Errorf("moneyfx: realised FX store is required")
+	}
+	return s.realised.RealisedFXAmount(ctx, tx, invoiceID)
 }
 
 func (s *Service) eurBaseRate(ctx context.Context, date time.Time, currency string) (*big.Rat, error) {

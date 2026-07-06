@@ -346,7 +346,15 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		identityProfile,
 		dividends.WithClock(clk),
 	)
-	bankingService := banking.NewService(bankingPool, ledgerService)
+	bankingService := banking.NewService(
+		bankingPool,
+		ledgerService,
+		banking.WithLedgerJournal(ledgerService),
+		banking.WithMoneyFX(moneyFXModule),
+		banking.WithInvoicingSettler(dashboardInvoicingService),
+		banking.WithDLAFileDrawer(dlaService),
+		banking.WithEventBus(eventBus),
+	)
 
 	ledgerBuilder := buildLedgerModule
 	if deps.ModuleBuilders != nil && deps.ModuleBuilders[ledger.ModuleName] != nil {
