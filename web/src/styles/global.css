@@ -1100,6 +1100,37 @@
   align-items: start;
 }
 
+.invoice-advisor-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-warning-bg);
+  border-radius: 8px;
+  background: var(--color-warning-callout);
+  color: var(--color-text);
+  font-size: var(--type-secondary-size);
+}
+
+.invoice-toast {
+  padding: 10px 12px;
+  border: 1px solid var(--color-success-bg);
+  border-radius: 8px;
+  margin-bottom: 14px;
+  background: var(--color-success-tint);
+  color: var(--color-success);
+  font-size: var(--type-secondary-size);
+  font-weight: 700;
+}
+
+.invoice-toast--error {
+  border-color: var(--color-danger-bg);
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+}
+
 .invoice-editor-header {
   display: flex;
   align-items: center;
@@ -1294,6 +1325,35 @@
   gap: 10px;
 }
 
+.invoice-reminder-log {
+  display: grid;
+  gap: 8px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.invoice-reminder-log li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  color: var(--color-text-secondary);
+  font-size: var(--type-secondary-size);
+}
+
+.invoice-reminder-log li:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.invoice-reminder-log time {
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
 .invoice-advisor-notes p,
 .invoice-validation-summary ul {
   margin: 0;
@@ -1398,6 +1458,15 @@
 
   .invoice-editor-header {
     flex-direction: column;
+  }
+
+  .invoice-advisor-strip {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .invoice-advisor-strip .ui-button {
+    width: 100%;
   }
 
   .invoice-editor-header__meta {

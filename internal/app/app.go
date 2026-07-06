@@ -31,6 +31,7 @@ import (
 	platformcron "github.com/npmulder/ledgerly/internal/platform/cron"
 	"github.com/npmulder/ledgerly/internal/platform/db"
 	httpserver "github.com/npmulder/ledgerly/internal/platform/http"
+	"github.com/npmulder/ledgerly/internal/platform/mail"
 	"github.com/npmulder/ledgerly/web"
 )
 
@@ -69,6 +70,7 @@ type ModuleDeps struct {
 	PDFAssetStore  invoicing.InvoicePDFAssetStore
 	PDFEngine      invoicing.InvoicePDFEngine
 	PDFBaseURL     string
+	MailSender     mail.Sender
 }
 
 // Module is a module contribution to the HTTP router and in-process bus.
@@ -117,6 +119,7 @@ type Dependencies struct {
 	InvoicingPDFAssetStore invoicing.InvoicePDFAssetStore
 	InvoicingPDFEngine     invoicing.InvoicePDFEngine
 	InvoicingPDFBaseURL    string
+	InvoicingMailSender    mail.Sender
 
 	JurisdictionLoader func(string) error
 
@@ -272,6 +275,10 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 	if pdfBaseURL == "" {
 		pdfBaseURL = localHTTPBaseURL(cfg.Runtime.HTTPAddr)
 	}
+	mailSender := deps.InvoicingMailSender
+	if mailSender == nil {
+		mailSender = mail.NewSMTPSenderFromEnv()
+	}
 
 	jurisdictionFacts := func(ctx context.Context) (jurisdiction.CompanyFacts, error) {
 		facts, err := identityProfile.CompanyFacts(ctx)
@@ -367,6 +374,7 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		PDFAssetStore:  pdfAssetStore,
 		PDFEngine:      deps.InvoicingPDFEngine,
 		PDFBaseURL:     pdfBaseURL,
+		MailSender:     mailSender,
 	})
 	if err != nil {
 		return nil, err
@@ -500,6 +508,7 @@ func buildInvoicingModule(_ context.Context, deps ModuleDeps) (Module, error) {
 		PDFAssetStore:  deps.PDFAssetStore,
 		PDFEngine:      deps.PDFEngine,
 		PDFBaseURL:     deps.PDFBaseURL,
+		Mailer:         deps.MailSender,
 		Logger:         deps.Logger,
 	})
 	if err != nil {

@@ -24,6 +24,8 @@ export type InvoicingMoneyAmount =
 export type InvoicingMoney = components["schemas"]["InvoicingMoney"];
 export type InvoicingSendInvoiceResult =
   components["schemas"]["InvoicingSendInvoiceResult"];
+export type InvoicingReminderResult =
+  components["schemas"]["InvoicingReminderResult"];
 
 export function getInvoicingClients(includeArchived = false) {
   return apiClient.get("/api/invoicing/clients", {
@@ -70,6 +72,20 @@ export function sendInvoice(id: string) {
   return apiClient.post(invoiceSendPath(id));
 }
 
+export function sendInvoiceReminder(id: string) {
+  return apiClient.post(invoiceReminderPath(id));
+}
+
+export function resolveInvoicingCTA(
+  action: string,
+  params: { invoice_id?: string },
+) {
+  if (action === "invoicing.sendReminder" && params.invoice_id) {
+    return sendInvoiceReminder(params.invoice_id);
+  }
+  return Promise.reject(new Error(`Unsupported invoicing CTA ${action}`));
+}
+
 export function revertInvoice(id: string) {
   return apiClient.post(invoiceRevertPath(id));
 }
@@ -108,6 +124,12 @@ function invoiceSendPath(id: string) {
   return `/api/invoicing/invoices/${encodeURIComponent(
     id,
   )}/send` as "/api/invoicing/invoices/{id}/send";
+}
+
+function invoiceReminderPath(id: string) {
+  return `/api/invoicing/invoices/${encodeURIComponent(
+    id,
+  )}/remind` as "/api/invoicing/invoices/{id}/remind";
 }
 
 function invoiceRevertPath(id: string) {

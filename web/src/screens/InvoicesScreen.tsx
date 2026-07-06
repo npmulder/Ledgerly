@@ -2,10 +2,12 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 
+import { isApiError } from "@/api/client";
 import {
   createDraftInvoice,
   getInvoicingClients,
   listInvoices,
+  resolveInvoicingCTA,
 } from "@/api/invoicing";
 import { queryKeys } from "@/api/queryKeys";
 import {
@@ -29,6 +31,8 @@ export function InvoicesScreen() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [clientId, setClientId] = useState("");
+  const [reminderToast, setReminderToast] = useState("");
+  const [reminderError, setReminderError] = useState("");
   const clientsQuery = useQuery({
     queryFn: () => getInvoicingClients(false),
     queryKey: queryKeys.invoicing.clients(false),
@@ -39,6 +43,9 @@ export function InvoicesScreen() {
   });
   const clients = clientsQuery.data?.clients ?? [];
   const selectedClientId = clientId || clients[0]?.id || "";
+  const overdueInvoice = invoicesQuery.data?.invoices.find(
+    (invoice) => invoice.status === "overdue",
+  );
 
   const createMutation = useMutation({
     mutationFn: () => createDraftInvoice({ client_id: selectedClientId }),
@@ -46,6 +53,25 @@ export function InvoicesScreen() {
       queryClient.setQueryData(queryKeys.invoicing.invoice(invoice.id), invoice);
       queryClient.invalidateQueries({ queryKey: queryKeys.invoicing.invoices() });
       navigate(`/invoices/${encodeURIComponent(invoice.id)}`);
+    },
+  });
+
+  const reminderMutation = useMutation({
+    mutationFn: (invoiceID: string) =>
+      resolveInvoicingCTA("invoicing.sendReminder", { invoice_id: invoiceID }),
+    onError: (error) => {
+      setReminderToast("");
+      setReminderError(problemMessage(error, "Unable to send reminder"));
+    },
+    onSuccess: (result) => {
+      const number = result.invoice.number ?? "invoice";
+      setReminderError("");
+      setReminderToast(`Reminder sent for ${number}.`);
+      queryClient.setQueryData(
+        queryKeys.invoicing.invoice(result.invoice.id),
+        result.invoice,
+      );
+      queryClient.invalidateQueries({ queryKey: queryKeys.invoicing.invoices() });
     },
   });
 
@@ -85,6 +111,36 @@ export function InvoicesScreen() {
         </Card>
 
         <Card title="Recent invoices">
+          {overdueInvoice && (
+            <div className="invoice-advisor-strip" role="region" aria-label="Invoice advisor">
+              <span>
+                <strong>Advisor:</strong> {overdueInvoice.client_name} is{" "}
+                {overdueInvoice.days_overdue} days overdue on{" "}
+                {formatMinorUnits({
+                  amountMinor: overdueInvoice.totals.total.amount,
+                  currency: overdueInvoice.totals.total.currency,
+                })}
+                .
+              </span>
+              <Button
+                disabled={reminderMutation.isPending}
+                onClick={() => reminderMutation.mutate(overdueInvoice.id)}
+                size="small"
+              >
+                {reminderMutation.isPending ? "Sending" : "Send reminder"}
+              </Button>
+            </div>
+          )}
+          {reminderToast && (
+            <div className="invoice-toast" role="status">
+              {reminderToast}
+            </div>
+          )}
+          {reminderError && (
+            <p className="problem-alert" role="alert">
+              {reminderError}
+            </p>
+          )}
           {invoicesQuery.isPending && (
             <p className="type-secondary">Loading invoices.</p>
           )}
@@ -139,4 +195,13 @@ export function InvoicesScreen() {
       </div>
     </div>
   );
+}
+
+function problemMessage(error: unknown, fallbackTitle: string) {
+  if (isApiError(error)) {
+    return error.problem.detail
+      ? `${error.problem.title}: ${error.problem.detail}`
+      : error.problem.title;
+  }
+  return fallbackTitle;
 }

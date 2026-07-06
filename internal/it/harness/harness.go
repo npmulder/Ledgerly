@@ -29,6 +29,7 @@ import (
 	"github.com/npmulder/ledgerly/internal/platform/clock"
 	"github.com/npmulder/ledgerly/internal/platform/config"
 	"github.com/npmulder/ledgerly/internal/platform/db"
+	"github.com/npmulder/ledgerly/internal/platform/mail"
 )
 
 const (
@@ -51,6 +52,7 @@ type Options struct {
 
 	ModuleBuilders map[string]app.ModuleBuilder
 	Jobs           map[string]app.Job
+	MailSender     mail.Sender
 }
 
 // BalanceCheckOption controls the default teardown trial-balance assertion.
@@ -68,13 +70,14 @@ func WithoutBalanceCheck(justification string) BalanceCheckOption {
 
 // Harness is a running in-process Ledgerly app.
 type Harness struct {
-	BaseURL    string
-	Client     *nethttp.Client
-	DB         *pgxpool.Pool
-	DLAPool    *pgxpool.Pool
-	LedgerPool *pgxpool.Pool
-	Clock      *clock.FakeClock
-	Bus        *bus.Bus
+	BaseURL         string
+	Client          *nethttp.Client
+	DB              *pgxpool.Pool
+	DLAPool         *pgxpool.Pool
+	LedgerPool      *pgxpool.Pool
+	Clock           *clock.FakeClock
+	Bus             *bus.Bus
+	IdentityDataDir string
 
 	BootDuration time.Duration
 
@@ -105,6 +108,7 @@ func New(t testing.TB, opts Options) *Harness {
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
+	identityDataDir := t.TempDir()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -115,14 +119,15 @@ func New(t testing.TB, opts Options) *Harness {
 		},
 		Version: "test",
 	}, app.Dependencies{
-		Logger:        logger,
-		Clock:         fakeClock,
-		HealthDB:      pgxPinger{pool: rawPool},
-		IdentityPool:  identityPool,
-		DLAPool:       dlaPool,
-		LedgerPool:    ledgerPool,
-		MoneyFXPool:   moneyFXPool,
-		InvoicingPool: invoicingPool,
+		Logger:              logger,
+		Clock:               fakeClock,
+		HealthDB:            pgxPinger{pool: rawPool},
+		IdentityPool:        identityPool,
+		DLAPool:             dlaPool,
+		LedgerPool:          ledgerPool,
+		MoneyFXPool:         moneyFXPool,
+		InvoicingPool:       invoicingPool,
+		InvoicingMailSender: opts.MailSender,
 		BusOptions: []bus.Option{
 			bus.WithMiddleware(faults.middleware),
 		},
@@ -130,7 +135,7 @@ func New(t testing.TB, opts Options) *Harness {
 			identity.WithPasswordParams(fastPasswordParams()),
 		},
 		IdentityProfileOptions: []identity.ProfileOption{
-			identity.WithDataDir(t.TempDir()),
+			identity.WithDataDir(identityDataDir),
 		},
 		ModuleBuilders: opts.ModuleBuilders,
 		Jobs:           opts.Jobs,
@@ -145,17 +150,18 @@ func New(t testing.TB, opts Options) *Harness {
 	cookie := registerAndLoginOwner(t, baseClient, server.URL)
 
 	h := &Harness{
-		BaseURL:      server.URL,
-		Client:       authenticatedClient(baseClient, cookie),
-		DB:           rawPool,
-		DLAPool:      dlaPool,
-		LedgerPool:   ledgerPool,
-		Clock:        fakeClock,
-		Bus:          built.Bus,
-		BootDuration: time.Since(start),
-		t:            t,
-		app:          built,
-		faults:       faults,
+		BaseURL:         server.URL,
+		Client:          authenticatedClient(baseClient, cookie),
+		DB:              rawPool,
+		DLAPool:         dlaPool,
+		LedgerPool:      ledgerPool,
+		Clock:           fakeClock,
+		Bus:             built.Bus,
+		IdentityDataDir: identityDataDir,
+		BootDuration:    time.Since(start),
+		t:               t,
+		app:             built,
+		faults:          faults,
 	}
 
 	t.Cleanup(func() {

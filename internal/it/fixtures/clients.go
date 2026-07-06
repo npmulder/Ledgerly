@@ -19,7 +19,8 @@ func Contoso(t testing.TB, h *harness.Harness) invoicing.Client {
 
 	vatNumber := "DE 129 273 398"
 	return createClient(t, h, map[string]any{
-		"name": "Contoso GmbH",
+		"name":  "Contoso GmbH",
+		"email": "billing@contoso.example",
 		"address": map[string]string{
 			"line1":       "Theresienhoehe 12",
 			"line2":       "",
@@ -46,7 +47,8 @@ func Fabrikam(t testing.TB, h *harness.Harness) invoicing.Client {
 	t.Helper()
 
 	return createClient(t, h, map[string]any{
-		"name": "Fabrikam Ltd",
+		"name":  "Fabrikam Ltd",
+		"email": "accounts@fabrikam.example",
 		"address": map[string]string{
 			"line1":       "1 Park Row",
 			"line2":       "",

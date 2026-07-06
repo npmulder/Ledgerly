@@ -173,6 +173,22 @@ func OpenAPIFragment() httpserver.OpenAPIFragment {
 					},
 				},
 			},
+			"/api/invoicing/invoices/{id}/remind": map[string]any{
+				"post": map[string]any{
+					"tags":        []string{"invoicing"},
+					"summary":     "Send an overdue invoice reminder",
+					"description": "Emails a plain-text overdue reminder with the stored invoice PDF attached and records the manual send.",
+					"operationId": "invoicingSendInvoiceReminder",
+					"security":    sessionSecurity(),
+					"parameters":  invoiceIDParameter(),
+					"responses": map[string]any{
+						"200": jsonResponseRef("Reminder sent", "InvoicingReminderResult"),
+						"401": problemResponse("Authentication required"),
+						"404": problemResponse("Invoice was not found"),
+						"409": validationProblemResponse("Reminder cannot be sent"),
+					},
+				},
+			},
 			"/api/invoicing/invoices/{id}/revert": map[string]any{
 				"post": map[string]any{
 					"tags":        []string{"invoicing"},
@@ -435,6 +451,7 @@ func invoicingComponents() map[string]any {
 				"required": []string{
 					"id",
 					"name",
+					"email",
 					"address",
 					"vat_number",
 					"default_currency",
@@ -542,6 +559,15 @@ func invoicingComponents() map[string]any {
 					"description": map[string]any{"type": "string", "minLength": 1},
 					"qty":         map[string]any{"type": "string", "pattern": "^[0-9]+(\\.[0-9]+)?$"},
 					"unit_price":  map[string]any{"$ref": "#/components/schemas/InvoicingMoney"},
+				},
+				"additionalProperties": false,
+			},
+			"InvoicingReminder": map[string]any{
+				"type":     "object",
+				"required": []string{"invoice_id", "sent_at"},
+				"properties": map[string]any{
+					"invoice_id": map[string]any{"type": "string"},
+					"sent_at":    map[string]any{"type": "string", "format": "date-time"},
 				},
 				"additionalProperties": false,
 			},
@@ -703,6 +729,15 @@ func invoicingComponents() map[string]any {
 				},
 				"additionalProperties": false,
 			},
+			"InvoicingReminderResult": map[string]any{
+				"type":     "object",
+				"required": []string{"invoice", "reminder"},
+				"properties": map[string]any{
+					"invoice":  map[string]any{"$ref": "#/components/schemas/InvoicingInvoice"},
+					"reminder": map[string]any{"$ref": "#/components/schemas/InvoicingReminder"},
+				},
+				"additionalProperties": false,
+			},
 		},
 	}
 }
@@ -720,6 +755,7 @@ func clientProperties(request bool) map[string]any {
 func clientRequestProperties(_ bool) map[string]any {
 	return map[string]any{
 		"name":             map[string]any{"type": "string", "minLength": 1},
+		"email":            map[string]any{"type": "string", "format": "email", "nullable": true},
 		"address":          map[string]any{"$ref": "#/components/schemas/InvoicingAddress"},
 		"vat_number":       map[string]any{"type": "string", "nullable": true},
 		"default_currency": currencySchema(),
@@ -755,6 +791,10 @@ func invoiceProperties() map[string]any {
 		"lines": map[string]any{
 			"type":  "array",
 			"items": map[string]any{"$ref": "#/components/schemas/InvoicingInvoiceLine"},
+		},
+		"reminders": map[string]any{
+			"type":  "array",
+			"items": map[string]any{"$ref": "#/components/schemas/InvoicingReminder"},
 		},
 		"totals":     map[string]any{"$ref": "#/components/schemas/InvoicingInvoiceTotals"},
 		"created_at": map[string]any{"type": "string", "format": "date-time"},
