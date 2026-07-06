@@ -84,6 +84,44 @@ type Posting struct {
 	AmountGBP   money.Money
 }
 
+// AccountBalance is a native-currency breakdown plus frozen presentational GBP
+// total for either one account or one account type aggregate.
+type AccountBalance struct {
+	AccountCode AccountCode
+	AccountName string
+	AccountType AccountType
+	Native      []money.Money
+	AmountGBP   money.Money
+}
+
+// EntryCursor identifies the last entry from a previous Entries page. Entries
+// returns rows ordered by date then id, and an EntryCursor resumes strictly
+// after that tuple.
+type EntryCursor struct {
+	Date time.Time
+	ID   EntryID
+}
+
+// EntryFilter constrains journal entry browsing/export. From and To are
+// inclusive dates. AccountCode filters to entries touching that account while
+// still returning every posting in each matched entry.
+type EntryFilter struct {
+	From         *time.Time
+	To           *time.Time
+	SourceModule string
+	AccountCode  AccountCode
+	After        *EntryCursor
+	Limit        int
+}
+
+const (
+	// DefaultEntriesLimit is used when EntryFilter.Limit is zero.
+	DefaultEntriesLimit = 100
+
+	// MaxEntriesLimit caps journal browse/export pages.
+	MaxEntriesLimit = 500
+)
+
 // EntryPostedName is the canonical bus event name for journal entry creation.
 const EntryPostedName = "ledger.EntryPosted"
 
@@ -104,6 +142,9 @@ func (EntryPosted) Name() string {
 type Ledger interface {
 	Post(ctx context.Context, tx db.Tx, entry NewJournalEntry) (EntryID, error)
 	Reverse(ctx context.Context, tx db.Tx, id EntryID, reason string) (EntryID, error)
+	AccountBalance(ctx context.Context, code AccountCode, asOf time.Time) (AccountBalance, error)
+	BalancesByType(ctx context.Context, from time.Time, to time.Time) ([]AccountBalance, error)
+	Entries(ctx context.Context, filter EntryFilter) ([]JournalEntry, error)
 	EnsureAccount(ctx context.Context, tx db.Tx, spec AccountSpec) (AccountCode, error)
 	Accounts(ctx context.Context) ([]Account, error)
 }
@@ -117,6 +158,9 @@ var (
 
 	// ErrInvalidJournalEntry reports malformed journal entry input.
 	ErrInvalidJournalEntry = errors.New("ledger: invalid journal entry")
+
+	// ErrInvalidEntryFilter reports malformed journal entry query input.
+	ErrInvalidEntryFilter = errors.New("ledger: invalid entry filter")
 
 	// ErrInsufficientPostings reports an entry with fewer than two postings.
 	ErrInsufficientPostings = errors.New("ledger: insufficient postings")

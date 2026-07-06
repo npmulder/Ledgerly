@@ -284,7 +284,7 @@ func assertPermissionDenied(t *testing.T, err error) {
 	}
 }
 
-func temporaryMigratedLedgerDatabase(t *testing.T) (context.Context, *pgxpool.Pool, *pgxpool.Pool) {
+func temporaryMigratedLedgerDatabase(t testing.TB) (context.Context, *pgxpool.Pool, *pgxpool.Pool) {
 	t.Helper()
 
 	databaseURL := testDatabaseURL(t)
@@ -317,7 +317,7 @@ func temporaryMigratedLedgerDatabase(t *testing.T) (context.Context, *pgxpool.Po
 	return ctx, adminPool, ledgerPool
 }
 
-func openDatabasePool(t *testing.T, ctx context.Context, databaseURL string, dbName string, opts ...db.PoolOption) *pgxpool.Pool {
+func openDatabasePool(t testing.TB, ctx context.Context, databaseURL string, dbName string, opts ...db.PoolOption) *pgxpool.Pool {
 	t.Helper()
 
 	cfg, err := pgxpool.ParseConfig(databaseURL)
@@ -342,7 +342,7 @@ func openDatabasePool(t *testing.T, ctx context.Context, databaseURL string, dbN
 	return pool
 }
 
-func testDatabaseURL(t *testing.T) string {
+func testDatabaseURL(t testing.TB) string {
 	t.Helper()
 
 	databaseURL := strings.TrimSpace(os.Getenv("LEDGERLY_TEST_DB"))
@@ -352,7 +352,7 @@ func testDatabaseURL(t *testing.T) string {
 	return databaseURL
 }
 
-func findRepoRoot(t *testing.T) string {
+func findRepoRoot(t testing.TB) string {
 	t.Helper()
 
 	dir, err := os.Getwd()
