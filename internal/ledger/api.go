@@ -151,6 +151,7 @@ type Ledger interface {
 	Post(ctx context.Context, tx db.Tx, entry NewJournalEntry) (EntryID, error)
 	Reverse(ctx context.Context, tx db.Tx, id EntryID, reason string) (EntryID, error)
 	AccountBalance(ctx context.Context, code AccountCode, asOf time.Time) (AccountBalance, error)
+	AccountBalanceInTx(ctx context.Context, tx db.Tx, code AccountCode, asOf time.Time) (AccountBalance, error)
 	BalancesByType(ctx context.Context, from time.Time, to time.Time) ([]AccountBalance, error)
 	TrialBalance(ctx context.Context, asOf time.Time) (Report, error)
 	Entries(ctx context.Context, filter EntryFilter) ([]JournalEntry, error)
