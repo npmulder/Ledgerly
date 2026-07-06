@@ -334,6 +334,7 @@ WHERE id = $1`,
 
 type realisedFXStore interface {
 	InsertRealisedFX(ctx context.Context, tx db.Tx, record newRealisedFX) (bool, error)
+	RealisedFXAmount(ctx context.Context, tx db.Tx, invoiceID string) (money.Money, error)
 }
 
 type newRealisedFX struct {
@@ -376,6 +377,31 @@ RETURNING id`,
 		return false, fmt.Errorf("moneyfx: insert realised FX %s/%d: %w", normalized.InvoiceID, normalized.LockID, err)
 	}
 	return true, nil
+}
+
+// RealisedFXAmount reads the realised-FX dedupe amount for invoiceID inside tx.
+func (s Store) RealisedFXAmount(ctx context.Context, tx db.Tx, invoiceID string) (money.Money, error) {
+	if tx == nil {
+		return money.Money{}, fmt.Errorf("moneyfx: realised FX lookup requires transaction")
+	}
+	normalizedInvoiceID := strings.TrimSpace(invoiceID)
+	if normalizedInvoiceID == "" {
+		return money.Money{}, fmt.Errorf("moneyfx: realised FX invoice id is required")
+	}
+
+	var amount int64
+	if err := tx.QueryRow(ctx, `
+SELECT amount_gbp
+FROM moneyfx.realised_fx
+WHERE invoice_id = $1
+ORDER BY id DESC
+LIMIT 1`, normalizedInvoiceID).Scan(&amount); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return money.Money{}, fmt.Errorf("moneyfx: realised FX for invoice %s: %w", normalizedInvoiceID, ErrRealisedFXNotFound)
+		}
+		return money.Money{}, fmt.Errorf("moneyfx: realised FX lookup for invoice %s: %w", normalizedInvoiceID, err)
+	}
+	return money.Money{Amount: amount, Currency: "GBP"}, nil
 }
 
 func normalizeNewRealisedFX(record newRealisedFX) (newRealisedFX, error) {

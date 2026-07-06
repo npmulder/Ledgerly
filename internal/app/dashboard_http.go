@@ -140,6 +140,7 @@ type dashboardDividendHeadroomResponse struct {
 type dashboardRecentInvoicesResponse []dashboardRecentInvoiceResponse
 
 type dashboardRecentInvoiceResponse struct {
+	ID          string                  `json:"id"`
 	Number      *string                 `json:"number"`
 	Client      string                  `json:"client"`
 	Amount      money.Money             `json:"amount"`
@@ -436,6 +437,7 @@ func (h dashboardHTTPHandler) recentInvoices(ctx context.Context) (dashboardRece
 			daysOverdue = &value
 		}
 		response = append(response, dashboardRecentInvoiceResponse{
+			ID:          invoice.ID,
 			Number:      invoice.Number,
 			Client:      invoice.ClientName,
 			Amount:      invoice.Totals.Total,

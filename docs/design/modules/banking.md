@@ -23,7 +23,7 @@ On import (and on new invoice events), for each unreconciled txn produce best su
 
 1. **Invoice match** — score on amount (exact native-currency match strongest), currency, payee ≈ client name, date ≥ issue date. Shown as "98% match" card; confidence = weighted score.
 2. **DLA detection** — payee ≈ director name / known personal patterns → suggest drawing ("File to DLA" + "Recode ▾").
-3. **Payee rule** — matcher hit → auto-categorize; rules with high `timesApplied` can auto-post (threshold configurable).
+3. **Payee rule** — matcher hit → auto-categorize; rules with high `timesApplied` are flagged as trusted suggestions, but v1 still requires a user confirmation before posting. Revisit auto-posting after there is enough reconciliation trust data.
 
 ## Reconciliation flows (one transaction each)
 

@@ -400,6 +400,22 @@ WHERE txn_id = $1
 	return suggestion, nil
 }
 
+func (Store) SupersedeActiveSuggestion(ctx context.Context, tx db.Tx, txnID TransactionID) error {
+	if txnID <= 0 {
+		return fmt.Errorf("banking: suggestion transaction id is required: %w", ErrInvalidSuggestion)
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE suggestions
+SET superseded_at = now()
+WHERE txn_id = $1
+	AND superseded_at IS NULL`,
+		int64(txnID),
+	); err != nil {
+		return fmt.Errorf("banking: supersede active suggestion for transaction %d: %w", txnID, err)
+	}
+	return nil
+}
+
 func (s Store) ClearActiveSuggestion(ctx context.Context, tx db.Tx, txnID TransactionID, actor string) error {
 	actor = strings.TrimSpace(actor)
 	if txnID <= 0 {
