@@ -54,16 +54,17 @@ type ModuleBuilder func(context.Context, ModuleDeps) (Module, error)
 
 // ModuleDeps are the platform dependencies available to module builders.
 type ModuleDeps struct {
-	Logger        *slog.Logger
-	Clock         clock.Clock
-	Bus           *bus.Bus
-	DLAPool       *pgxpool.Pool
-	MoneyFXPool   *pgxpool.Pool
-	RateLocker    invoicing.RateLocker
-	InvoicingPool *pgxpool.Pool
-	TodayRate     invoicing.TodayRateFunc
-	Ledger        ledger.Ledger
-	LedgerPool    *pgxpool.Pool
+	Logger         *slog.Logger
+	Clock          clock.Clock
+	Bus            *bus.Bus
+	DLAPool        *pgxpool.Pool
+	MoneyFXPool    *pgxpool.Pool
+	RateLocker     invoicing.RateLocker
+	RateLockReader invoicing.RateLockReader
+	InvoicingPool  *pgxpool.Pool
+	TodayRate      invoicing.TodayRateFunc
+	Ledger         ledger.Ledger
+	LedgerPool     *pgxpool.Pool
 }
 
 // Module is a module contribution to the HTTP router and in-process bus.
@@ -334,15 +335,16 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		invoicingBuilder = deps.ModuleBuilders[invoicing.ModuleName]
 	}
 	invoicingModule, err := invoicingBuilder(ctx, ModuleDeps{
-		Logger:        logger,
-		Clock:         clk,
-		Bus:           eventBus,
-		MoneyFXPool:   moneyFXPool,
-		RateLocker:    invoicingMoneyFXLocker{module: moneyFXModule},
-		InvoicingPool: invoicingPool,
-		TodayRate:     invoicingTodayRate(moneyFXModule),
-		Ledger:        ledgerService,
-		LedgerPool:    ledgerPool,
+		Logger:         logger,
+		Clock:          clk,
+		Bus:            eventBus,
+		MoneyFXPool:    moneyFXPool,
+		RateLocker:     invoicingMoneyFXLocker{module: moneyFXModule},
+		RateLockReader: invoicingMoneyFXLockReader{module: moneyFXModule},
+		InvoicingPool:  invoicingPool,
+		TodayRate:      invoicingTodayRate(moneyFXModule),
+		Ledger:         ledgerService,
+		LedgerPool:     ledgerPool,
 	})
 	if err != nil {
 		return nil, err
@@ -465,12 +467,13 @@ func buildDLAModule(_ context.Context, deps ModuleDeps) (Module, error) {
 
 func buildInvoicingModule(_ context.Context, deps ModuleDeps) (Module, error) {
 	invoicingModule, err := invoicing.New(invoicing.Config{
-		Pool:       deps.InvoicingPool,
-		Clock:      deps.Clock,
-		TodayRate:  deps.TodayRate,
-		RateLocker: deps.RateLocker,
-		Ledger:     deps.Ledger,
-		Bus:        deps.Bus,
+		Pool:           deps.InvoicingPool,
+		Clock:          deps.Clock,
+		TodayRate:      deps.TodayRate,
+		RateLocker:     deps.RateLocker,
+		RateLockReader: deps.RateLockReader,
+		Ledger:         deps.Ledger,
+		Bus:            deps.Bus,
 	})
 	if err != nil {
 		return Module{}, err
@@ -504,6 +507,24 @@ func (l invoicingMoneyFXLocker) LockRate(ctx context.Context, tx db.Tx, ref invo
 		return invoicing.RateLock{}, fmt.Errorf("app: moneyfx module is required for invoice rate locks")
 	}
 	lock, err := l.module.Lock(ctx, tx, moneyfx.LockRef{Module: ref.Module, Ref: ref.Ref}, from, to, date)
+	if err != nil {
+		return invoicing.RateLock{}, err
+	}
+	return invoicing.RateLock{
+		ID:   int64(lock.ID),
+		Rate: lock.Rate,
+	}, nil
+}
+
+type invoicingMoneyFXLockReader struct {
+	module *moneyfx.Module
+}
+
+func (r invoicingMoneyFXLockReader) RateLock(ctx context.Context, id int64) (invoicing.RateLock, error) {
+	if r.module == nil {
+		return invoicing.RateLock{}, fmt.Errorf("app: moneyfx module is required for invoice rate lock reads")
+	}
+	lock, err := r.module.GetLock(ctx, moneyfx.LockID(id))
 	if err != nil {
 		return invoicing.RateLock{}, err
 	}

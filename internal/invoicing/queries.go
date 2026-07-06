@@ -260,11 +260,14 @@ func (s *Service) invoiceTotalGBP(ctx context.Context, invoice Invoice) (Money, 
 		if err != nil || lockID <= 0 {
 			return Money{}, false, fmt.Errorf("invoicing: invalid invoice lock id %q", *invoice.LockID)
 		}
-		rate, err := s.store.RateLockRate(ctx, s.pool, lockID)
+		if s.rateLocks == nil {
+			return Money{}, false, fmt.Errorf("invoicing: rate lock reader is required for locked totals")
+		}
+		lock, err := s.rateLocks.RateLock(ctx, lockID)
 		if err != nil {
 			return Money{}, false, err
 		}
-		amount, err := convertInvoiceTotalGBP(total, rate)
+		amount, err := convertInvoiceTotalGBP(total, lock.Rate)
 		if err != nil {
 			return Money{}, false, err
 		}
@@ -468,20 +471,6 @@ ORDER BY invoice_id, position, id`, invoiceIDs)
 		result[line.InvoiceID] = append(result[line.InvoiceID], line)
 	}
 	return result, nil
-}
-
-func (s Store) RateLockRate(ctx context.Context, tx db.Tx, lockID int64) (string, error) {
-	var rate string
-	if err := tx.QueryRow(ctx, `
-SELECT rate::text
-FROM moneyfx.rate_locks
-WHERE id = $1`, lockID).Scan(&rate); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return "", fmt.Errorf("invoicing: rate lock %d not found", lockID)
-		}
-		return "", fmt.Errorf("invoicing: load rate lock %d: %w", lockID, err)
-	}
-	return rate, nil
 }
 
 func (s Store) ClaimOverdueInvoices(ctx context.Context, tx db.Tx, today time.Time) ([]overdueSweepClaim, error) {

@@ -692,12 +692,14 @@ func newInvoiceService(t testing.TB, h *harness.Harness) *invoicing.Service {
 	t.Helper()
 	modulePool := testdb.AsModule(t, invoicing.ModuleName)
 	moneyFXPool := testdb.AsModule(t, moneyfx.ModuleName)
+	rateLocks := testRateLocker{service: moneyfx.NewService(moneyfx.NewStore(moneyFXPool), h.Clock)}
 	return invoicing.NewService(
 		modulePool,
 		invoicing.Store{},
 		invoicing.WithClock(h.Clock),
 		invoicing.WithTodayRate(fakeTodayRate),
-		invoicing.WithRateLocker(testRateLocker{service: moneyfx.NewService(moneyfx.NewStore(moneyFXPool), h.Clock)}),
+		invoicing.WithRateLocker(rateLocks),
+		invoicing.WithRateLockReader(rateLocks),
 		invoicing.WithLedger(ledger.New(h.LedgerPool, h.Bus)),
 		invoicing.WithEventBus(h.Bus),
 	)
@@ -709,6 +711,14 @@ type testRateLocker struct {
 
 func (l testRateLocker) LockRate(ctx context.Context, tx db.Tx, ref invoicing.RateLockRef, from string, to string, date time.Time) (invoicing.RateLock, error) {
 	lock, err := l.service.Lock(ctx, tx, moneyfx.LockRef{Module: ref.Module, Ref: ref.Ref}, from, to, date)
+	if err != nil {
+		return invoicing.RateLock{}, err
+	}
+	return invoicing.RateLock{ID: int64(lock.ID), Rate: lock.Rate}, nil
+}
+
+func (l testRateLocker) RateLock(ctx context.Context, id int64) (invoicing.RateLock, error) {
+	lock, err := l.service.GetLock(ctx, moneyfx.LockID(id))
 	if err != nil {
 		return invoicing.RateLock{}, err
 	}
