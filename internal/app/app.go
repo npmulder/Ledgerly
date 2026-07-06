@@ -19,6 +19,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/lib/pq"
 
+	"github.com/npmulder/ledgerly/internal/banking"
+	"github.com/npmulder/ledgerly/internal/dividends"
 	"github.com/npmulder/ledgerly/internal/dla"
 	"github.com/npmulder/ledgerly/internal/identity"
 	"github.com/npmulder/ledgerly/internal/invoicing"
@@ -31,6 +33,7 @@ import (
 	platformcron "github.com/npmulder/ledgerly/internal/platform/cron"
 	"github.com/npmulder/ledgerly/internal/platform/db"
 	httpserver "github.com/npmulder/ledgerly/internal/platform/http"
+	"github.com/npmulder/ledgerly/internal/reports"
 	"github.com/npmulder/ledgerly/web"
 )
 
@@ -65,6 +68,10 @@ type ModuleDeps struct {
 	TodayRate      invoicing.TodayRateFunc
 	Ledger         ledger.Ledger
 	LedgerPool     *pgxpool.Pool
+	Identity       identity.Identity
+	PDFAssetStore  invoicing.InvoicePDFAssetStore
+	PDFEngine      invoicing.InvoicePDFEngine
+	PDFBaseURL     string
 }
 
 // Module is a module contribution to the HTTP router and in-process bus.
@@ -92,7 +99,9 @@ type Dependencies struct {
 	HealthCloser io.Closer
 
 	IdentityPool  *pgxpool.Pool
+	BankingPool   *pgxpool.Pool
 	DLAPool       *pgxpool.Pool
+	DividendsPool *pgxpool.Pool
 	LedgerPool    *pgxpool.Pool
 	MoneyFXPool   *pgxpool.Pool
 	InvoicingPool *pgxpool.Pool
@@ -109,6 +118,10 @@ type Dependencies struct {
 	IdentityServiceOptions []identity.ServiceOption
 	IdentityHTTPOptions    []identity.HTTPOption
 	IdentityProfileOptions []identity.ProfileOption
+
+	InvoicingPDFAssetStore invoicing.InvoicePDFAssetStore
+	InvoicingPDFEngine     invoicing.InvoicePDFEngine
+	InvoicingPDFBaseURL    string
 
 	JurisdictionLoader func(string) error
 
@@ -128,7 +141,9 @@ type App struct {
 
 	HealthDB        httpserver.Pinger
 	IdentityPool    *pgxpool.Pool
+	BankingPool     *pgxpool.Pool
 	DLAPool         *pgxpool.Pool
+	DividendsPool   *pgxpool.Pool
 	LedgerPool      *pgxpool.Pool
 	MoneyFXPool     *pgxpool.Pool
 	InvoicingPool   *pgxpool.Pool
@@ -199,6 +214,14 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 	if err != nil {
 		return nil, err
 	}
+	bankingPool, err := modulePool(ctx, cfg.Runtime.DatabaseURL, banking.ModuleName, deps.BankingPool, openPool, &closeFuncs)
+	if err != nil {
+		return nil, err
+	}
+	dividendsPool, err := modulePool(ctx, cfg.Runtime.DatabaseURL, dividends.ModuleName, deps.DividendsPool, openPool, &closeFuncs)
+	if err != nil {
+		return nil, err
+	}
 
 	eventBus := deps.Bus
 	if eventBus == nil {
@@ -254,6 +277,16 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 	identityHTTPOptions := []identity.HTTPOption{identity.WithProfileAPI(identityProfile)}
 	identityHTTPOptions = append(identityHTTPOptions, deps.IdentityHTTPOptions...)
 	identityHandler := identity.NewHTTPHandler(identityService, identityHTTPOptions...)
+	pdfAssetStore := deps.InvoicingPDFAssetStore
+	if pdfAssetStore == nil && strings.TrimSpace(cfg.Runtime.DataDir) != "" {
+		pdfAssetStore = identityInvoicePDFAssetStore{
+			writer: identity.NewAssetWriter(identityPool, cfg.Runtime.DataDir),
+		}
+	}
+	pdfBaseURL := strings.TrimSpace(deps.InvoicingPDFBaseURL)
+	if pdfBaseURL == "" {
+		pdfBaseURL = localHTTPBaseURL(cfg.Runtime.HTTPAddr)
+	}
 
 	jurisdictionFacts := func(ctx context.Context) (jurisdiction.CompanyFacts, error) {
 		facts, err := identityProfile.CompanyFacts(ctx)
@@ -289,6 +322,31 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 	moneyFXModule.SubscribeEvents(eventBus)
 	modules = append(modules, moneyFXModule.HTTPModule())
 	fragments = append(fragments, moneyFXModule.OpenAPIFragment())
+
+	dashboardInvoicingService := invoicing.NewService(
+		invoicingPool,
+		invoicing.Store{},
+		invoicing.WithClock(clk),
+		invoicing.WithTodayRate(invoicingTodayRate(moneyFXModule)),
+		invoicing.WithRateLocker(invoicingMoneyFXLocker{module: moneyFXModule}),
+		invoicing.WithRateLockReader(invoicingMoneyFXLockReader{module: moneyFXModule}),
+		invoicing.WithLedger(ledgerService),
+		invoicing.WithEventBus(eventBus),
+	)
+	reportsService := reports.New(
+		ledgerService,
+		identityProfile,
+		dashboardInvoicingService,
+		reports.WithClock(clk),
+	)
+	dividendsService := dividends.New(
+		dividendsPool,
+		ledgerService,
+		reportsService,
+		identityProfile,
+		dividends.WithClock(clk),
+	)
+	bankingService := banking.NewService(bankingPool, ledgerService)
 
 	ledgerBuilder := buildLedgerModule
 	if deps.ModuleBuilders != nil && deps.ModuleBuilders[ledger.ModuleName] != nil {
@@ -345,6 +403,10 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		TodayRate:      invoicingTodayRate(moneyFXModule),
 		Ledger:         ledgerService,
 		LedgerPool:     ledgerPool,
+		Identity:       identityProfile,
+		PDFAssetStore:  pdfAssetStore,
+		PDFEngine:      deps.InvoicingPDFEngine,
+		PDFBaseURL:     pdfBaseURL,
 	})
 	if err != nil {
 		return nil, err
@@ -357,6 +419,19 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 	}
 	modules = append(modules, invoicingModule.HTTPModule)
 	fragments = append(fragments, invoicingModule.OpenAPIFragment)
+
+	modules = append(modules, dashboardHTTPModule(dashboardDependencies{
+		clock:     clk,
+		ledger:    ledgerService,
+		moneyFX:   moneyFXModule,
+		invoicing: dashboardInvoicingService,
+		dla:       dlaService,
+		dividends: dividendsService,
+		banking:   bankingService,
+		identity:  identityProfile,
+		principal: identity.PrincipalFromContext,
+	}))
+	fragments = append(fragments, dashboardOpenAPIFragment())
 
 	staticAssets, err := loadStaticAssets(deps)
 	if err != nil {
@@ -394,7 +469,9 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		Clock:           clk,
 		HealthDB:        healthDB,
 		IdentityPool:    identityPool,
+		BankingPool:     bankingPool,
 		DLAPool:         dlaPool,
+		DividendsPool:   dividendsPool,
 		LedgerPool:      ledgerPool,
 		MoneyFXPool:     moneyFXPool,
 		InvoicingPool:   invoicingPool,
@@ -431,6 +508,7 @@ func OpenAPIDocument(version string) map[string]any {
 		ledger.OpenAPIFragment(),
 		dla.OpenAPIFragment(),
 		invoicing.OpenAPIFragment(),
+		dashboardOpenAPIFragment(),
 	)
 }
 
@@ -474,6 +552,11 @@ func buildInvoicingModule(_ context.Context, deps ModuleDeps) (Module, error) {
 		RateLockReader: deps.RateLockReader,
 		Ledger:         deps.Ledger,
 		Bus:            deps.Bus,
+		Identity:       deps.Identity,
+		PDFAssetStore:  deps.PDFAssetStore,
+		PDFEngine:      deps.PDFEngine,
+		PDFBaseURL:     deps.PDFBaseURL,
+		Logger:         deps.Logger,
 	})
 	if err != nil {
 		return Module{}, err
@@ -511,8 +594,12 @@ func (l invoicingMoneyFXLocker) LockRate(ctx context.Context, tx db.Tx, ref invo
 		return invoicing.RateLock{}, err
 	}
 	return invoicing.RateLock{
-		ID:   int64(lock.ID),
-		Rate: lock.Rate,
+		ID:       int64(lock.ID),
+		From:     lock.From,
+		To:       lock.To,
+		Rate:     lock.Rate,
+		RateDate: lock.RateDate,
+		Source:   lock.Source,
 	}, nil
 }
 
@@ -529,8 +616,12 @@ func (r invoicingMoneyFXLockReader) RateLock(ctx context.Context, id int64) (inv
 		return invoicing.RateLock{}, err
 	}
 	return invoicing.RateLock{
-		ID:   int64(lock.ID),
-		Rate: lock.Rate,
+		ID:       int64(lock.ID),
+		From:     lock.From,
+		To:       lock.To,
+		Rate:     lock.Rate,
+		RateDate: lock.RateDate,
+		Source:   lock.Source,
 	}, nil
 }
 
@@ -551,6 +642,44 @@ func invoicingTodayRate(m *moneyfx.Module) invoicing.TodayRateFunc {
 			Source:   rate.Source,
 		}, asOf, nil
 	}
+}
+
+type identityInvoicePDFAssetStore struct {
+	writer *identity.AssetWriter
+}
+
+func (s identityInvoicePDFAssetStore) StoreInvoicePDF(ctx context.Context, pdf []byte) (string, error) {
+	if s.writer == nil {
+		return "", fmt.Errorf("app: identity asset writer is required for invoice PDFs")
+	}
+	id, err := s.writer.StoreAsset(ctx, identity.AssetUpload{
+		MIME:  "application/pdf",
+		Bytes: pdf,
+	})
+	if err != nil {
+		return "", err
+	}
+	return "/api/identity/assets/" + string(id), nil
+}
+
+func localHTTPBaseURL(addr string) string {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return ""
+	}
+	if strings.HasPrefix(addr, "http://") || strings.HasPrefix(addr, "https://") {
+		return strings.TrimRight(addr, "/")
+	}
+	if strings.HasPrefix(addr, ":") {
+		return "http://127.0.0.1" + addr
+	}
+	if strings.HasPrefix(addr, "0.0.0.0:") {
+		return "http://127.0.0.1:" + strings.TrimPrefix(addr, "0.0.0.0:")
+	}
+	if strings.HasPrefix(addr, "[::]:") {
+		return "http://127.0.0.1:" + strings.TrimPrefix(addr, "[::]:")
+	}
+	return "http://" + addr
 }
 
 func loadStaticAssets(deps Dependencies) (fs.FS, error) {

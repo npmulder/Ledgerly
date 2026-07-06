@@ -189,11 +189,64 @@ func OpenAPIFragment() httpserver.OpenAPIFragment {
 					},
 				},
 			},
+			"/api/invoicing/invoices/{id}/print": map[string]any{
+				"get": map[string]any{
+					"tags":        []string{"invoicing"},
+					"summary":     "Return invoice print route payload",
+					"description": "Returns the authoritative payload consumed by the React invoice print route.",
+					"operationId": "invoicingGetInvoicePrintPayload",
+					"security":    sessionSecurity(),
+					"parameters":  invoicePrintPayloadParameters(),
+					"responses": map[string]any{
+						"200": jsonResponseRef("Invoice print payload", "InvoicingInvoicePrintPayload"),
+						"400": problemResponse("Invalid print query"),
+						"401": problemResponse("Authentication required"),
+						"404": problemResponse("Invoice was not found"),
+					},
+				},
+			},
+			"/api/invoicing/invoices/{id}/pdf/preview": map[string]any{
+				"get": map[string]any{
+					"tags":        []string{"invoicing"},
+					"summary":     "Render a draft invoice PDF preview",
+					"description": "Renders a DRAFT-watermarked PDF on demand and never stores the result.",
+					"operationId": "invoicingPreviewInvoicePDF",
+					"security":    sessionSecurity(),
+					"parameters":  invoiceIDParameter(),
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "Draft PDF preview",
+							"content": map[string]any{
+								"application/pdf": map[string]any{
+									"schema": map[string]any{"type": "string", "format": "binary"},
+								},
+							},
+						},
+						"401": problemResponse("Authentication required"),
+						"404": problemResponse("Invoice was not found"),
+					},
+				},
+			},
+			"/api/invoicing/invoices/{id}/pdf/render": map[string]any{
+				"post": map[string]any{
+					"tags":        []string{"invoicing"},
+					"summary":     "Render and store an invoice PDF",
+					"description": "Explicit recovery action for render failures. If an immutable PDF is already stored, it is returned unchanged.",
+					"operationId": "invoicingRenderInvoicePDF",
+					"security":    sessionSecurity(),
+					"parameters":  invoiceIDParameter(),
+					"responses": map[string]any{
+						"200": jsonResponseRef("Invoice with PDF asset", "InvoicingInvoice"),
+						"401": problemResponse("Authentication required"),
+						"404": problemResponse("Invoice was not found"),
+					},
+				},
+			},
 			"/api/invoicing/invoices/{id}/pdf": map[string]any{
 				"get": map[string]any{
 					"tags":        []string{"invoicing"},
 					"summary":     "Redirect to an invoice PDF asset",
-					"description": "Returns 404 until INV-8 stores invoice PDF assets; once present, redirects to the stored asset URL.",
+					"description": "Redirects to the immutable stored invoice PDF asset.",
 					"operationId": "invoicingGetInvoicePDF",
 					"security":    sessionSecurity(),
 					"parameters":  invoiceIDParameter(),
@@ -236,6 +289,16 @@ func invoiceIDParameter() []map[string]any {
 			"schema":   map[string]any{"type": "string"},
 		},
 	}
+}
+
+func invoicePrintPayloadParameters() []map[string]any {
+	return append(invoiceIDParameter(), map[string]any{
+		"name":        "draft",
+		"in":          "query",
+		"required":    false,
+		"description": "Render the payload with the draft watermark enabled.",
+		"schema":      map[string]any{"type": "boolean", "default": false},
+	})
 }
 
 func invoiceListParameters() []map[string]any {
@@ -506,6 +569,53 @@ func invoicingComponents() map[string]any {
 				"properties":           invoiceProperties(),
 				"additionalProperties": false,
 			},
+			"InvoicingInvoicePrintIdentity": map[string]any{
+				"type": "object",
+				"required": []string{
+					"trading_name",
+					"legal_name",
+					"company_number",
+					"address",
+					"iban",
+					"bic",
+					"bank_name",
+				},
+				"properties": map[string]any{
+					"trading_name":   map[string]any{"type": "string"},
+					"legal_name":     map[string]any{"type": "string"},
+					"company_number": map[string]any{"type": "string"},
+					"address":        map[string]any{"$ref": "#/components/schemas/InvoicingAddress"},
+					"vat_number":     map[string]any{"type": "string", "nullable": true},
+					"iban":           map[string]any{"type": "string"},
+					"bic":            map[string]any{"type": "string"},
+					"bank_name":      map[string]any{"type": "string"},
+					"logo_asset_url": map[string]any{"type": "string", "format": "uri-reference", "nullable": true},
+					"logo_data_uri":  map[string]any{"type": "string", "nullable": true},
+				},
+				"additionalProperties": false,
+			},
+			"InvoicingInvoicePrintPayload": map[string]any{
+				"type": "object",
+				"required": []string{
+					"invoice",
+					"client",
+					"identity",
+					"vat_rate",
+					"vat_tax_year",
+					"draft_watermark",
+				},
+				"properties": map[string]any{
+					"invoice":             map[string]any{"$ref": "#/components/schemas/InvoicingInvoice"},
+					"client":              map[string]any{"$ref": "#/components/schemas/InvoicingClient"},
+					"identity":            map[string]any{"$ref": "#/components/schemas/InvoicingInvoicePrintIdentity"},
+					"vat_rate":            map[string]any{"type": "string"},
+					"vat_tax_year":        map[string]any{"type": "string"},
+					"reverse_charge_note": map[string]any{"type": "string", "nullable": true},
+					"locked_rate":         nullableSchemaRef("InvoicingLockedRate"),
+					"draft_watermark":     map[string]any{"type": "boolean"},
+				},
+				"additionalProperties": false,
+			},
 			"InvoicingInvoiceListItem": map[string]any{
 				"type": "object",
 				"required": []string{
@@ -572,10 +682,14 @@ func invoicingComponents() map[string]any {
 			},
 			"InvoicingLockedRate": map[string]any{
 				"type":     "object",
-				"required": []string{"id", "rate"},
+				"required": []string{"id", "from", "to", "rate", "rate_date", "source"},
 				"properties": map[string]any{
-					"id":   map[string]any{"type": "integer", "format": "int64"},
-					"rate": map[string]any{"type": "string"},
+					"id":        map[string]any{"type": "integer", "format": "int64"},
+					"from":      currencySchema(),
+					"to":        currencySchema(),
+					"rate":      map[string]any{"type": "string"},
+					"rate_date": map[string]any{"type": "string", "format": "date"},
+					"source":    map[string]any{"type": "string"},
 				},
 				"additionalProperties": false,
 			},
@@ -667,6 +781,7 @@ func invoiceListItemProperties() map[string]any {
 
 func invoicePatchProperties() map[string]any {
 	return map[string]any{
+		"client_id":     map[string]any{"type": "string", "minLength": 1},
 		"issue_date":    map[string]any{"type": "string", "format": "date"},
 		"due_date":      map[string]any{"type": "string", "format": "date"},
 		"currency":      currencySchema(),
