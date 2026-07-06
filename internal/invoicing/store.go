@@ -330,6 +330,19 @@ func (s Store) Invoice(ctx context.Context, tx db.Tx, id string) (Invoice, error
 	return invoice, nil
 }
 
+func (s Store) InvoiceByNumber(ctx context.Context, tx db.Tx, number string) (Invoice, error) {
+	invoice, err := scanInvoiceRow(tx.QueryRow(ctx, selectInvoiceSQL()+"\nWHERE number = $1", number))
+	if err != nil {
+		return Invoice{}, err
+	}
+	lines, err := s.InvoiceLines(ctx, tx, invoice.ID)
+	if err != nil {
+		return Invoice{}, err
+	}
+	invoice.Lines = lines
+	return invoice, nil
+}
+
 func (s Store) InvoiceForUpdate(ctx context.Context, tx db.Tx, id string) (Invoice, error) {
 	invoice, err := scanInvoiceRow(tx.QueryRow(ctx, selectInvoiceSQL()+"\nWHERE id = $1\nFOR UPDATE", id))
 	if err != nil {

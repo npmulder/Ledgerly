@@ -199,6 +199,15 @@ func (s *Service) Invoice(ctx context.Context, id string) (Invoice, error) {
 	return s.withComputedTotals(ctx, invoice)
 }
 
+// InvoiceByNumber returns an invoice by its immutable sent invoice number.
+func (s *Service) InvoiceByNumber(ctx context.Context, number string) (Invoice, error) {
+	invoice, err := s.store.InvoiceByNumber(ctx, s.pool, strings.TrimSpace(number))
+	if err != nil {
+		return Invoice{}, err
+	}
+	return s.withComputedTotals(ctx, invoice)
+}
+
 // UpdateDraft applies a patch to a mutable draft invoice only.
 func (s *Service) UpdateDraft(ctx context.Context, id string, patch DraftPatch) (_ Invoice, err error) {
 	tx, err := s.pool.Begin(ctx)
