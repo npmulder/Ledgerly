@@ -119,6 +119,55 @@ func TestReportsVATReturnBox1UsesFixturePackRateChange(t *testing.T) {
 	assertMoney(t, figures.Box6, 10_000, "GBP")
 }
 
+func TestReportsVATReturnBox4UsesOnlySignedManualInputVATAdjustments(t *testing.T) {
+	h := harness.New(t, harness.Options{ClockStart: time.Date(2025, 6, 20, 9, 0, 0, 0, time.UTC)})
+	invoiceService := newInvoiceService(t, h)
+	reportService := newReportsService(t, h, invoiceService)
+	ctx := context.Background()
+	date := time.Date(2025, 6, 20, 0, 0, 0, 0, time.UTC)
+
+	entryID := postManualInputVATAdjustment(t, h, date, 2_500)
+	reverseLedgerEntry(t, h, entryID, "manual input VAT correction")
+	postVATLiabilityPayment(t, h, date, 1_750)
+
+	figures, err := reportService.VATReturn(ctx, reports.VATQuarterForDate(date))
+	if err != nil {
+		t.Fatalf("VATReturn() error = %v", err)
+	}
+
+	assertMoney(t, figures.Box4, 0, "GBP")
+	assertMoney(t, figures.NetPosition, 0, "GBP")
+}
+
+func TestReportsVATReturnNetsRevertedInvoiceSend(t *testing.T) {
+	h := harness.New(t, harness.Options{ClockStart: time.Date(2025, 6, 20, 9, 0, 0, 0, time.UTC)})
+	invoiceService := newInvoiceService(t, h)
+	reportService := newReportsService(t, h, invoiceService)
+	ctx := context.Background()
+
+	fabrikam := fixtures.Fabrikam(t, h)
+	invoice := createInvoiceDraftForReports(t, invoiceService, fabrikam.ID, invoicing.Money{Amount: 10_000, Currency: string(invoicing.CurrencyGBP)})
+	sent, err := invoiceService.Send(ctx, invoice.ID)
+	if err != nil {
+		t.Fatalf("Send(domestic) error = %v", err)
+	}
+	if sent.SendLedgerEntryID == nil {
+		t.Fatal("SendLedgerEntryID = nil, want persisted send entry")
+	}
+	if _, err := invoiceService.RevertToDraft(ctx, invoice.ID); err != nil {
+		t.Fatalf("RevertToDraft() error = %v", err)
+	}
+
+	figures, err := reportService.VATReturn(ctx, reports.VATQuarterForDate(time.Date(2025, 6, 20, 0, 0, 0, 0, time.UTC)))
+	if err != nil {
+		t.Fatalf("VATReturn() error = %v", err)
+	}
+
+	assertMoney(t, figures.Box1, 0, "GBP")
+	assertMoney(t, figures.Box6, 0, "GBP")
+	assertMoney(t, figures.NetPosition, 0, "GBP")
+}
+
 func newReportsService(t testing.TB, h *harness.Harness, invoiceService *invoicing.Service) *reports.Service {
 	t.Helper()
 
@@ -152,7 +201,7 @@ func createInvoiceDraftForReports(t testing.TB, service *invoicing.Service, clie
 	return updated
 }
 
-func postManualInputVATAdjustment(t testing.TB, h *harness.Harness, date time.Time, amount int64) {
+func postManualInputVATAdjustment(t testing.TB, h *harness.Harness, date time.Time, amount int64) ledger.EntryID {
 	t.Helper()
 
 	ctx := context.Background()
@@ -167,7 +216,7 @@ func postManualInputVATAdjustment(t testing.TB, h *harness.Harness, date time.Ti
 	}()
 
 	ledgerService := ledger.New(h.LedgerPool, h.Bus)
-	_, err = ledgerService.Post(ctx, tx, ledger.NewJournalEntry{
+	entryID, err := ledgerService.Post(ctx, tx, ledger.NewJournalEntry{
 		Date:         date,
 		Description:  "Manual quarterly input VAT adjustment",
 		SourceModule: reports.ModuleName,
@@ -190,5 +239,78 @@ func postManualInputVATAdjustment(t testing.TB, h *harness.Harness, date time.Ti
 	}
 	if err = tx.Commit(ctx); err != nil {
 		t.Fatalf("commit manual VAT adjustment: %v", err)
+	}
+	return entryID
+}
+
+func reverseLedgerEntry(t testing.TB, h *harness.Harness, entryID ledger.EntryID, reason string) {
+	t.Helper()
+
+	ctx := context.Background()
+	tx, err := h.LedgerPool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin reverse ledger entry tx: %v", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	ledgerService := ledger.New(h.LedgerPool, h.Bus)
+	if _, err = ledgerService.Reverse(ctx, tx, entryID, reason); err != nil {
+		t.Fatalf("reverse ledger entry: %v", err)
+	}
+	if err = tx.Commit(ctx); err != nil {
+		t.Fatalf("commit reverse ledger entry: %v", err)
+	}
+}
+
+func postVATLiabilityPayment(t testing.TB, h *harness.Harness, date time.Time, amount int64) {
+	t.Helper()
+
+	ctx := context.Background()
+	tx, err := h.LedgerPool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin VAT payment tx: %v", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	ledgerService := ledger.New(h.LedgerPool, h.Bus)
+	gbp := "GBP"
+	if _, err = ledgerService.EnsureAccount(ctx, tx, ledger.AccountSpec{
+		Code:     "1000-cash-gbp",
+		Name:     "Fixture cash GBP",
+		Type:     ledger.AccountTypeAsset,
+		Currency: &gbp,
+	}); err != nil {
+		t.Fatalf("ensure VAT payment cash account: %v", err)
+	}
+	if _, err = ledgerService.Post(ctx, tx, ledger.NewJournalEntry{
+		Date:         date,
+		Description:  "VAT liability payment",
+		SourceModule: ledger.ModuleName,
+		SourceRef:    "vat-payment:" + date.Format(time.DateOnly),
+		Postings: []ledger.NewPosting{
+			{
+				AccountCode: "2200-vat-control",
+				Amount:      money.Money{Amount: amount, Currency: "GBP"},
+				AmountGBP:   money.Money{Amount: amount, Currency: "GBP"},
+			},
+			{
+				AccountCode: "1000-cash-gbp",
+				Amount:      money.Money{Amount: -amount, Currency: "GBP"},
+				AmountGBP:   money.Money{Amount: -amount, Currency: "GBP"},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("post VAT payment: %v", err)
+	}
+	if err = tx.Commit(ctx); err != nil {
+		t.Fatalf("commit VAT payment: %v", err)
 	}
 }

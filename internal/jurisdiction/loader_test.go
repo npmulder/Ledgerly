@@ -227,6 +227,30 @@ func TestValidationFailuresNameFilePathAndField(t *testing.T) {
 			wantField: "invoice_wording",
 			wantText:  "must not be empty",
 		},
+		{
+			name: "missing domestic VAT treatment semantics",
+			pack: strings.Replace(
+				valid,
+				"      domestic:\n        output_vat: true\n        vat_return_net_sales: true\n",
+				"",
+				1,
+			),
+			wantPath:  "tax.vat.treatments.domestic",
+			wantField: "domestic",
+			wantText:  "required",
+		},
+		{
+			name: "missing reverse-charge VAT treatment semantics",
+			pack: strings.Replace(
+				valid,
+				"      reverse-charge-eu-b2b:\n        output_vat: false\n        vat_return_net_sales: true\n        reverse_charge_kind: b2b_services_eu\n",
+				"",
+				1,
+			),
+			wantPath:  "tax.vat.treatments.reverse-charge-eu-b2b",
+			wantField: "reverse-charge-eu-b2b",
+			wantText:  "required",
+		},
 	}
 
 	for _, tt := range tests {

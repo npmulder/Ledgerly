@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/npmulder/ledgerly/internal/invoicing"
@@ -13,9 +14,10 @@ import (
 )
 
 const (
-	vatReturnFilingKey = "vat_return"
-	vatControlAccount  = ledger.AccountCode("2200-vat-control")
-	salesAccount       = ledger.AccountCode("4000-sales")
+	vatReturnFilingKey      = "vat_return"
+	manualInputVATSourceRef = "manual-input-vat:"
+	vatControlAccount       = ledger.AccountCode("2200-vat-control")
+	salesAccount            = ledger.AccountCode("4000-sales")
 )
 
 // VATReturn computes VAT return boxes 1, 4, and 6 for one VAT quarter.
@@ -100,7 +102,7 @@ func (s *Service) VATPosition(ctx context.Context) (VATPosition, error) {
 	if !ok {
 		return position, nil
 	}
-	deadlines, err := jurisdiction.FilingDeadlinesWithClock(facts, clk)
+	deadlines, err := jurisdiction.FilingDeadlinesWithClock(facts, fixedClock{now: period.To})
 	if err != nil {
 		return VATPosition{}, fmt.Errorf("reports: VAT position filing deadlines: %w", err)
 	}
@@ -157,9 +159,6 @@ func addEntryToVATFigures(ctx context.Context, figures *VATFigures, classifier *
 				if !semantics.OutputVAT {
 					continue
 				}
-				if _, _, err := jurisdiction.VATStandardRateForDate(entry.Date); err != nil {
-					return fmt.Errorf("reports: VAT standard rate for %s: %w", entry.Date.Format(time.DateOnly), err)
-				}
 				amount, err := posting.AmountGBP.Negate()
 				if err != nil {
 					return fmt.Errorf("reports: negate output VAT posting: %w", err)
@@ -169,7 +168,7 @@ func addEntryToVATFigures(ctx context.Context, figures *VATFigures, classifier *
 				}
 				continue
 			}
-			if posting.AmountGBP.Amount <= 0 {
+			if !isManualInputVATAdjustment(entry) {
 				continue
 			}
 			var err error
@@ -190,6 +189,10 @@ func addEntryToVATFigures(ctx context.Context, figures *VATFigures, classifier *
 		}
 	}
 	return nil
+}
+
+func isManualInputVATAdjustment(entry ledger.JournalEntry) bool {
+	return entry.SourceModule == ModuleName && strings.HasPrefix(strings.TrimSpace(entry.SourceRef), manualInputVATSourceRef)
 }
 
 type vatClassifier struct {

@@ -7,6 +7,11 @@ import (
 	"strings"
 )
 
+var requiredVATTreatments = []string{
+	"domestic",
+	"reverse-charge-eu-b2b",
+}
+
 func validatePack(file, id, version string, pack *Pack) error {
 	if err := validateMeta(file, id, version, pack.Meta); err != nil {
 		return err
@@ -169,6 +174,11 @@ func validateVAT(file string, vat VAT) error {
 func validateVATTreatments(file string, vat VAT) error {
 	if len(vat.Treatments) == 0 {
 		return fieldError(file, "tax.vat.treatments", "treatments", "must contain at least one treatment")
+	}
+	for _, key := range requiredVATTreatments {
+		if _, ok := vat.Treatments[key]; !ok {
+			return fieldError(file, "tax.vat.treatments."+key, key, "is required for supported invoicing VAT treatments")
+		}
 	}
 
 	keys := make([]string, 0, len(vat.Treatments))

@@ -333,8 +333,8 @@ func (s Store) Invoice(ctx context.Context, tx db.Tx, id string) (Invoice, error
 func (Store) InvoiceVATContextBySendEntryID(ctx context.Context, tx db.Tx, entryID int64) (InvoiceVATContext, error) {
 	var context InvoiceVATContext
 	err := tx.QueryRow(ctx, `
-SELECT id, vat_treatment
-FROM invoicing.invoices
+SELECT invoice_id, vat_treatment
+FROM invoicing.invoice_send_vat_context
 WHERE send_ledger_entry_id = $1`, entryID).Scan(
 		&context.InvoiceID,
 		&context.VATTreatment,
@@ -552,7 +552,34 @@ RETURNING `+invoiceColumnsSQL(),
 			return Invoice{}, ErrInvoiceImmutable
 		}
 	}
-	return updated, err
+	if err != nil {
+		return updated, err
+	}
+	if err := s.InsertInvoiceSendVATContext(ctx, tx, updated.ID, sendLedgerEntryID, updated.VATTreatment); err != nil {
+		return Invoice{}, err
+	}
+	return updated, nil
+}
+
+func (Store) InsertInvoiceSendVATContext(ctx context.Context, tx db.Tx, invoiceID string, sendLedgerEntryID int64, treatment VATTreatment) error {
+	_, err := tx.Exec(ctx, `
+INSERT INTO invoicing.invoice_send_vat_context (
+	send_ledger_entry_id,
+	invoice_id,
+	vat_treatment
+) VALUES (
+	$1,
+	$2,
+	$3
+)`,
+		sendLedgerEntryID,
+		invoiceID,
+		string(treatment),
+	)
+	if err != nil {
+		return fmt.Errorf("invoicing: insert invoice send VAT context: %w", err)
+	}
+	return nil
 }
 
 func (s Store) SetInvoiceSettlement(ctx context.Context, tx db.Tx, id string, settlement InvoiceSettlement) (Invoice, error) {
