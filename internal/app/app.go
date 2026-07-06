@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"log/slog"
 	nethttp "net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -268,7 +269,8 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 	pdfAssetStore := deps.InvoicingPDFAssetStore
 	if pdfAssetStore == nil && strings.TrimSpace(cfg.Runtime.DataDir) != "" {
 		pdfAssetStore = identityInvoicePDFAssetStore{
-			writer: identity.NewAssetWriter(identityPool, cfg.Runtime.DataDir),
+			writer:  identity.NewAssetWriter(identityPool, cfg.Runtime.DataDir),
+			profile: identityProfile,
 		}
 	}
 	pdfBaseURL := strings.TrimSpace(deps.InvoicingPDFBaseURL)
@@ -598,7 +600,10 @@ func invoicingTodayRate(m *moneyfx.Module) invoicing.TodayRateFunc {
 }
 
 type identityInvoicePDFAssetStore struct {
-	writer *identity.AssetWriter
+	writer  *identity.AssetWriter
+	profile interface {
+		Asset(context.Context, identity.AssetID) (identity.Asset, error)
+	}
 }
 
 func (s identityInvoicePDFAssetStore) StoreInvoicePDF(ctx context.Context, pdf []byte) (string, error) {
@@ -613,6 +618,44 @@ func (s identityInvoicePDFAssetStore) StoreInvoicePDF(ctx context.Context, pdf [
 		return "", err
 	}
 	return "/api/identity/assets/" + string(id), nil
+}
+
+func (s identityInvoicePDFAssetStore) LoadInvoicePDF(ctx context.Context, assetURL string) ([]byte, error) {
+	if s.profile == nil {
+		return nil, fmt.Errorf("app: identity profile API is required for invoice PDFs")
+	}
+	id, err := identityAssetIDFromURL(assetURL)
+	if err != nil {
+		return nil, err
+	}
+	asset, err := s.profile.Asset(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if asset.MIME != "application/pdf" || len(asset.Bytes) == 0 {
+		return nil, fmt.Errorf("app: invoice PDF asset is not a PDF")
+	}
+	return append([]byte{}, asset.Bytes...), nil
+}
+
+func identityAssetIDFromURL(assetURL string) (identity.AssetID, error) {
+	raw := strings.TrimSpace(assetURL)
+	if raw == "" {
+		return "", fmt.Errorf("app: invoice PDF asset URL is required")
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("app: invalid invoice PDF asset URL: %w", err)
+	}
+	const prefix = "/api/identity/assets/"
+	if !strings.HasPrefix(parsed.Path, prefix) {
+		return "", fmt.Errorf("app: unsupported invoice PDF asset URL")
+	}
+	id := strings.TrimPrefix(parsed.Path, prefix)
+	if id == "" || strings.Contains(id, "/") {
+		return "", fmt.Errorf("app: invalid invoice PDF asset id")
+	}
+	return identity.AssetID(id), nil
 }
 
 func localHTTPBaseURL(addr string) string {

@@ -192,13 +192,19 @@ func buildMessageBytes(from string, msg Message) ([]byte, error) {
 		encoded := make([]byte, base64.StdEncoding.EncodedLen(len(attachment.Bytes)))
 		base64.StdEncoding.Encode(encoded, attachment.Bytes)
 		for len(encoded) > 76 {
-			if _, err := part.Write(append(encoded[:76], '\r', '\n')); err != nil {
+			if _, err := part.Write(encoded[:76]); err != nil {
+				return nil, fmt.Errorf("mail: write attachment part: %w", err)
+			}
+			if _, err := part.Write([]byte("\r\n")); err != nil {
 				return nil, fmt.Errorf("mail: write attachment part: %w", err)
 			}
 			encoded = encoded[76:]
 		}
 		if len(encoded) > 0 {
-			if _, err := part.Write(append(encoded, '\r', '\n')); err != nil {
+			if _, err := part.Write(encoded); err != nil {
+				return nil, fmt.Errorf("mail: write attachment part: %w", err)
+			}
+			if _, err := part.Write([]byte("\r\n")); err != nil {
 				return nil, fmt.Errorf("mail: write attachment part: %w", err)
 			}
 		}

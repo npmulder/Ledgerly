@@ -3,7 +3,6 @@ package invoicing
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"path"
 	"strings"
 	"time"
@@ -27,8 +26,9 @@ type ReminderTemplateData struct {
 	CompanyName   string
 }
 
-// SendReminder emails a plain-text overdue reminder with the stored invoice PDF
-// attached, then records the send. v1 is manual-trigger only.
+// SendReminder records a durable overdue reminder attempt, then emails a
+// plain-text reminder with the stored invoice PDF attached. v1 is manual-trigger
+// only.
 func (s *Service) SendReminder(ctx context.Context, id string) (_ ReminderResult, err error) {
 	if s.pool == nil {
 		return ReminderResult{}, fmt.Errorf("invoicing: reminder requires pool")
@@ -39,6 +39,9 @@ func (s *Service) SendReminder(ctx context.Context, id string) (_ ReminderResult
 	if s.identity == nil {
 		return ReminderResult{}, fmt.Errorf("invoicing: reminder identity API is not configured")
 	}
+	if s.pdfAssetStore == nil {
+		return ReminderResult{}, fmt.Errorf("invoicing: reminder PDF asset store is not configured")
+	}
 
 	now := s.now().UTC()
 	today := dateOnly(now)
@@ -46,8 +49,9 @@ func (s *Service) SendReminder(ctx context.Context, id string) (_ ReminderResult
 	if err != nil {
 		return ReminderResult{}, fmt.Errorf("invoicing: begin reminder transaction: %w", err)
 	}
+	committed := false
 	defer func() {
-		if err != nil {
+		if !committed {
 			_ = tx.Rollback(ctx)
 		}
 	}()
@@ -98,15 +102,17 @@ func (s *Service) SendReminder(ctx context.Context, id string) (_ ReminderResult
 		TextBody:    RenderReminderText(templateData),
 		Attachments: []mail.Attachment{attachment},
 	}
-	if err := s.mailer.Send(ctx, msg); err != nil {
-		return ReminderResult{}, fmt.Errorf("invoicing: send invoice reminder email: %w", err)
-	}
 	reminder, err := s.store.InsertReminder(ctx, tx, invoice.ID, now)
 	if err != nil {
 		return ReminderResult{}, err
 	}
 	if err = tx.Commit(ctx); err != nil {
 		return ReminderResult{}, fmt.Errorf("invoicing: commit reminder transaction: %w", err)
+	}
+	committed = true
+
+	if err := s.mailer.Send(ctx, msg); err != nil {
+		return ReminderResult{}, fmt.Errorf("invoicing: send invoice reminder email: %w", err)
 	}
 
 	refreshed, err := s.Invoice(ctx, invoice.ID)
@@ -154,15 +160,14 @@ func validateReminderEligibleInvoice(invoice Invoice, today time.Time) error {
 }
 
 func (s *Service) invoiceReminderPDFAttachment(ctx context.Context, invoice Invoice) (mail.Attachment, error) {
-	assetID, err := invoicePDFIdentityAssetID(invoice.PDFAsset)
-	if err != nil {
-		return mail.Attachment{}, err
+	if invoice.PDFAsset == nil || strings.TrimSpace(*invoice.PDFAsset) == "" {
+		return mail.Attachment{}, ErrInvoiceReminderPDFMissing
 	}
-	asset, err := s.identity.Asset(ctx, assetID)
+	pdfBytes, err := s.pdfAssetStore.LoadInvoicePDF(ctx, strings.TrimSpace(*invoice.PDFAsset))
 	if err != nil {
 		return mail.Attachment{}, fmt.Errorf("%w: %v", ErrInvoiceReminderPDFMissing, err)
 	}
-	if !strings.EqualFold(asset.MIME, "application/pdf") || len(asset.Bytes) == 0 {
+	if len(pdfBytes) == 0 {
 		return mail.Attachment{}, ErrInvoiceReminderPDFMissing
 	}
 	number := "invoice"
@@ -172,29 +177,8 @@ func (s *Service) invoiceReminderPDFAttachment(ctx context.Context, invoice Invo
 	return mail.Attachment{
 		Filename:    safeAttachmentFilename(number) + ".pdf",
 		ContentType: "application/pdf",
-		Bytes:       asset.Bytes,
+		Bytes:       pdfBytes,
 	}, nil
-}
-
-func invoicePDFIdentityAssetID(assetURL *string) (identity.AssetID, error) {
-	if assetURL == nil || strings.TrimSpace(*assetURL) == "" {
-		return "", ErrInvoiceReminderPDFMissing
-	}
-	raw := strings.TrimSpace(*assetURL)
-	parsed, err := url.Parse(raw)
-	if err != nil {
-		return "", fmt.Errorf("%w: invalid PDF asset URL", ErrInvoiceReminderPDFMissing)
-	}
-	assetPath := parsed.Path
-	const prefix = "/api/identity/assets/"
-	if !strings.HasPrefix(assetPath, prefix) {
-		return "", fmt.Errorf("%w: unsupported PDF asset URL", ErrInvoiceReminderPDFMissing)
-	}
-	id := strings.TrimPrefix(assetPath, prefix)
-	if id == "" || strings.Contains(id, "/") {
-		return "", fmt.Errorf("%w: invalid PDF asset id", ErrInvoiceReminderPDFMissing)
-	}
-	return identity.AssetID(id), nil
 }
 
 func reminderCompanyName(profile identity.CompanyProfile) string {

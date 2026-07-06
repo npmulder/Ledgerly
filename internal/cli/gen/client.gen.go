@@ -484,13 +484,13 @@ type InvoicingClientVatTreatment string
 // InvoicingClientPatch defines model for InvoicingClientPatch.
 type InvoicingClientPatch struct {
 	Address         *InvoicingAddress                    `json:"address,omitempty"`
-	DayRate         *InvoicingMoneyAmount                `json:"day_rate"`
+	DayRate         *InvoicingMoneyAmount                `json:"day_rate,omitempty"`
 	DefaultCurrency *InvoicingClientPatchDefaultCurrency `json:"default_currency,omitempty"`
-	Email           *openapi_types.Email                 `json:"email"`
+	Email           *openapi_types.Email                 `json:"email,omitempty"`
 	Name            *string                              `json:"name,omitempty"`
-	RetainerAmount  *InvoicingMoneyAmount                `json:"retainer_amount"`
+	RetainerAmount  *InvoicingMoneyAmount                `json:"retainer_amount,omitempty"`
 	TermsDays       *InvoicingClientPatchTermsDays       `json:"terms_days,omitempty"`
-	VatNumber       *string                              `json:"vat_number"`
+	VatNumber       *string                              `json:"vat_number,omitempty"`
 	VatTreatment    *InvoicingClientPatchVatTreatment    `json:"vat_treatment,omitempty"`
 }
 

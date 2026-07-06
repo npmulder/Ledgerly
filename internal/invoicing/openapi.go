@@ -752,20 +752,30 @@ func clientProperties(request bool) map[string]any {
 	return properties
 }
 
-func clientRequestProperties(_ bool) map[string]any {
+func clientRequestProperties(patch bool) map[string]any {
+	email := map[string]any{"type": "string", "format": "email", "nullable": true}
+	vatNumber := map[string]any{"type": "string", "nullable": true}
+	retainerAmount := nullableSchemaRef("InvoicingMoneyAmount")
+	dayRate := nullableSchemaRef("InvoicingMoneyAmount")
+	if patch {
+		email["x-omitempty"] = true
+		vatNumber["x-omitempty"] = true
+		retainerAmount["x-omitempty"] = true
+		dayRate["x-omitempty"] = true
+	}
 	return map[string]any{
 		"name":             map[string]any{"type": "string", "minLength": 1},
-		"email":            map[string]any{"type": "string", "format": "email", "nullable": true},
+		"email":            email,
 		"address":          map[string]any{"$ref": "#/components/schemas/InvoicingAddress"},
-		"vat_number":       map[string]any{"type": "string", "nullable": true},
+		"vat_number":       vatNumber,
 		"default_currency": currencySchema(),
 		"terms_days":       map[string]any{"type": "integer", "enum": []int{14, 30}},
 		"vat_treatment": map[string]any{
 			"type": "string",
 			"enum": []string{string(VATTreatmentDomestic), string(VATTreatmentReverseChargeEUB2B)},
 		},
-		"retainer_amount": nullableSchemaRef("InvoicingMoneyAmount"),
-		"day_rate":        nullableSchemaRef("InvoicingMoneyAmount"),
+		"retainer_amount": retainerAmount,
+		"day_rate":        dayRate,
 	}
 }
 

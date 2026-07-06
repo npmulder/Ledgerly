@@ -115,6 +115,7 @@ func New(t testing.TB, opts Options) *Harness {
 	built, err := app.Build(ctx, app.Config{
 		Runtime: config.Config{
 			Env:      config.EnvDev,
+			DataDir:  identityDataDir,
 			LogLevel: slog.LevelError,
 		},
 		Version: "test",

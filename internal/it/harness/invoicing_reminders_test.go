@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -113,6 +114,68 @@ func TestInvoicingInvoiceReminderHTTPEndpointSendsPDFAndRecordsRow(t *testing.T)
 	}
 }
 
+func TestInvoicingInvoiceReminderHTTPEndpointRecordsAttemptBeforeSMTPFailure(t *testing.T) {
+	fakeMailer := &failingReminderMailer{err: errors.New("forced SMTP failure")}
+	h := harness.New(t, harness.Options{
+		ClockStart: time.Date(2025, 5, 11, 9, 0, 0, 0, time.UTC),
+		MailSender: fakeMailer,
+	})
+	fixtures.Company(t, h)
+	fixtures.Rates(t, h)
+	fabrikam := fixtures.Fabrikam(t, h)
+
+	draft := createDraftInvoiceViaHTTP(t, h, fabrikam.ID)
+	patched := performInvoiceRequest(t, h, http.MethodPatch, "/api/invoicing/invoices/"+draft.ID, mustInvoiceJSON(t, map[string]any{
+		"issue_date": "2025-05-01",
+		"due_date":   "2025-05-02",
+		"lines": []map[string]any{
+			{
+				"id":          "line-reminder-failure",
+				"description": "Overdue support",
+				"qty":         "1",
+				"unit_price": map[string]any{
+					"amount":   int64(60_000),
+					"currency": string(invoicing.CurrencyGBP),
+				},
+			},
+		},
+	}), true)
+	if patched.StatusCode != http.StatusOK {
+		t.Fatalf("patch overdue invoice status = %d, want %d; body=%s", patched.StatusCode, http.StatusOK, patched.BodyString())
+	}
+	send := performInvoiceRequest(t, h, http.MethodPost, "/api/invoicing/invoices/"+draft.ID+"/send", nil, true)
+	if send.StatusCode != http.StatusOK {
+		t.Fatalf("send overdue invoice status = %d, want %d; body=%s", send.StatusCode, http.StatusOK, send.BodyString())
+	}
+	sent := decodeSendInvoiceResponse(t, send)
+	storeInvoicePDFAssetForReminderTest(t, h, sent.Invoice.ID, []byte("%PDF-1.4\n% reminder failure fixture\n"))
+
+	first := performInvoiceRequest(t, h, http.MethodPost, "/api/invoicing/invoices/"+sent.Invoice.ID+"/remind", nil, true)
+	if first.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("first remind status = %d, want %d; body=%s", first.StatusCode, http.StatusInternalServerError, first.BodyString())
+	}
+	if fakeMailer.calls != 1 {
+		t.Fatalf("mail send calls after first remind = %d, want 1", fakeMailer.calls)
+	}
+	if got := reminderRowCount(t, sent.Invoice.ID); got != 1 {
+		t.Fatalf("reminder row count after SMTP failure = %d, want 1", got)
+	}
+
+	second := performInvoiceRequest(t, h, http.MethodPost, "/api/invoicing/invoices/"+sent.Invoice.ID+"/remind", nil, true)
+	if second.StatusCode != http.StatusConflict {
+		t.Fatalf("second remind status = %d, want %d; body=%s", second.StatusCode, http.StatusConflict, second.BodyString())
+	}
+	if !strings.Contains(second.BodyString(), "Reminder already sent today") {
+		t.Fatalf("second remind problem = %s, want rate-limit title", second.BodyString())
+	}
+	if fakeMailer.calls != 1 {
+		t.Fatalf("mail send calls after rate-limited retry = %d, want 1", fakeMailer.calls)
+	}
+	if got := reminderRowCount(t, sent.Invoice.ID); got != 1 {
+		t.Fatalf("reminder row count after rate-limited retry = %d, want 1", got)
+	}
+}
+
 func TestInvoicingInvoiceReminderHTTPEndpointRejectsNonOverdueInvoice(t *testing.T) {
 	fakeMailer := mail.NewMemorySender()
 	h := harness.New(t, harness.Options{
@@ -154,7 +217,7 @@ func storeInvoicePDFAssetForReminderTest(t testing.TB, h *harness.Harness, invoi
 	if err != nil {
 		t.Fatalf("store PDF asset: %v", err)
 	}
-	assetURL := "/api/identity/assets/" + string(assetID)
+	assetURL := "https://ledgerly.example.test/api/identity/assets/" + string(assetID) + "?download=1"
 	if _, err := (invoicing.Store{}).SetInvoicePDFAsset(context.Background(), testdb.AsModule(t, invoicing.ModuleName), invoiceID, assetURL); err != nil {
 		t.Fatalf("set invoice PDF asset: %v", err)
 	}
@@ -172,4 +235,14 @@ WHERE invoice_id = $1`, invoiceID).Scan(&count); err != nil {
 		t.Fatalf("count reminders: %v", err)
 	}
 	return count
+}
+
+type failingReminderMailer struct {
+	err   error
+	calls int
+}
+
+func (m *failingReminderMailer) Send(context.Context, mail.Message) error {
+	m.calls++
+	return m.err
 }
