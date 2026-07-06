@@ -86,6 +86,15 @@ func TestHTTPDLABalancePayloadForCreditAndOverdrawn(t *testing.T) {
 	if creditBody.Policy.BIKWarningKey != "benefit_in_kind_interest_free" || creditBody.Policy.Remedy != "clear_with_dividend" {
 		t.Fatalf("credit policy = %#v, want Isle of Man DLA policy", creditBody.Policy)
 	}
+	if creditBody.Policy.CreditStatusText != "In credit — tax-free to withdraw" {
+		t.Fatalf("credit status text = %q, want pack wording", creditBody.Policy.CreditStatusText)
+	}
+	if !strings.Contains(creditBody.Policy.CreditExplainerTemplate, "{{ balance }}") {
+		t.Fatalf("credit explainer template = %q, want balance placeholder", creditBody.Policy.CreditExplainerTemplate)
+	}
+	if !strings.Contains(creditBody.Policy.OverdrawnWarningTemplate, "benefit in kind") {
+		t.Fatalf("overdrawn warning template = %q, want pack BIK wording", creditBody.Policy.OverdrawnWarningTemplate)
+	}
 	if creditBody.SuggestedClearance != nil {
 		t.Fatalf("credit suggested_clearance = %#v, want omitted", creditBody.SuggestedClearance)
 	}
@@ -419,9 +428,12 @@ type dlaBalanceResponse struct {
 }
 
 type dlaPolicyResponse struct {
-	S455Charge    bool   `json:"s455_charge"`
-	BIKWarningKey string `json:"bik_warning_key"`
-	Remedy        string `json:"remedy"`
+	S455Charge               bool   `json:"s455_charge"`
+	CreditStatusText         string `json:"credit_status_text"`
+	CreditExplainerTemplate  string `json:"credit_explainer_template"`
+	BIKWarningKey            string `json:"bik_warning_key"`
+	OverdrawnWarningTemplate string `json:"overdrawn_warning_template"`
+	Remedy                   string `json:"remedy"`
 }
 
 type dlaEntryCreatedResponse struct {

@@ -701,8 +701,12 @@ filings:
     required_at_zero_rate: true
 director_loans:
   s455_charge: %t
+  credit:
+    status_text: Testland credit wording
+    explainer_template: Testland credit balance {{ balance }}
   overdrawn:
     warn: %s
+    warning_template: Testland overdrawn balance {{ balance }}
     remedy: %s
 advisor_rules:
   - id: test-rule

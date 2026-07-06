@@ -205,9 +205,20 @@ func validateFilings(file string, filings map[string]Filing) error {
 }
 
 func validateDLAPolicy(file string, value DLAPolicy) error {
+	creditPath := "director_loans.credit"
+	if strings.TrimSpace(value.Credit.StatusText) == "" {
+		return fieldError(file, creditPath+".status_text", "status_text", "must not be empty")
+	}
+	if strings.TrimSpace(value.Credit.ExplainerTemplate) == "" {
+		return fieldError(file, creditPath+".explainer_template", "explainer_template", "must not be empty")
+	}
+
 	path := "director_loans.overdrawn"
 	if strings.TrimSpace(value.Overdrawn.Warn) == "" {
 		return fieldError(file, path+".warn", "warn", "must not be empty")
+	}
+	if strings.TrimSpace(value.Overdrawn.WarningTemplate) == "" {
+		return fieldError(file, path+".warning_template", "warning_template", "must not be empty")
 	}
 	if strings.TrimSpace(value.Overdrawn.Remedy) == "" {
 		return fieldError(file, path+".remedy", "remedy", "must not be empty")

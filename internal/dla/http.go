@@ -65,9 +65,12 @@ type balanceResponse struct {
 }
 
 type policyResponse struct {
-	S455Charge    bool   `json:"s455_charge"`
-	BIKWarningKey string `json:"bik_warning_key"`
-	Remedy        string `json:"remedy"`
+	S455Charge               bool   `json:"s455_charge"`
+	CreditStatusText         string `json:"credit_status_text"`
+	CreditExplainerTemplate  string `json:"credit_explainer_template"`
+	BIKWarningKey            string `json:"bik_warning_key"`
+	OverdrawnWarningTemplate string `json:"overdrawn_warning_template"`
+	Remedy                   string `json:"remedy"`
 }
 
 type entryCreatedResponse struct {
@@ -429,9 +432,12 @@ func statusToResponse(status StatusPayload) balanceResponse {
 		Balance: moneyToResponse(status.Balance),
 		Status:  string(status.Status),
 		Policy: policyResponse{
-			S455Charge:    status.Policy.S455Charge,
-			BIKWarningKey: status.Policy.BIKWarningTextKey,
-			Remedy:        status.Policy.Remedy,
+			S455Charge:               status.Policy.S455Charge,
+			CreditStatusText:         status.Policy.CreditStatusText,
+			CreditExplainerTemplate:  status.Policy.CreditExplainerTemplate,
+			BIKWarningKey:            status.Policy.BIKWarningTextKey,
+			OverdrawnWarningTemplate: status.Policy.OverdrawnWarningTemplate,
+			Remedy:                   status.Policy.Remedy,
 		},
 	}
 	if status.Status == StatusOverdrawn {

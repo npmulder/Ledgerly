@@ -5,6 +5,15 @@ export type ApiQueryKey = readonly [
 ];
 
 export const queryKeys = {
+  dla: {
+    balance: (): ApiQueryKey => ["dla", "balance", {}],
+    ledger: (cursor: string | null = null): ApiQueryKey => [
+      "dla",
+      "ledger",
+      { cursor },
+    ],
+    ledgerPages: (): ApiQueryKey => ["dla", "ledgerPages", {}],
+  },
   identity: {
     me: (): ApiQueryKey => ["identity", "me", {}],
     profile: (): ApiQueryKey => ["identity", "profile", {}],

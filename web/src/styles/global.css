@@ -199,6 +199,130 @@
   gap: var(--layout-grid-gap-large);
 }
 
+.dla-screen,
+.dla-main,
+.dla-rail,
+.dla-entry-form {
+  display: grid;
+  align-content: start;
+  min-width: 0;
+  gap: var(--layout-grid-gap);
+}
+
+.dla-screen {
+  gap: var(--layout-grid-gap-large);
+}
+
+.dla-screen__header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: var(--layout-grid-gap);
+}
+
+.dla-screen__header > div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.dla-balance-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--layout-grid-gap);
+  min-width: 0;
+  padding: 13px 22px;
+  border: 1px solid var(--color-success-bg);
+  border-radius: var(--radius-card);
+  background: var(--color-success-tint);
+  color: var(--color-text);
+  font-size: var(--type-body-size);
+}
+
+.dla-balance-banner span {
+  min-width: 0;
+  font-weight: 700;
+}
+
+.dla-balance-banner strong {
+  color: var(--color-success);
+  font-size: 15px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.dla-balance-banner--overdrawn {
+  border-color: var(--color-warning-border);
+  background: var(--color-warning-callout);
+}
+
+.dla-balance-banner--overdrawn strong {
+  color: var(--color-warning);
+}
+
+.dla-advisor-slot:empty {
+  display: none;
+}
+
+.dla-ledger-table .ui-table {
+  min-width: 100%;
+}
+
+.dla-ledger-table .ui-table__cell--mono-numeric {
+  white-space: nowrap;
+}
+
+.dla-ledger-table__date {
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.dla-status-card .ui-card__body {
+  display: grid;
+  gap: 12px;
+}
+
+.dla-status-card--overdrawn {
+  border-color: var(--color-warning-border);
+  background: var(--color-warning-callout);
+}
+
+.dla-status-card--overdrawn .ui-card__body {
+  gap: 14px;
+}
+
+.dla-status-card--overdrawn .type-uppercase-label {
+  color: var(--color-warning);
+}
+
+.dla-status-card .ui-button {
+  justify-self: start;
+}
+
+.dla-status-card__headline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 15px;
+}
+
+.dla-status-card__dot {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 auto;
+  border-radius: var(--radius-pill);
+  background: var(--color-success);
+}
+
+.dla-entry-form {
+  grid-template-columns: 1fr;
+}
+
+.dla-entry-form .ui-button {
+  justify-self: start;
+}
+
 .settings-shell {
   display: grid;
   grid-template-columns: 224px minmax(0, 1fr);
@@ -690,6 +814,17 @@
   .app-split-main,
   .settings-shell {
     grid-template-columns: 1fr;
+  }
+
+  .dla-screen__header,
+  .dla-balance-banner {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .dla-screen__header .ui-button,
+  .dla-entry-form .ui-button {
+    width: 100%;
   }
 
   .company-logo-row {
