@@ -610,6 +610,114 @@
   justify-self: start;
 }
 
+.invoices-screen {
+  display: grid;
+  align-content: start;
+  min-width: 0;
+  gap: var(--layout-grid-gap-large);
+}
+
+.invoices-screen__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--layout-grid-gap);
+}
+
+.invoices-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.invoices-status-filters {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.invoices-status-filter {
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+}
+
+.invoices-search {
+  flex: 0 1 240px;
+}
+
+.invoices-advisor-strip:empty {
+  display: none;
+}
+
+.invoices-advisor-strip {
+  display: grid;
+  gap: 10px;
+}
+
+.invoices-advisor-strip__insight {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px 18px;
+  border: 1px solid var(--color-warning-border);
+  border-radius: var(--radius-input);
+  background: var(--color-warning-callout);
+  font-size: 13px;
+}
+
+.invoices-advisor-strip__insight > span:nth-child(2) {
+  min-width: 0;
+}
+
+.invoices-advisor-strip__dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: var(--radius-pill);
+  background: var(--color-warning);
+}
+
+.invoices-advisor-strip__insight[data-severity="opportunity"] {
+  border-color: var(--color-success-bg);
+  background: var(--color-success-tint);
+}
+
+.invoices-advisor-strip__insight[data-severity="opportunity"]
+  .invoices-advisor-strip__dot {
+  background: var(--color-teal);
+}
+
+.invoices-advisor-strip__insight .ui-button {
+  margin-left: auto;
+}
+
+.invoices-table .ui-table {
+  min-width: 940px;
+}
+
+.invoices-table .ui-table__cell--mono,
+.invoices-table .ui-table__cell--mono-numeric {
+  white-space: nowrap;
+}
+
+.invoices-table__issued {
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.invoices-table__footer-totals {
+  color: var(--color-text);
+  font-weight: 600;
+}
+
 .dla-status-card__headline {
   display: flex;
   align-items: center;
