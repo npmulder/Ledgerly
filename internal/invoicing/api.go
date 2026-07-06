@@ -130,6 +130,20 @@ type Client struct {
 	ArchivedAt      *time.Time   `json:"archived_at"`
 }
 
+// MatchCandidate is the public invoice fact shape used by banking's
+// deterministic match engine. It intentionally excludes draft invoices.
+type MatchCandidate struct {
+	InvoiceID  string
+	Number     string
+	ClientName string
+	IssueDate  time.Time
+	DueDate    time.Time
+	TermsDays  int
+	Amount     Money
+	Status     InvoiceStatus
+	Settled    bool
+}
+
 // FieldError points to an invalid JSON field in client commands.
 type FieldError struct {
 	Pointer string `json:"pointer"`
