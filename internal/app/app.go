@@ -20,6 +20,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/lib/pq"
 
+	"github.com/npmulder/ledgerly/internal/advisor"
 	"github.com/npmulder/ledgerly/internal/banking"
 	"github.com/npmulder/ledgerly/internal/dividends"
 	"github.com/npmulder/ledgerly/internal/dla"
@@ -81,6 +82,7 @@ type ModuleDeps struct {
 type Module struct {
 	HTTPModule      httpserver.Module
 	OpenAPIFragment httpserver.OpenAPIFragment
+	ReadAPI         any
 	SubscribeEvents func(*bus.Bus)
 	ScheduledJobs   []ScheduledJob
 }
@@ -152,6 +154,7 @@ type App struct {
 	MoneyFXPool     *pgxpool.Pool
 	InvoicingPool   *pgxpool.Pool
 	IdentityService *identity.Service
+	AdvisorFacts    advisor.FactRegistry
 
 	cron   *platformcron.Runner
 	jobs   map[string]Job
@@ -430,6 +433,28 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 	modules = append(modules, invoicingModule.HTTPModule)
 	fragments = append(fragments, invoicingModule.OpenAPIFragment)
 
+	factProviders := []advisor.RegisteredFactProvider{}
+	if invoicingRead, ok := invoicingModule.ReadAPI.(advisor.InvoicingReadAPI); ok {
+		factProviders = append(factProviders, advisor.RegisteredFactProvider{
+			Name:     invoicing.ModuleName,
+			Provider: advisor.NewInvoicingFactProvider(invoicingRead),
+		})
+	}
+	if dlaRead, ok := dlaModule.ReadAPI.(advisor.DLAReadAPI); ok {
+		factProviders = append(factProviders, advisor.RegisteredFactProvider{
+			Name:     dla.ModuleName,
+			Provider: advisor.NewDLAFactProvider(dlaRead),
+		})
+	}
+	factProviders = append(factProviders,
+		advisor.RegisteredFactProvider{Name: dividends.ModuleName, Provider: advisor.NewDividendsFactProvider(dividendsService)},
+		advisor.RegisteredFactProvider{Name: reports.ModuleName + ".vat", Provider: advisor.NewReportsVATFactProvider(reportsService)},
+		advisor.RegisteredFactProvider{Name: reports.ModuleName + ".filings", Provider: advisor.NewReportsFilingFactProvider(reportsService)},
+		advisor.RegisteredFactProvider{Name: moneyfx.ModuleName, Provider: advisor.NewMoneyFXFactProvider(moneyFXModule)},
+		advisor.RegisteredFactProvider{Name: "identity", Provider: advisor.NewIdentityFactProvider(identityProfile)},
+	)
+	advisorFacts := advisor.NewFactRegistry(factProviders...)
+
 	modules = append(modules, dashboardHTTPModule(dashboardDependencies{
 		clock:     clk,
 		ledger:    ledgerService,
@@ -486,6 +511,7 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		MoneyFXPool:     moneyFXPool,
 		InvoicingPool:   invoicingPool,
 		IdentityService: identityService,
+		AdvisorFacts:    advisorFacts,
 		cron:            cronRunner,
 		jobs:            copyJobs(deps.Jobs),
 		closer: func() error {
@@ -534,6 +560,7 @@ func buildLedgerModule(_ context.Context, deps ModuleDeps) (Module, error) {
 	return Module{
 		HTTPModule:      ledgerModule.HTTPModule(),
 		OpenAPIFragment: ledgerModule.OpenAPIFragment(),
+		ReadAPI:         ledgerModule,
 	}, nil
 }
 
@@ -550,6 +577,7 @@ func buildDLAModule(_ context.Context, deps ModuleDeps) (Module, error) {
 	return Module{
 		HTTPModule:      dlaModule.HTTPModule(),
 		OpenAPIFragment: dlaModule.OpenAPIFragment(),
+		ReadAPI:         dlaModule,
 	}, nil
 }
 
@@ -575,6 +603,7 @@ func buildInvoicingModule(_ context.Context, deps ModuleDeps) (Module, error) {
 	return Module{
 		HTTPModule:      invoicingModule.HTTPModule(),
 		OpenAPIFragment: invoicingModule.OpenAPIFragment(),
+		ReadAPI:         invoicingModule,
 		ScheduledJobs: []ScheduledJob{{
 			Name:     invoicing.OverdueSweepJobName,
 			Schedule: invoicing.OverdueSweepSchedule,

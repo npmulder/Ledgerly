@@ -683,6 +683,7 @@ tax:
   dividends:
     "2025-26":
       withholding: none
+      personal_tax_set_aside_template: 'set aside personally {{ estimate }}'
   vat:
     regime: test-shared
     authority: Testland Customs

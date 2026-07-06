@@ -9,19 +9,24 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"testing/fstest"
 	"time"
 
 	"github.com/npmulder/ledgerly/internal/dividends"
+	"github.com/npmulder/ledgerly/internal/dla"
 	"github.com/npmulder/ledgerly/internal/identity"
 	"github.com/npmulder/ledgerly/internal/invoicing"
+	"github.com/npmulder/ledgerly/internal/it"
 	"github.com/npmulder/ledgerly/internal/it/fixtures"
 	"github.com/npmulder/ledgerly/internal/it/harness"
 	"github.com/npmulder/ledgerly/internal/it/testdb"
 	"github.com/npmulder/ledgerly/internal/jurisdiction"
 	"github.com/npmulder/ledgerly/internal/ledger"
 	"github.com/npmulder/ledgerly/internal/moneyfx/money"
+	"github.com/npmulder/ledgerly/internal/platform/bus"
+	"github.com/npmulder/ledgerly/internal/platform/db"
 	"github.com/npmulder/ledgerly/internal/reports"
 )
 
@@ -168,6 +173,158 @@ func TestDividendsDeclaredInYearHarnessUsesCompanyYearEndBoundary(t *testing.T) 
 	}
 }
 
+func TestDividendsDeclareHarnessWritesDeclarationLedgerDLAAndEvent(t *testing.T) {
+	ctx := context.Background()
+	h := newDividendsHarness(t)
+	loadDividendsPack(t, "")
+	postRetainedEarnings(t, h, "2025-03-31", 2_000_000)
+	service := newDividendsService(t, h)
+	events := subscribeDividendDeclared(t, h)
+
+	declaration, err := service.Declare(ctx, harnessMoney(123_400))
+	if err != nil {
+		t.Fatalf("Declare() error = %v", err)
+	}
+
+	if declaration.Amount != harnessMoney(123_400) {
+		t.Fatalf("Declaration.Amount = %+v, want 123400 GBP", declaration.Amount)
+	}
+	if declaration.PerShare.Amount*declaration.Shares != declaration.Amount.Amount {
+		t.Fatalf("per-share total = %d * %d, want %d", declaration.PerShare.Amount, declaration.Shares, declaration.Amount.Amount)
+	}
+	if declaration.ShareholderName != "N. Meyer" || declaration.Shares != 100 {
+		t.Fatalf("shareholder snapshot = %q/%d, want N. Meyer/100", declaration.ShareholderName, declaration.Shares)
+	}
+
+	history, err := service.History(ctx)
+	if err != nil {
+		t.Fatalf("History() error = %v", err)
+	}
+	if len(history) != 1 || history[0].ID != declaration.ID {
+		t.Fatalf("History() = %#v, want declaration %s", history, declaration.ID)
+	}
+
+	sourceRef := "dividends:" + string(declaration.ID)
+	assertDividendLedgerEntry(t, ctx, h, sourceRef, 123_400)
+	assertDividendDLAEntryAndConsistency(t, ctx, h, sourceRef, 123_400)
+	assertDividendDeclaredEvent(t, events, declaration.ID, 123_400)
+	it.AssertLedgerBalanced(t, h)
+}
+
+func TestDividendsDeclareRejectsOverHeadroomWithoutWrites(t *testing.T) {
+	ctx := context.Background()
+	h := newDividendsHarness(t)
+	loadDividendsPack(t, "")
+	postRetainedEarnings(t, h, "2025-03-31", 100_000)
+	service := newDividendsService(t, h)
+
+	_, err := service.Declare(ctx, harnessMoney(100_001))
+	if !errors.Is(err, dividends.ErrOverHeadroom) {
+		t.Fatalf("Declare(over headroom) error = %v, want ErrOverHeadroom", err)
+	}
+	if !strings.Contains(err.Error(), "£1,000.00") {
+		t.Fatalf("over-headroom error = %q, want distributable figure", err)
+	}
+
+	assertCountWhere(t, ctx, h.DB, "dividends.declarations", "true", 0)
+	assertCountWhere(t, ctx, h.DB, "ledger.journal_entries", "source_module = 'dividends'", 0)
+	assertCountWhere(t, ctx, h.DB, "dla.dla_entries", "source LIKE 'dividends:%'", 0)
+	it.AssertLedgerBalanced(t, h)
+}
+
+func TestDividendsDeclareTypedValidationFailures(t *testing.T) {
+	ctx := context.Background()
+	h := newDividendsHarness(t)
+	loadDividendsPack(t, "")
+	service := newDividendsService(t, h)
+
+	if _, err := service.Validate(ctx, harnessMoney(0)); !errors.Is(err, dividends.ErrNonPositiveAmount) {
+		t.Fatalf("Validate(non-positive) error = %v, want ErrNonPositiveAmount", err)
+	}
+
+	postExpense(t, h, "2025-05-10", 100_000)
+	_, err := service.Declare(ctx, harnessMoney(1_000))
+	if !errors.Is(err, dividends.ErrNonDistributableYear) {
+		t.Fatalf("Declare(non-distributable year) error = %v, want ErrNonDistributableYear", err)
+	}
+	assertCountWhere(t, ctx, h.DB, "dividends.declarations", "true", 0)
+	it.AssertLedgerBalanced(t, h)
+}
+
+func TestDividendsDeclareConcurrentRaceAllowsOneWinner(t *testing.T) {
+	ctx := context.Background()
+	h := newDividendsHarness(t)
+	loadDividendsPack(t, "")
+	postRetainedEarnings(t, h, "2025-03-31", 100_000)
+	service := newDividendsService(t, h)
+
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, err := service.Declare(ctx, harnessMoney(70_000))
+			errs <- err
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+
+	successes := 0
+	overHeadroom := 0
+	for err := range errs {
+		switch {
+		case err == nil:
+			successes++
+		case errors.Is(err, dividends.ErrOverHeadroom):
+			overHeadroom++
+		default:
+			t.Fatalf("concurrent Declare() unexpected error = %v", err)
+		}
+	}
+	if successes != 1 || overHeadroom != 1 {
+		t.Fatalf("concurrent Declare() successes=%d overHeadroom=%d, want 1/1", successes, overHeadroom)
+	}
+	assertCountWhere(t, ctx, h.DB, "dividends.declarations", "true", 1)
+	assertCountWhere(t, ctx, h.DB, "ledger.journal_entries", "source_module = 'dividends'", 1)
+	assertCountWhere(t, ctx, h.DB, "dla.dla_entries", "source LIKE 'dividends:%'", 1)
+	dlaService := dla.NewWithBusAndClock(h.DLAPool, h.Bus, h.Clock, ledger.New(h.LedgerPool, h.Bus))
+	if report, err := dlaService.CheckConsistency(ctx, h.Clock.Now()); err != nil || !report.Consistent {
+		t.Fatalf("DLA CheckConsistency() report=%+v error=%v, want consistent", report, err)
+	}
+	it.AssertLedgerBalanced(t, h)
+}
+
+func TestDividendsValidateMarginalPersonalTaxAcrossAllowanceBoundary(t *testing.T) {
+	ctx := context.Background()
+	h := newDividendsHarness(t)
+	loadDividendsPack(t, "")
+	postRetainedEarnings(t, h, "2025-03-31", 2_000_000)
+	insertDeclaration(t, h, "div-prior-ytd", "2025-06-01", 1_470_000)
+	service := newDividendsService(t, h)
+
+	result, err := service.Validate(ctx, harnessMoney(20_000))
+	if err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+	assertHarnessMoney(t, result.PersonalTax.PriorYTD, 1_470_000)
+	assertHarnessMoney(t, result.PersonalTax.WithDividend, 1_490_000)
+	assertHarnessMoney(t, result.PersonalTax.PriorEstimate.Total, 0)
+	assertHarnessMoney(t, result.PersonalTax.TotalEstimate.Taxable, 15_000)
+	assertHarnessMoney(t, result.PersonalTax.TotalEstimate.PerBand[0].Amount, 1_500)
+	assertHarnessMoney(t, result.PersonalTax.Marginal, 1_500)
+	if !strings.Contains(result.PersonalTax.Message, "£15.00") {
+		t.Fatalf("PersonalTax.Message = %q, want £15.00 set-aside", result.PersonalTax.Message)
+	}
+	if result.Withholding.Policy != "none" || result.Withholding.Applies {
+		t.Fatalf("Withholding = %#v, want no withholding informational policy", result.Withholding)
+	}
+}
+
 func newDividendsHarness(t testing.TB) *harness.Harness {
 	t.Helper()
 
@@ -189,6 +346,8 @@ func newDividendsService(t testing.TB, h *harness.Harness) *dividends.Service {
 		ledgerService,
 		reportsService,
 		identityService,
+		dividends.WithDLA(dla.NewWithBusAndClock(h.DLAPool, h.Bus, h.Clock, ledgerService)),
+		dividends.WithBus(h.Bus),
 		dividends.WithClock(h.Clock),
 	)
 }
@@ -312,6 +471,105 @@ func assertDateString(t testing.TB, got time.Time, want string) {
 
 	if got.Format(time.DateOnly) != want {
 		t.Fatalf("date = %s, want %s", got.Format(time.DateOnly), want)
+	}
+}
+
+func subscribeDividendDeclared(t testing.TB, h *harness.Harness) <-chan dividends.Declared {
+	t.Helper()
+
+	events := make(chan dividends.Declared, 4)
+	h.Bus.Subscribe(dividends.DeclaredName, func(_ context.Context, _ db.Tx, event bus.Event) error {
+		declared, ok := event.(dividends.Declared)
+		if !ok {
+			return errors.New("unexpected dividend declared event payload")
+		}
+		events <- declared
+		return nil
+	})
+	return events
+}
+
+func assertDividendDeclaredEvent(
+	t testing.TB,
+	events <-chan dividends.Declared,
+	wantID dividends.DeclarationID,
+	wantAmount int64,
+) {
+	t.Helper()
+
+	select {
+	case event := <-events:
+		if event.DeclarationID != wantID || event.Amount != harnessMoney(wantAmount) {
+			t.Fatalf("Declared event = %#v, want id %s amount %d", event, wantID, wantAmount)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for dividends.Declared event")
+	}
+}
+
+func assertDividendLedgerEntry(t testing.TB, ctx context.Context, h *harness.Harness, sourceRef string, amount int64) {
+	t.Helper()
+
+	entries, err := ledger.New(h.LedgerPool, h.Bus).Entries(ctx, ledger.EntryFilter{
+		SourceModule: dividends.ModuleName,
+		Limit:        10,
+	})
+	if err != nil {
+		t.Fatalf("ledger Entries() error = %v", err)
+	}
+	var entry *ledger.JournalEntry
+	for i := range entries {
+		if entries[i].SourceRef == sourceRef {
+			entry = &entries[i]
+			break
+		}
+	}
+	if entry == nil {
+		t.Fatalf("dividend ledger entry source %q not found in %#v", sourceRef, entries)
+	}
+	if entry.Description != "Dividend declared" {
+		t.Fatalf("ledger entry description = %q, want Dividend declared", entry.Description)
+	}
+
+	postings := map[ledger.AccountCode]ledger.Posting{}
+	for _, posting := range entry.Postings {
+		postings[posting.AccountCode] = posting
+	}
+	assertPostingMoney(t, postings[dividends.RetainedEarningsAccountCode], amount)
+	assertPostingMoney(t, postings[dla.DLAAccountCode], -amount)
+}
+
+func assertPostingMoney(t testing.TB, posting ledger.Posting, wantAmount int64) {
+	t.Helper()
+
+	want := harnessMoney(wantAmount)
+	if posting.Amount != want || posting.AmountGBP != want {
+		t.Fatalf("posting = %+v, want amount and amount_gbp %+v", posting, want)
+	}
+}
+
+func assertDividendDLAEntryAndConsistency(t testing.TB, ctx context.Context, h *harness.Harness, sourceRef string, amount int64) {
+	t.Helper()
+
+	dlaService := dla.NewWithBusAndClock(h.DLAPool, h.Bus, h.Clock, ledger.New(h.LedgerPool, h.Bus))
+	entries, err := dlaService.Ledger(ctx, dla.LedgerFilter{})
+	if err != nil {
+		t.Fatalf("DLA Ledger() error = %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("DLA entries = %#v, want exactly one dividend credit", entries)
+	}
+	entry := entries[0]
+	if entry.Kind != dla.EntryKindExpenseOwed || entry.Source != sourceRef || entry.Description != "Dividend declared" {
+		t.Fatalf("DLA entry = %#v, want dividend external credit source %q", entry, sourceRef)
+	}
+	assertHarnessMoney(t, entry.Amount, amount)
+	assertHarnessMoney(t, entry.RunningBalance, amount)
+	if entry.BalanceSide != dla.BalanceSideCredit {
+		t.Fatalf("DLA balance side = %s, want CR", entry.BalanceSide)
+	}
+	if report, err := dlaService.CheckConsistency(ctx, h.Clock.Now()); err != nil || !report.Consistent {
+		t.Fatalf("DLA CheckConsistency() report=%+v error=%v, want consistent", report, err)
 	}
 }
 

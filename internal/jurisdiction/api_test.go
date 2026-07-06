@@ -67,6 +67,18 @@ func TestIsleOfManAccessorsReturnHandoffValues2025_26(t *testing.T) {
 			},
 		},
 		{
+			name: "dividend personal tax set-aside message",
+			check: func(t *testing.T) {
+				got, err := DividendPersonalTaxSetAsideMessage("2025-26", Money{Amount: 1_500, Currency: "GBP"})
+				if err != nil {
+					t.Fatalf("DividendPersonalTaxSetAsideMessage() error = %v", err)
+				}
+				if got != "set aside personally £15.00" {
+					t.Fatalf("DividendPersonalTaxSetAsideMessage() = %q, want set aside personally £15.00", got)
+				}
+			},
+		},
+		{
 			name: "VAT standard rate",
 			check: func(t *testing.T) {
 				got, err := VATStandardRate("2025-26")
@@ -305,6 +317,13 @@ func TestTaxYearAccessorsReturnTypedErrorForUnknownTaxYear(t *testing.T) {
 			},
 		},
 		{
+			name: "dividend personal tax set-aside message",
+			call: func() error {
+				_, err := DividendPersonalTaxSetAsideMessage("2099-00", Money{Amount: 1, Currency: "GBP"})
+				return err
+			},
+		},
+		{
 			name: "VAT standard rate",
 			call: func() error {
 				_, err := VATStandardRate("2099-00")
@@ -365,6 +384,21 @@ func TestTaxYearForDateUsesActivePackYearEnd(t *testing.T) {
 				t.Fatalf("TaxYearForDate() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestTaxYearPeriodUsesActivePackYearEnd(t *testing.T) {
+	loadIsleOfManForAccessors(t)
+
+	from, to, err := TaxYearPeriod("2025-26")
+	if err != nil {
+		t.Fatalf("TaxYearPeriod() error = %v", err)
+	}
+	if got := from.Format(time.DateOnly); got != "2025-04-06" {
+		t.Fatalf("TaxYearPeriod() from = %s, want 2025-04-06", got)
+	}
+	if got := to.Format(time.DateOnly); got != "2026-04-05" {
+		t.Fatalf("TaxYearPeriod() to = %s, want 2026-04-05", got)
 	}
 }
 
