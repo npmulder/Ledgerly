@@ -29,9 +29,13 @@ of Man pack fact queries that pre-date collection expansion.
 | `invoice_number` | `string` | invoicing compatibility binding from `invoices.overdue[].number` | `overdue_invoice` |
 | `balance` | `money.Money` | dla compatibility binding from `dla.balance` | `dla_overdrawn_bik` |
 | `status` | `string` | dla compatibility binding from `dla.status` | `dla_overdrawn_bik` |
+| `clearance_amount` | `money.Money` | dla compatibility binding from `dla.suggestedClearance` | `dla_overdrawn_bik` |
+| `clearance_amount_minor_units` | `int64` | dla compatibility binding from `dla.suggestedClearance` | `dla_overdrawn_bik` |
 | `authority` | `string` | reports compatibility binding from `filings[].authority` | `filing_deadline_window` |
 | `due_date` | `date` | reports compatibility binding from `filings[].dueDate` | `filing_deadline_window` |
 | `filing_name` | `string` | reports compatibility binding from `filings[].label` | `filing_deadline_window` |
+| `dividend_headroom` | `money.Money` | dividends compatibility binding from `dividends.headroom` | `dividend_set_aside` |
+| `headroom_minor_units` | `int64` | dividends compatibility binding from `dividends.headroom` | `dividend_set_aside` |
 | `dividends_ytd` | `money.Money` | dividends compatibility binding from declared dividends YTD | `dividend_set_aside` |
 | `estimate` | `money.Money` | dividends compatibility binding from personal-tax estimate | `dividend_set_aside` |
 | `estimate_minor_units` | `int64` | dividends compatibility binding from personal-tax estimate | `dividend_set_aside` |

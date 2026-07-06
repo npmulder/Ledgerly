@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/npmulder/ledgerly/internal/platform/db"
@@ -22,15 +23,30 @@ type Store struct{}
 // Apply persists an Evaluate delta idempotently and resolves active insights
 // for evaluated rules that no longer fire.
 func (Store) Apply(ctx context.Context, tx db.Tx, delta Delta) error {
+	_, err := (Store{}).ApplyWithSummary(ctx, tx, delta)
+	return err
+}
+
+// ApplyWithSummary persists an Evaluate delta and returns audit counts for the
+// evaluation run log.
+func (Store) ApplyWithSummary(ctx context.Context, tx db.Tx, delta Delta) (ApplySummary, error) {
 	now := delta.GeneratedAt.UTC()
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
 
+	var summary ApplySummary
 	firedByRule := make(map[string][]string)
 	for _, insight := range delta.Insights {
+		exists, err := insightExists(ctx, tx, insight.Key)
+		if err != nil {
+			return ApplySummary{}, err
+		}
 		if err := upsertInsight(ctx, tx, insight); err != nil {
-			return err
+			return ApplySummary{}, err
+		}
+		if !exists {
+			summary.InsightsCreated++
 		}
 		firedByRule[insight.RuleID] = append(firedByRule[insight.RuleID], string(insight.Key))
 	}
@@ -38,7 +54,7 @@ func (Store) Apply(ctx context.Context, tx db.Tx, delta Delta) error {
 	for _, ruleID := range delta.EvaluatedRuleIDs {
 		firedKeys := firedByRule[ruleID]
 		if len(firedKeys) == 0 {
-			if _, err := tx.Exec(ctx, `
+			tag, err := tx.Exec(ctx, `
 UPDATE advisor.insights
 SET resolved_at = $2,
 	resolution = $3,
@@ -48,14 +64,16 @@ WHERE rule_id = $1
 				ruleID,
 				now,
 				ResolutionNoLongerFiring,
-			); err != nil {
-				return fmt.Errorf("advisor: resolve inactive rule %s: %w", ruleID, err)
+			)
+			if err != nil {
+				return ApplySummary{}, fmt.Errorf("advisor: resolve inactive rule %s: %w", ruleID, err)
 			}
+			summary.InsightsResolved += int(tag.RowsAffected())
 			continue
 		}
 
 		supersededBy := firedKeys[0]
-		if _, err := tx.Exec(ctx, `
+		tag, err := tx.Exec(ctx, `
 UPDATE advisor.insights
 SET resolved_at = $2,
 	resolution = $3,
@@ -68,12 +86,14 @@ WHERE rule_id = $1
 			ResolutionSuperseded,
 			supersededBy,
 			firedKeys,
-		); err != nil {
-			return fmt.Errorf("advisor: resolve superseded rule %s: %w", ruleID, err)
+		)
+		if err != nil {
+			return ApplySummary{}, fmt.Errorf("advisor: resolve superseded rule %s: %w", ruleID, err)
 		}
+		summary.InsightsSuperseded += int(tag.RowsAffected())
 	}
 
-	return nil
+	return summary, nil
 }
 
 // Dismiss suppresses one active insight key until its facts change and produce
@@ -209,6 +229,86 @@ WHERE advisor.insights.resolved_at IS NOT NULL
 		return fmt.Errorf("advisor: upsert insight %s: %w", insight.Key, err)
 	}
 	return nil
+}
+
+func insightExists(ctx context.Context, tx db.Tx, key InsightKey) (bool, error) {
+	var exists bool
+	if err := tx.QueryRow(ctx, `
+SELECT EXISTS (
+	SELECT 1
+	FROM advisor.insights
+	WHERE key = $1
+)`, string(key)).Scan(&exists); err != nil {
+		return false, fmt.Errorf("advisor: check insight %s existence: %w", key, err)
+	}
+	return exists, nil
+}
+
+// InsertEvaluationRun records one whole-set evaluation attempt.
+func (Store) InsertEvaluationRun(ctx context.Context, tx db.Tx, run EvaluationRun) (EvaluationRun, error) {
+	trigger := strings.TrimSpace(run.Trigger)
+	if trigger == "" {
+		trigger = "unknown"
+	}
+	startedAt := run.StartedAt.UTC()
+	if startedAt.IsZero() {
+		startedAt = time.Now().UTC()
+	}
+	finishedAt := run.FinishedAt.UTC()
+	if finishedAt.IsZero() {
+		finishedAt = startedAt.Add(run.Duration)
+	}
+	duration := run.Duration
+	if duration < 0 {
+		duration = 0
+	}
+	if run.Warnings == nil {
+		run.Warnings = []Warning{}
+	}
+	warnings, err := json.Marshal(run.Warnings)
+	if err != nil {
+		return EvaluationRun{}, fmt.Errorf("advisor: marshal evaluation run warnings: %w", err)
+	}
+	if err := tx.QueryRow(ctx, `
+INSERT INTO advisor.evaluation_runs (
+	trigger,
+	started_at,
+	finished_at,
+	duration_ms,
+	insights_created,
+	insights_superseded,
+	insights_resolved,
+	error,
+	warnings
+) VALUES (
+	$1,
+	$2,
+	$3,
+	$4,
+	$5,
+	$6,
+	$7,
+	NULLIF($8, ''),
+	$9::jsonb
+)
+RETURNING id`,
+		trigger,
+		startedAt,
+		finishedAt,
+		duration.Milliseconds(),
+		run.InsightsCreated,
+		run.InsightsSuperseded,
+		run.InsightsResolved,
+		strings.TrimSpace(run.Error),
+		string(warnings),
+	).Scan(&run.ID); err != nil {
+		return EvaluationRun{}, fmt.Errorf("advisor: insert evaluation run: %w", err)
+	}
+	run.Trigger = trigger
+	run.StartedAt = startedAt
+	run.FinishedAt = finishedAt
+	run.Duration = duration
+	return run, nil
 }
 
 func scanInsight(row insightScanner) (Insight, error) {

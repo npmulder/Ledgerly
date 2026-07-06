@@ -42,10 +42,11 @@ func TestECBFetcherHappyPathStoresRatesIncludingUnknownCurrency(t *testing.T) {
 	t.Parallel()
 
 	store := newMemoryECBStore()
+	eventBus, events := ratesUpdatedCaptureBus(t)
 	server := fixtureServer(t, http.StatusOK, "testdata/eurofxref-daily-unknown.xml")
 	defer server.Close()
 
-	fetcher := newTestFetcher(t, store, server, nil, clock.NewFake(time.Date(2030, 1, 2, 16, 20, 0, 0, time.UTC)))
+	fetcher := newTestFetcher(t, store, server, eventBus, clock.NewFake(time.Date(2030, 1, 2, 16, 20, 0, 0, time.UTC)))
 	if err := fetcher.Run(context.Background()); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
@@ -62,6 +63,12 @@ func TestECBFetcherHappyPathStoresRatesIncludingUnknownCurrency(t *testing.T) {
 	}
 	if _, ok := store.rate(time.Date(2030, 1, 2, 0, 0, 0, 0, time.UTC), "XBT"); !ok {
 		t.Fatal("unknown XBT rate was not stored")
+	}
+	if len(*events) != 1 {
+		t.Fatalf("rates updated events = %d, want 1", len(*events))
+	}
+	if got := (*events)[0].RateDate.Format(time.DateOnly); got != "2030-01-02" {
+		t.Fatalf("RatesUpdated.RateDate = %s, want 2030-01-02", got)
 	}
 }
 
@@ -285,6 +292,22 @@ func staleCaptureBus(t *testing.T) (*bus.Bus, *[]RatesStale) {
 			return errors.New("unexpected event")
 		}
 		events = append(events, stale)
+		return nil
+	})
+	return eventBus, &events
+}
+
+func ratesUpdatedCaptureBus(t *testing.T) (*bus.Bus, *[]RatesUpdated) {
+	t.Helper()
+
+	var events []RatesUpdated
+	eventBus := bus.New()
+	eventBus.Subscribe(RatesUpdatedName, func(_ context.Context, _ db.Tx, evt bus.Event) error {
+		updated, ok := evt.(RatesUpdated)
+		if !ok {
+			return errors.New("unexpected event")
+		}
+		events = append(events, updated)
 		return nil
 	})
 	return eventBus, &events

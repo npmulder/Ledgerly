@@ -121,6 +121,7 @@ type Dependencies struct {
 	LedgerPool    *pgxpool.Pool
 	MoneyFXPool   *pgxpool.Pool
 	InvoicingPool *pgxpool.Pool
+	AdvisorPool   *pgxpool.Pool
 
 	Bus        *bus.Bus
 	BusOptions []bus.Option
@@ -146,6 +147,8 @@ type Dependencies struct {
 	DividendsPDFEngine     dividends.DividendDocumentPDFEngine
 	DividendsPDFBaseURL    string
 
+	AdvisorOptions []advisor.ServiceOption
+
 	JurisdictionLoader func(string) error
 
 	ModuleBuilders map[string]ModuleBuilder
@@ -170,8 +173,10 @@ type App struct {
 	LedgerPool      *pgxpool.Pool
 	MoneyFXPool     *pgxpool.Pool
 	InvoicingPool   *pgxpool.Pool
+	AdvisorPool     *pgxpool.Pool
 	IdentityService *identity.Service
 	AdvisorFacts    advisor.FactRegistry
+	Advisor         *advisor.Service
 
 	cron   *platformcron.Runner
 	jobs   map[string]Job
@@ -235,6 +240,10 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		return nil, err
 	}
 	invoicingPool, err := modulePool(ctx, cfg.Runtime.DatabaseURL, invoicing.ModuleName, deps.InvoicingPool, openPool, &closeFuncs)
+	if err != nil {
+		return nil, err
+	}
+	advisorPool, err := modulePool(ctx, cfg.Runtime.DatabaseURL, advisor.ModuleName, deps.AdvisorPool, openPool, &closeFuncs)
 	if err != nil {
 		return nil, err
 	}
@@ -538,6 +547,30 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		advisor.RegisteredFactProvider{Name: "identity", Provider: advisor.NewIdentityFactProvider(identityProfile)},
 	)
 	advisorFacts := advisor.NewFactRegistry(factProviders...)
+	advisorOptions := []advisor.ServiceOption{
+		advisor.WithClock(clk),
+		advisor.WithLogger(logger),
+	}
+	advisorOptions = append(advisorOptions, deps.AdvisorOptions...)
+	advisorService, err := advisor.NewService(advisor.ServiceConfig{
+		Pool:  advisorPool,
+		Facts: advisorFacts,
+	}, advisorOptions...)
+	if err != nil {
+		return nil, err
+	}
+	if err := cronRunner.Register(advisor.EvaluateJobName, advisor.EvaluateSchedule, func(ctx context.Context) error {
+		_, err := advisorService.RunEvaluation(ctx, advisor.EvaluateJobName)
+		return err
+	}); err != nil {
+		return nil, err
+	}
+	subscribeAdvisorTriggers(eventBus, advisorService)
+	stopAdvisorListener, err := advisorService.StartPostCommitListener(ctx)
+	if err != nil {
+		return nil, err
+	}
+	closeFuncs = append(closeFuncs, stopAdvisorListener)
 
 	modules = append(modules, dashboardHTTPModule(dashboardDependencies{
 		clock:     clk,
@@ -594,8 +627,10 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		LedgerPool:      ledgerPool,
 		MoneyFXPool:     moneyFXPool,
 		InvoicingPool:   invoicingPool,
+		AdvisorPool:     advisorPool,
 		IdentityService: identityService,
 		AdvisorFacts:    advisorFacts,
+		Advisor:         advisorService,
 		cron:            cronRunner,
 		jobs:            copyJobs(deps.Jobs),
 		closer: func() error {
@@ -729,6 +764,29 @@ func registerScheduledJobs(runner *platformcron.Runner, jobs []ScheduledJob) err
 		}
 	}
 	return nil
+}
+
+func subscribeAdvisorTriggers(eventBus *bus.Bus, service *advisor.Service) {
+	if eventBus == nil || service == nil {
+		return
+	}
+	for _, eventName := range []string{
+		invoicing.InvoiceOverdueName,
+		invoicing.InvoiceSettledName,
+		dla.WentOverdrawnName,
+		dla.BackInCreditName,
+		dividends.DeclaredName,
+		ledger.EntryPostedName,
+		moneyfx.RatesStaleName,
+		moneyfx.RatesUpdatedName,
+		identity.ProfileUpdatedEventName,
+	} {
+		eventName := eventName
+		eventBus.Subscribe(eventName, func(ctx context.Context, tx db.Tx, _ bus.Event) error {
+			service.TriggerAfterCommit(ctx, tx, eventName)
+			return nil
+		})
+	}
 }
 
 type invoicingMoneyFXLocker struct {
@@ -1142,6 +1200,22 @@ func (a *App) RunJob(ctx context.Context, name string) error {
 		return fmt.Errorf("app: unknown job %q", name)
 	}
 	return job(ctx)
+}
+
+// RefreshAdvisorNow runs the manual advisor refresh entry point.
+func (a *App) RefreshAdvisorNow(ctx context.Context) (advisor.EvaluationRun, error) {
+	if a == nil || a.Advisor == nil {
+		return advisor.EvaluationRun{}, fmt.Errorf("app: advisor is not configured")
+	}
+	return a.Advisor.RefreshNow(ctx)
+}
+
+// WaitAdvisorIdle waits for debounced advisor work to drain.
+func (a *App) WaitAdvisorIdle(ctx context.Context) error {
+	if a == nil || a.Advisor == nil {
+		return nil
+	}
+	return a.Advisor.WaitIdle(ctx)
 }
 
 // OpenPoolWithRetry opens a module pool, retrying until ctx is cancelled.
