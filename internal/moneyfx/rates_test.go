@@ -138,6 +138,28 @@ func TestServiceTodayRateReturnsLatestRateAndFetchTimestamp(t *testing.T) {
 	assertRat(t, rate, "4/5")
 }
 
+func TestServiceRateStalenessReturnsStaleLatestDate(t *testing.T) {
+	t.Parallel()
+
+	lastDate := time.Date(2030, 1, 2, 0, 0, 0, 0, time.UTC)
+	service := newTestRateService(t, lastDate)
+	service.clock = clock.NewFake(time.Date(2030, 1, 7, 12, 0, 0, 0, time.UTC))
+
+	staleness, err := service.RateStaleness(context.Background())
+	if err != nil {
+		t.Fatalf("RateStaleness() error = %v", err)
+	}
+	if staleness.LastDate == nil || !staleness.LastDate.Equal(lastDate) {
+		t.Fatalf("LastDate = %v, want %s", staleness.LastDate, lastDate.Format(time.DateOnly))
+	}
+	if !staleness.Stale {
+		t.Fatal("Stale = false, want true")
+	}
+	if staleness.StaleDays != 5 {
+		t.Fatalf("StaleDays = %d, want 5", staleness.StaleDays)
+	}
+}
+
 func TestServiceRateOnErrNoRateBeyondLookback(t *testing.T) {
 	t.Parallel()
 

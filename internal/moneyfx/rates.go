@@ -35,6 +35,13 @@ type Rate struct {
 	Source   string    `json:"source"`
 }
 
+// RateStaleness is the advisor-facing read model for ECB rate freshness.
+type RateStaleness struct {
+	LastDate  *time.Time
+	Stale     bool
+	StaleDays int
+}
+
 // Rat parses the exact rate value for use with money.MulRat.
 func (r Rate) Rat() (*big.Rat, error) {
 	value := strings.TrimSpace(r.Value)
@@ -166,6 +173,51 @@ func (s *Service) TodayRate(ctx context.Context, from string, to string) (Rate, 
 		return Rate{}, time.Time{}, err
 	}
 	return rate, fetchedAt, nil
+}
+
+// RateStaleness returns the latest stored ECB rate date and whether that date
+// is stale under the same rule used by the ECB fetcher.
+func (s *Service) RateStaleness(ctx context.Context) (RateStaleness, error) {
+	if err := ctx.Err(); err != nil {
+		return RateStaleness{}, err
+	}
+	if s == nil || s.store == nil {
+		return RateStaleness{}, fmt.Errorf("moneyfx: rate store is required")
+	}
+	lastDate, ok, err := s.store.LatestRateDate(ctx)
+	if err != nil {
+		return RateStaleness{}, err
+	}
+	if !ok {
+		return RateStaleness{Stale: true, StaleDays: 1}, nil
+	}
+	normalized := normalizeRateDate(lastDate)
+	now := s.nowUTC()
+	stale := ratesAreStale(normalized, now, ECBLocation())
+	return RateStaleness{
+		LastDate:  &normalized,
+		Stale:     stale,
+		StaleDays: staleDayCount(normalized, now, ECBLocation(), stale),
+	}, nil
+}
+
+func staleDayCount(lastDate time.Time, now time.Time, location *time.Location, stale bool) int {
+	if !stale {
+		return 0
+	}
+	if location == nil {
+		location = time.UTC
+	}
+	today := civilDateIn(now, location)
+	last := civilDateIn(lastDate, location)
+	if !today.After(last) {
+		return 1
+	}
+	days := int(today.Sub(last).Hours() / 24)
+	if days < 1 {
+		return 1
+	}
+	return days
 }
 
 // ToGBP converts m into GBP using the ECB rate for date. GBP inputs are already

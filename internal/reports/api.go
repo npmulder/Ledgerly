@@ -77,12 +77,13 @@ const (
 
 // Filing is one filing-calendar row enriched for reports and advisor facts.
 type Filing struct {
-	Key       string
-	Label     string
-	Authority string
-	DueDate   time.Time
-	DaysUntil int
-	Status    FilingStatus
+	Key        string
+	Label      string
+	Authority  string
+	DueDate    time.Time
+	DaysUntil  int
+	Status     FilingStatus
+	WarnWindow int
 }
 
 // VATFigures are the VAT return boxes needed for manual IoM filing in v1.
@@ -106,6 +107,8 @@ type VATPosition struct {
 type Reports interface {
 	ProfitAndLoss(context.Context, Period) (PL, error)
 	ProfitYTD(context.Context, string) (money.Money, error)
+	VATPosition(context.Context) (VATPosition, error)
+	FilingCalendarContext(context.Context) ([]Filing, error)
 }
 
 type Ledger interface {
