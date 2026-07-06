@@ -118,7 +118,7 @@ func (s *Service) runMatchEngineTx(ctx context.Context, tx db.Tx, trigger MatchE
 			continue
 		}
 		input := decision.input
-		canWrite, err := s.canWriteMatchEngineSuggestion(ctx, tx, txn.ID)
+		lockedTxn, canWrite, err := s.canWriteMatchEngineSuggestion(ctx, tx, txn.ID)
 		if err != nil {
 			return MatchEngineRun{}, err
 		}
@@ -137,7 +137,7 @@ func (s *Service) runMatchEngineTx(ctx context.Context, tx db.Tx, trigger MatchE
 					return MatchEngineRun{}, err
 				}
 			}
-			input = payeeRuleSuggestionInput(txn.ID, rule, s.payeeRuleAutoPostThreshold)
+			input = payeeRuleSuggestionInput(lockedTxn.ID, rule, s.payeeRuleAutoPostThreshold)
 		}
 		input.CreatedBy = matchEngineCreatedBy(run.ID)
 		suggestion, err := s.store.InsertSuggestion(ctx, tx, input)
@@ -149,18 +149,24 @@ func (s *Service) runMatchEngineTx(ctx context.Context, tx db.Tx, trigger MatchE
 	return run, nil
 }
 
-func (s *Service) canWriteMatchEngineSuggestion(ctx context.Context, tx db.Tx, txnID TransactionID) (bool, error) {
-	if _, err := s.store.TransactionForUpdate(ctx, tx, txnID); err != nil {
-		return false, err
+func (s *Service) canWriteMatchEngineSuggestion(ctx context.Context, tx db.Tx, txnID TransactionID) (Transaction, bool, error) {
+	txn, err := s.store.TransactionForUpdate(ctx, tx, txnID)
+	if err != nil {
+		return Transaction{}, false, err
+	}
+	switch txn.State {
+	case TransactionStateUnreconciled, TransactionStateSuggested:
+	default:
+		return txn, false, nil
 	}
 	active, err := s.store.ActiveSuggestion(ctx, tx, txnID)
 	if err != nil {
 		if errors.Is(err, ErrSuggestionNotFound) {
-			return true, nil
+			return txn, true, nil
 		}
-		return false, err
+		return Transaction{}, false, err
 	}
-	return strings.HasPrefix(active.CreatedBy, matchEngineCreatedByPrefix), nil
+	return txn, strings.HasPrefix(active.CreatedBy, matchEngineCreatedByPrefix), nil
 }
 
 func normalizeMatchEngineTrigger(trigger MatchEngineTrigger) (MatchEngineTrigger, error) {

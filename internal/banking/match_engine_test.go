@@ -71,6 +71,17 @@ func TestInvoiceScorerTable(t *testing.T) {
 		t.Fatalf("amount-only score = %.3f, want mid band [0.60, 0.95)", gotAmountOnly.score)
 	}
 
+	amountMismatchWithRef := base
+	amountMismatchWithRef.InvoiceID = "amount-mismatch-with-ref"
+	amountMismatchWithRef.Amount = money.Money{Amount: 90000, Currency: "GBP"}
+	gotAmountMismatchWithRef, ok := bestInvoiceMatch(txn, []InvoiceMatchCandidate{amountMismatchWithRef})
+	if !ok {
+		t.Fatal("bestInvoiceMatch() amount mismatch with ref = false, want scored candidate")
+	}
+	if gotAmountMismatchWithRef.score >= InvoiceHighConfidenceThreshold {
+		t.Fatalf("amount mismatch with ref score = %.3f, want below high-confidence threshold", gotAmountMismatchWithRef.score)
+	}
+
 	wrongCurrency := base
 	wrongCurrency.InvoiceID = "wrong-currency"
 	wrongCurrency.Amount = money.Money{Amount: 120000, Currency: "EUR"}
@@ -268,12 +279,15 @@ func TestPayeeRuleApplicationCountSerializedByTransactionLock(t *testing.T) {
 		_ = tx2.Rollback(ctx)
 	}()
 
-	canWrite, err := service.canWriteMatchEngineSuggestion(ctx, tx1, txnID)
+	lockedTxn, canWrite, err := service.canWriteMatchEngineSuggestion(ctx, tx1, txnID)
 	if err != nil {
 		t.Fatalf("canWriteMatchEngineSuggestion(tx1) error = %v", err)
 	}
 	if !canWrite {
 		t.Fatal("canWriteMatchEngineSuggestion(tx1) = false, want true")
+	}
+	if lockedTxn.ID != txnID {
+		t.Fatalf("locked transaction ID = %d, want %d", lockedTxn.ID, txnID)
 	}
 	recorded, err := service.store.PayeeRuleSuggestionRecorded(ctx, tx1, txnID, rule.AccountCode)
 	if err != nil {
@@ -296,7 +310,7 @@ func TestPayeeRuleApplicationCountSerializedByTransactionLock(t *testing.T) {
 	errCh := make(chan error, 1)
 	go func() {
 		close(started)
-		canWrite, err := service.canWriteMatchEngineSuggestion(ctx, tx2, txnID)
+		_, canWrite, err := service.canWriteMatchEngineSuggestion(ctx, tx2, txnID)
 		if err != nil {
 			errCh <- err
 			return
@@ -338,6 +352,32 @@ func TestPayeeRuleApplicationCountSerializedByTransactionLock(t *testing.T) {
 	}
 	if len(rules) != 1 || rules[0].TimesApplied != 1 {
 		t.Fatalf("matching rules = %#v, want one recorded application", rules)
+	}
+
+	excludedTxnID := importSingleBankingTxn(t, ctx, pool, service, account.ID, revolutTestTxn{
+		Date:      time.Date(2026, 7, 4, 9, 0, 0, 0, time.UTC),
+		ID:        "payee-rule-lock-excluded",
+		Payee:     "Race Vendor Ltd",
+		Reference: "subscription excluded",
+		Amount:    money.Money{Amount: -2400, Currency: "GBP"},
+	})
+	mustTransition(t, ctx, service, excludedTxnID, TransactionStateExcluded, "reviewer")
+	tx3, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin tx3: %v", err)
+	}
+	defer func() {
+		_ = tx3.Rollback(ctx)
+	}()
+	lockedTxn, canWrite, err = service.canWriteMatchEngineSuggestion(ctx, tx3, excludedTxnID)
+	if err != nil {
+		t.Fatalf("canWriteMatchEngineSuggestion(excluded) error = %v", err)
+	}
+	if canWrite {
+		t.Fatal("canWriteMatchEngineSuggestion(excluded) = true, want false")
+	}
+	if lockedTxn.State != TransactionStateExcluded {
+		t.Fatalf("locked transaction state = %q, want excluded", lockedTxn.State)
 	}
 }
 
@@ -467,7 +507,7 @@ func TestInvoiceSentUsesPublisherTransactionRollback(t *testing.T) {
 		}
 		return forced
 	})
-	invoicingPool := openBankingTestPool(t, ctx, bankingTestDatabaseURL(t), pool.Config().ConnConfig.Database, db.WithModule(invoicing.ModuleName))
+	invoicingPool := openBankingTestRolePool(t, ctx, bankingTestDatabaseURL(t), pool.Config().ConnConfig.Database, "ledgerly_invoicing", db.WithModule(invoicing.ModuleName))
 	t.Cleanup(invoicingPool.Close)
 	tx, err := invoicingPool.Begin(ctx)
 	if err != nil {

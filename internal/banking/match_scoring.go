@@ -208,7 +208,7 @@ func scoreInvoiceCandidate(txn Transaction, candidate InvoiceMatchCandidate) (fl
 
 	if referenceContainsInvoiceNumber(txn.Reference, candidate.Number) {
 		score += InvoiceScoreReferenceContainsBonus
-		if score < InvoiceScoreReferenceNearConclusive {
+		if candidate.Amount.Amount == txn.Amount.Amount && score < InvoiceScoreReferenceNearConclusive {
 			score = InvoiceScoreReferenceNearConclusive
 		}
 		factors = append(factors, "reference contains invoice number")
