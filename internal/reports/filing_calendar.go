@@ -14,9 +14,9 @@ import (
 	"github.com/npmulder/ledgerly/internal/platform/clock"
 )
 
-const filingDeadlineFactQuery = "jurisdiction.filing_deadlines"
+const filingDeadlineRuleID = "filing_deadline_window"
 
-var filingDeadlineWindowPattern = regexp.MustCompile(`\Adays_until_due\s*<=\s*([0-9]+)\z`)
+var filingDeadlineWindowPattern = regexp.MustCompile(`\Adue_date\s*-\s*today\s*<=\s*([0-9]+)\z`)
 
 // FilingCalendar returns the current filing calendar using fresh identity
 // facts. No filed/completed tracking is included in v1.
@@ -97,7 +97,7 @@ func toJurisdictionFacts(facts identity.CompanyFacts) jurisdiction.CompanyFacts 
 
 func filingDeadlineWarningWindowDays() (int, error) {
 	for _, rule := range jurisdiction.AdvisorRules() {
-		if strings.TrimSpace(rule.FactQuery) != filingDeadlineFactQuery {
+		if strings.TrimSpace(rule.ID) != filingDeadlineRuleID {
 			continue
 		}
 		condition := strings.TrimSpace(rule.Condition)

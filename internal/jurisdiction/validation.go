@@ -7,6 +7,27 @@ import (
 	"strings"
 )
 
+type requiredVATTreatment struct {
+	key               string
+	outputVAT         bool
+	vatReturnNetSales bool
+	reverseChargeKind bool
+}
+
+var requiredVATTreatments = []requiredVATTreatment{
+	{
+		key:               "domestic",
+		outputVAT:         true,
+		vatReturnNetSales: true,
+	},
+	{
+		key:               "reverse-charge-eu-b2b",
+		outputVAT:         false,
+		vatReturnNetSales: true,
+		reverseChargeKind: true,
+	},
+}
+
 func validatePack(file, id, version string, pack *Pack) error {
 	if err := validateMeta(file, id, version, pack.Meta); err != nil {
 		return err
@@ -159,6 +180,57 @@ func validateVAT(file string, vat VAT) error {
 			return fieldError(file, path+".invoice_wording", "invoice_wording", "must not be empty")
 		}
 	}
+	if err := validateVATTreatments(file, vat); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func validateVATTreatments(file string, vat VAT) error {
+	if len(vat.Treatments) == 0 {
+		return fieldError(file, "tax.vat.treatments", "treatments", "must contain at least one treatment")
+	}
+	for _, required := range requiredVATTreatments {
+		treatment, ok := vat.Treatments[required.key]
+		if !ok {
+			return fieldError(file, "tax.vat.treatments."+required.key, required.key, "is required for supported invoicing VAT treatments")
+		}
+		path := "tax.vat.treatments." + required.key
+		if treatment.OutputVAT != required.outputVAT {
+			return fieldError(file, path+".output_vat", "output_vat", fmt.Sprintf("must be %t for supported invoicing VAT treatment %q", required.outputVAT, required.key))
+		}
+		if treatment.VATReturnNetSales != required.vatReturnNetSales {
+			return fieldError(file, path+".vat_return_net_sales", "vat_return_net_sales", fmt.Sprintf("must be %t for supported invoicing VAT treatment %q", required.vatReturnNetSales, required.key))
+		}
+		if required.reverseChargeKind && strings.TrimSpace(treatment.ReverseChargeKind) == "" {
+			return fieldError(file, path+".reverse_charge_kind", "reverse_charge_kind", fmt.Sprintf("must not be empty for supported invoicing VAT treatment %q", required.key))
+		}
+		if !required.reverseChargeKind && strings.TrimSpace(treatment.ReverseChargeKind) != "" {
+			return fieldError(file, path+".reverse_charge_kind", "reverse_charge_kind", fmt.Sprintf("must be empty for supported invoicing VAT treatment %q", required.key))
+		}
+	}
+
+	keys := make([]string, 0, len(vat.Treatments))
+	for key := range vat.Treatments {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	for _, key := range keys {
+		path := "tax.vat.treatments." + key
+		if strings.TrimSpace(key) == "" {
+			return fieldError(file, path, "treatment", "must not be empty")
+		}
+		treatment := vat.Treatments[key]
+		reverseChargeKind := strings.TrimSpace(treatment.ReverseChargeKind)
+		if reverseChargeKind == "" {
+			continue
+		}
+		if _, ok := vat.ReverseCharge[reverseChargeKind]; !ok {
+			return fieldError(file, path+".reverse_charge_kind", "reverse_charge_kind", fmt.Sprintf("must reference configured reverse charge wording %q", reverseChargeKind))
+		}
+	}
 
 	return nil
 }
@@ -230,28 +302,64 @@ func validateAdvisorRules(file string, rules []AdvisorRule) error {
 	if len(rules) == 0 {
 		return fieldError(file, "advisor_rules", "advisor_rules", "must contain at least one rule")
 	}
+	seenIDs := make(map[string]struct{}, len(rules))
 	for index, rule := range rules {
 		path := fmt.Sprintf("advisor_rules[%d]", index)
-		if strings.TrimSpace(rule.ID) == "" {
+		ruleID := strings.TrimSpace(rule.ID)
+		if ruleID == "" {
 			return fieldError(file, path+".id", "id", "must not be empty")
 		}
-		if strings.TrimSpace(rule.Severity) == "" {
-			return fieldError(file, path+".severity", "severity", "must not be empty")
+		if _, ok := seenIDs[ruleID]; ok {
+			return fieldError(file, path+".id", "id", fmt.Sprintf("duplicate advisor rule id %q", ruleID))
 		}
-		if strings.TrimSpace(rule.FactQuery) == "" {
-			return fieldError(file, path+".fact_query", "fact_query", "must not be empty")
+		seenIDs[ruleID] = struct{}{}
+		switch strings.TrimSpace(rule.Severity) {
+		case "teal", "amber":
+		default:
+			return fieldError(file, path+".severity", "severity", "must be teal or amber")
+		}
+		if len(rule.Surfaces) == 0 {
+			return fieldError(file, path+".surfaces", "surfaces", "must contain at least one surface")
+		}
+		for surfaceIndex, surface := range rule.Surfaces {
+			if !validAdvisorSurface(strings.TrimSpace(surface)) {
+				return fieldError(file, fmt.Sprintf("%s.surfaces[%d]", path, surfaceIndex), "surface", "must be dashboard, invoices, banking, dla, dividends, or reports")
+			}
+		}
+		if len(rule.FactQuery) == 0 {
+			return fieldError(file, path+".fact_query", "fact_query", "must contain at least one fact key")
+		}
+		for factIndex, fact := range rule.FactQuery {
+			if strings.TrimSpace(fact) == "" {
+				return fieldError(file, fmt.Sprintf("%s.fact_query[%d]", path, factIndex), "fact_key", "must not be empty")
+			}
 		}
 		if strings.TrimSpace(rule.Condition) == "" {
 			return fieldError(file, path+".condition", "condition", "must not be empty")
 		}
+		if err := validateAdvisorConditionSyntax(rule.Condition); err != nil {
+			return fieldError(file, path+".condition", "condition", err.Error())
+		}
 		if strings.TrimSpace(rule.TextTemplate) == "" {
 			return fieldError(file, path+".text_template", "text_template", "must not be empty")
 		}
-		if strings.TrimSpace(rule.CTA) == "" {
-			return fieldError(file, path+".cta", "cta", "must not be empty")
+		if strings.TrimSpace(rule.CTA.Label) == "" {
+			return fieldError(file, path+".cta.label", "label", "must not be empty")
+		}
+		if strings.TrimSpace(rule.CTA.Action) == "" {
+			return fieldError(file, path+".cta.action", "action", "must not be empty")
 		}
 	}
 	return nil
+}
+
+func validAdvisorSurface(value string) bool {
+	switch value {
+	case "dashboard", "invoices", "banking", "dla", "dividends", "reports":
+		return true
+	default:
+		return false
+	}
 }
 
 func validateRate(file, path, field string, rate Rate) error {

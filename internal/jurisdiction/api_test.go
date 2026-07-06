@@ -2,6 +2,7 @@ package jurisdiction
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -94,6 +95,38 @@ func TestIsleOfManAccessorsReturnHandoffValues2025_26(t *testing.T) {
 			},
 		},
 		{
+			name: "VAT treatment semantics",
+			check: func(t *testing.T) {
+				domestic, err := VATSemanticsForTreatment("domestic")
+				if err != nil {
+					t.Fatalf("VATSemanticsForTreatment(domestic) error = %v", err)
+				}
+				if !domestic.OutputVAT {
+					t.Fatal("domestic OutputVAT = false, want true")
+				}
+				if !domestic.VATReturnNetSales {
+					t.Fatal("domestic VATReturnNetSales = false, want true")
+				}
+				if domestic.ReverseChargeKind != "" {
+					t.Fatalf("domestic ReverseChargeKind = %q, want empty", domestic.ReverseChargeKind)
+				}
+
+				reverseCharge, err := VATSemanticsForTreatment("reverse-charge-eu-b2b")
+				if err != nil {
+					t.Fatalf("VATSemanticsForTreatment(reverse-charge-eu-b2b) error = %v", err)
+				}
+				if reverseCharge.OutputVAT {
+					t.Fatal("reverse charge OutputVAT = true, want false")
+				}
+				if !reverseCharge.VATReturnNetSales {
+					t.Fatal("reverse charge VATReturnNetSales = false, want true")
+				}
+				if reverseCharge.ReverseChargeKind != "b2b_services_eu" {
+					t.Fatalf("reverse charge ReverseChargeKind = %q, want b2b_services_eu", reverseCharge.ReverseChargeKind)
+				}
+			},
+		},
+		{
 			name: "filing rules",
 			check: func(t *testing.T) {
 				got := FilingRules()
@@ -162,27 +195,51 @@ func TestIsleOfManAccessorsReturnHandoffValues2025_26(t *testing.T) {
 				}
 				want := map[string]struct {
 					severity     string
+					surfaces     []string
+					factQuery    []string
 					textTemplate string
+					ctaLabel     string
+					ctaAction    string
 				}{
 					"overdue_invoice": {
 						severity:     "amber",
+						surfaces:     []string{"dashboard", "invoices"},
+						factQuery:    []string{"client_name", "count", "days_overdue", "invoice_id", "invoice_number"},
 						textTemplate: "Invoice {{ invoice_number }} is {{ days_overdue }} days overdue. Send a reminder to {{ client_name }}.",
+						ctaLabel:     "Send reminder",
+						ctaAction:    "invoicing.sendReminder",
 					},
 					"dla_overdrawn_bik": {
 						severity:     "amber",
+						surfaces:     []string{"dashboard", "dla"},
+						factQuery:    []string{"balance", "status"},
 						textTemplate: "Your loan account is {{ balance }} overdrawn. The Isle of Man has no UK-style s455 charge, but an interest-free loan can create a taxable benefit in kind - charge interest at the official rate or clear it with a dividend.",
+						ctaLabel:     "Clear with dividend",
+						ctaAction:    "dla.clearWithDividend",
 					},
 					"filing_deadline_window": {
 						severity:     "amber",
+						surfaces:     []string{"dashboard", "reports"},
+						factQuery:    []string{"authority", "due_date", "filing_name"},
 						textTemplate: "{{ filing_name }} due {{ due_date }} - file with {{ authority }}.",
+						ctaLabel:     "Open filing calendar",
+						ctaAction:    "reports.openFilingCalendar",
 					},
 					"dividend_set_aside": {
 						severity:     "teal",
+						surfaces:     []string{"dashboard", "dividends"},
+						factQuery:    []string{"dividends_ytd", "estimate", "estimate_minor_units"},
 						textTemplate: "Set aside {{ estimate }} personally for IoM income tax on {{ dividends_ytd }} dividends YTD (10% band, then 21%).",
+						ctaLabel:     "Open dividends",
+						ctaAction:    "dividends.open",
 					},
 					"rates_stale": {
 						severity:     "amber",
+						surfaces:     []string{"dashboard", "banking", "invoices"},
+						factQuery:    []string{"stale_days"},
 						textTemplate: "ECB rates are stale. Refresh rates before issuing or settling foreign-currency transactions.",
+						ctaLabel:     "Refresh rates",
+						ctaAction:    "moneyfx.refreshRates",
 					},
 				}
 				for _, rule := range got {
@@ -193,8 +250,17 @@ func TestIsleOfManAccessorsReturnHandoffValues2025_26(t *testing.T) {
 					if rule.Severity != wantRule.severity {
 						t.Fatalf("%s severity = %q, want %q", rule.ID, rule.Severity, wantRule.severity)
 					}
+					if !slices.Equal(rule.Surfaces, wantRule.surfaces) {
+						t.Fatalf("%s surfaces = %#v, want %#v", rule.ID, rule.Surfaces, wantRule.surfaces)
+					}
+					if !slices.Equal(rule.FactQuery, wantRule.factQuery) {
+						t.Fatalf("%s fact_query = %#v, want %#v", rule.ID, rule.FactQuery, wantRule.factQuery)
+					}
 					if rule.TextTemplate != wantRule.textTemplate {
 						t.Fatalf("%s text_template = %q, want %q", rule.ID, rule.TextTemplate, wantRule.textTemplate)
+					}
+					if rule.CTA.Label != wantRule.ctaLabel || rule.CTA.Action != wantRule.ctaAction {
+						t.Fatalf("%s cta = %#v, want label/action %q/%q", rule.ID, rule.CTA, wantRule.ctaLabel, wantRule.ctaAction)
 					}
 					delete(want, rule.ID)
 				}
@@ -372,6 +438,22 @@ func TestReverseChargeWordingReturnsTypedErrorForUnknownKind(t *testing.T) {
 	}
 	if unknownKind.Kind != "unknown" {
 		t.Fatalf("UnknownReverseChargeKindError.Kind = %q, want unknown", unknownKind.Kind)
+	}
+}
+
+func TestVATSemanticsForTreatmentReturnsTypedErrorForUnknownTreatment(t *testing.T) {
+	loadIsleOfManForAccessors(t)
+
+	_, err := VATSemanticsForTreatment("unknown")
+	if err == nil {
+		t.Fatal("VATSemanticsForTreatment() error = nil, want UnknownVATTreatmentError")
+	}
+	var unknownTreatment UnknownVATTreatmentError
+	if !errors.As(err, &unknownTreatment) {
+		t.Fatalf("VATSemanticsForTreatment() error type = %T, want UnknownVATTreatmentError", err)
+	}
+	if unknownTreatment.Treatment != "unknown" {
+		t.Fatalf("UnknownVATTreatmentError.Treatment = %q, want unknown", unknownTreatment.Treatment)
 	}
 }
 

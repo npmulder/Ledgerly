@@ -64,6 +64,65 @@ func TestLoadFromFSEmbeddedFixture(t *testing.T) {
 	}
 }
 
+func TestValidateAdvisorRulesRejectsDuplicateIDs(t *testing.T) {
+	rule := AdvisorRule{
+		ID:           "duplicate",
+		Severity:     "amber",
+		Surfaces:     []string{"dashboard"},
+		FactQuery:    []string{"balance"},
+		Condition:    "balance > 0",
+		TextTemplate: "Review balance",
+		CTA:          AdvisorCTA{Label: "Open", Action: "test.open"},
+	}
+
+	err := validateAdvisorRules("test-pack", []AdvisorRule{rule, rule})
+	if err == nil {
+		t.Fatal("validateAdvisorRules() error = nil, want duplicate rule id error")
+	}
+
+	var validationErr ValidationError
+	if !errors.As(err, &validationErr) {
+		t.Fatalf("validateAdvisorRules() error type = %T, want ValidationError", err)
+	}
+	if validationErr.Path != "advisor_rules[1].id" || !strings.Contains(validationErr.Message, `duplicate advisor rule id "duplicate"`) {
+		t.Fatalf("ValidationError = %#v, want duplicate id at advisor_rules[1].id", validationErr)
+	}
+}
+
+func TestCloneAdvisorRulesDeepCopiesNestedCTAParams(t *testing.T) {
+	rules := []AdvisorRule{
+		{
+			ID:           "nested-cta",
+			Severity:     "teal",
+			Surfaces:     []string{"dashboard"},
+			FactQuery:    []string{"balance"},
+			Condition:    "balance > 0",
+			TextTemplate: "Review balance",
+			CTA: AdvisorCTA{
+				Label:  "Open",
+				Action: "test.open",
+				Params: map[string]any{
+					"nested": map[string]any{"value": "original"},
+					"items":  []any{map[string]any{"value": "item-original"}},
+				},
+			},
+		},
+	}
+
+	cloned := cloneAdvisorRules(rules)
+	cloned[0].CTA.Params["nested"].(map[string]any)["value"] = "changed"
+	cloned[0].CTA.Params["items"].([]any)[0].(map[string]any)["value"] = "item-changed"
+
+	nested := rules[0].CTA.Params["nested"].(map[string]any)
+	if nested["value"] != "original" {
+		t.Fatalf("original nested CTA param = %#v, want original", nested["value"])
+	}
+	items := rules[0].CTA.Params["items"].([]any)
+	if items[0].(map[string]any)["value"] != "item-original" {
+		t.Fatalf("original nested CTA slice item = %#v, want item-original", items[0])
+	}
+}
+
 func TestLoadActiveInstallsActivePackMeta(t *testing.T) {
 	if err := LoadActiveFromFS(testFixtureFS(t), "testland@0.1"); err != nil {
 		t.Fatalf("LoadActiveFromFS() error = %v", err)
@@ -197,6 +256,13 @@ func TestValidationFailuresNameFilePathAndField(t *testing.T) {
 			wantText:  "unknown deadline offset unit",
 		},
 		{
+			name:      "malformed advisor condition",
+			pack:      strings.Replace(valid, "condition: balance > 0", "condition: balance >", 1),
+			wantPath:  "advisor_rules[0].condition",
+			wantField: "condition",
+			wantText:  "expected expression",
+		},
+		{
 			name: "missing annual return filing",
 			pack: strings.Replace(
 				valid,
@@ -225,6 +291,66 @@ func TestValidationFailuresNameFilePathAndField(t *testing.T) {
 			pack:      strings.Replace(valid, "invoice_wording: Testland reverse charge applies", "invoice_wording: \"\"", 1),
 			wantPath:  "tax.vat.reverse_charge.b2b_services_eu.invoice_wording",
 			wantField: "invoice_wording",
+			wantText:  "must not be empty",
+		},
+		{
+			name: "missing domestic VAT treatment semantics",
+			pack: strings.Replace(
+				valid,
+				"      domestic:\n        output_vat: true\n        vat_return_net_sales: true\n",
+				"",
+				1,
+			),
+			wantPath:  "tax.vat.treatments.domestic",
+			wantField: "domestic",
+			wantText:  "required",
+		},
+		{
+			name: "missing reverse-charge VAT treatment semantics",
+			pack: strings.Replace(
+				valid,
+				"      reverse-charge-eu-b2b:\n        output_vat: false\n        vat_return_net_sales: true\n        reverse_charge_kind: b2b_services_eu\n",
+				"",
+				1,
+			),
+			wantPath:  "tax.vat.treatments.reverse-charge-eu-b2b",
+			wantField: "reverse-charge-eu-b2b",
+			wantText:  "required",
+		},
+		{
+			name: "domestic VAT treatment must report output VAT",
+			pack: strings.Replace(
+				valid,
+				"      domestic:\n        output_vat: true\n        vat_return_net_sales: true\n",
+				"      domestic: {}\n",
+				1,
+			),
+			wantPath:  "tax.vat.treatments.domestic.output_vat",
+			wantField: "output_vat",
+			wantText:  "must be true",
+		},
+		{
+			name: "reverse-charge VAT treatment must report net sales",
+			pack: strings.Replace(
+				valid,
+				"      reverse-charge-eu-b2b:\n        output_vat: false\n        vat_return_net_sales: true\n        reverse_charge_kind: b2b_services_eu\n",
+				"      reverse-charge-eu-b2b:\n        output_vat: false\n        reverse_charge_kind: b2b_services_eu\n",
+				1,
+			),
+			wantPath:  "tax.vat.treatments.reverse-charge-eu-b2b.vat_return_net_sales",
+			wantField: "vat_return_net_sales",
+			wantText:  "must be true",
+		},
+		{
+			name: "reverse-charge VAT treatment must reference wording",
+			pack: strings.Replace(
+				valid,
+				"      reverse-charge-eu-b2b:\n        output_vat: false\n        vat_return_net_sales: true\n        reverse_charge_kind: b2b_services_eu\n",
+				"      reverse-charge-eu-b2b:\n        output_vat: false\n        vat_return_net_sales: true\n",
+				1,
+			),
+			wantPath:  "tax.vat.treatments.reverse-charge-eu-b2b.reverse_charge_kind",
+			wantField: "reverse_charge_kind",
 			wantText:  "must not be empty",
 		},
 	}

@@ -57,14 +57,21 @@ type DividendYear struct {
 }
 
 type VAT struct {
-	Regime        string             `yaml:"regime"`
-	Authority     string             `yaml:"authority"`
-	Years         map[string]VATYear `yaml:"-"`
-	ReverseCharge map[string]Wording `yaml:"reverse_charge"`
+	Regime        string                           `yaml:"regime"`
+	Authority     string                           `yaml:"authority"`
+	Years         map[string]VATYear               `yaml:"-"`
+	Treatments    map[string]VATTreatmentSemantics `yaml:"treatments"`
+	ReverseCharge map[string]Wording               `yaml:"reverse_charge"`
 }
 
 type VATYear struct {
 	StandardRate Rate `yaml:"standard_rate"`
+}
+
+type VATTreatmentSemantics struct {
+	OutputVAT         bool   `yaml:"output_vat"`
+	VATReturnNetSales bool   `yaml:"vat_return_net_sales"`
+	ReverseChargeKind string `yaml:"reverse_charge_kind,omitempty"`
 }
 
 type Wording struct {
@@ -99,10 +106,17 @@ type OverdrawnPolicy struct {
 }
 
 type AdvisorRule struct {
-	ID           string `yaml:"id"`
-	Severity     string `yaml:"severity"`
-	FactQuery    string `yaml:"fact_query"`
-	Condition    string `yaml:"condition"`
-	TextTemplate string `yaml:"text_template"`
-	CTA          string `yaml:"cta"`
+	ID           string     `yaml:"id"`
+	Severity     string     `yaml:"severity"`
+	Surfaces     []string   `yaml:"surfaces"`
+	FactQuery    []string   `yaml:"fact_query"`
+	Condition    string     `yaml:"condition"`
+	TextTemplate string     `yaml:"text_template"`
+	CTA          AdvisorCTA `yaml:"cta"`
+}
+
+type AdvisorCTA struct {
+	Label  string         `yaml:"label"`
+	Action string         `yaml:"action"`
+	Params map[string]any `yaml:"params,omitempty"`
 }

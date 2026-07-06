@@ -8,7 +8,7 @@ Rule engine that evaluates facts from other modules against the active rules pac
 
 ## Model
 
-- **RuleDef** (from jurisdiction pack): `{id, severity, factQuery, condition, textTemplate, cta}`. Severity: `teal` = opportunity, `amber` = deadline/warning.
+- **RuleDef** (from jurisdiction pack): `{id, severity, surfaces, factQuery, condition, textTemplate, cta}`. Severity: `teal` = opportunity, `amber` = deadline/warning. Surfaces are closed to `dashboard | invoices | banking | dla | dividends | reports`; CTA is declarative `{label, action, params}`.
 - **Fact providers**: each feature module exposes a narrow read API the advisor maps into named facts — e.g. `invoicing.OverdueInvoices()`, `dla.CurrentBalance()`, `dividends.Headroom()`, `reports.VATPosition()`, `identity.CompanyFacts()`, `moneyfx` staleness.
 - **Insight**: derived, persisted with a deterministic key (`ruleID + factHash`) so re-evaluation is idempotent; **dismissible** — dismissals stored, insight stays suppressed until its facts change (new factHash).
 
@@ -16,7 +16,7 @@ Example v1 rules (from handoff): overdue invoice → amber + "Send reminder" CTA
 
 ## Evaluation
 
-Triggered by: daily cron; relevant domain events (`invoicing.InvoiceOverdue`, `dla.WentOverdrawn`, `ledger.EntryPosted`, `moneyfx.RatesStale`); manual refresh. Evaluation is read-only + upsert of insights — cheap enough to run whole-set every time (few dozen rules, one company).
+Triggered by: daily cron; relevant domain events (`invoicing.InvoiceOverdue`, `dla.WentOverdrawn`, `ledger.EntryPosted`, `moneyfx.RatesStale`); manual refresh. Evaluation is split into a pure `Evaluate(rules, facts, now)` step over injected facts and an `Apply(delta)` store step that upserts/resolves insights — cheap enough to run whole-set every time (few dozen rules, one company).
 
 ## Public API (Go)
 
@@ -35,7 +35,7 @@ Consumes: any (see triggers). Publishes: none.
 
 ## Data (schema `advisor`)
 
-`insights` (rule id, severity, bindings jsonb, fact hash, surface), `dismissals`.
+`insights` (deterministic key, rule id, severity, rendered text, bindings jsonb, fact hash, surfaces, CTA, created/resolved audit fields), `dismissals`.
 
 ## Work items
 

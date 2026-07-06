@@ -688,6 +688,14 @@ tax:
     authority: Testland Customs
     "2025-26":
       standard_rate: "0.20"
+    treatments:
+      domestic:
+        output_vat: true
+        vat_return_net_sales: true
+      reverse-charge-eu-b2b:
+        output_vat: false
+        vat_return_net_sales: true
+        reverse_charge_kind: b2b_services_eu
     reverse_charge:
       b2b_services_eu:
         article: Test Article 42
@@ -711,10 +719,13 @@ director_loans:
 advisor_rules:
   - id: test-rule
     severity: amber
-    fact_query: test.facts
+    surfaces: [dashboard, reports]
+    fact_query: [balance]
     condition: balance > 0
     text_template: Review the test balance before filing
-    cta: open_test_review
+    cta:
+      label: Open test review
+      action: test.openReview
 `, s455, warn, remedy)
 
 	if err := jurisdiction.LoadActiveFromFS(fstest.MapFS{

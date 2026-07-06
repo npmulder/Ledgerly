@@ -36,6 +36,10 @@ func (v *VAT) UnmarshalYAML(value *yaml.Node) error {
 			if err := node.Decode(&v.Authority); err != nil {
 				return err
 			}
+		case "treatments":
+			if err := node.Decode(&v.Treatments); err != nil {
+				return err
+			}
 		case "reverse_charge":
 			if err := node.Decode(&v.ReverseCharge); err != nil {
 				return err

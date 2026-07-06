@@ -257,7 +257,10 @@ type fakeIdentity struct {
 }
 
 func (f fakeIdentity) CompanyFacts(context.Context) (identity.CompanyFacts, error) {
-	return identity.CompanyFacts{YearEnd: f.yearEnd}, nil
+	return identity.CompanyFacts{
+		IncorporationDate: testDate(2020, time.January, 1),
+		YearEnd:           f.yearEnd,
+	}, nil
 }
 
 type fakeInvoicing struct{}
@@ -268,6 +271,10 @@ func (fakeInvoicing) Invoice(context.Context, string) (invoicing.Invoice, error)
 
 func (fakeInvoicing) InvoiceByNumber(context.Context, string) (invoicing.Invoice, error) {
 	return invoicing.Invoice{}, invoicing.ErrInvoiceNotFound
+}
+
+func (fakeInvoicing) InvoiceVATContextBySendEntryID(context.Context, ledger.EntryID) (invoicing.InvoiceVATContext, error) {
+	return invoicing.InvoiceVATContext{}, invoicing.ErrInvoiceNotFound
 }
 
 func (fakeInvoicing) Client(context.Context, string) (invoicing.Client, error) {

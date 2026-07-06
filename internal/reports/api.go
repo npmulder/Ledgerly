@@ -11,6 +11,9 @@ import (
 	"github.com/npmulder/ledgerly/internal/moneyfx/money"
 )
 
+// ModuleName is the database schema and event namespace for reports.
+const ModuleName = "reports"
+
 // Period is an inclusive posting-date window.
 type Period struct {
 	From time.Time
@@ -82,6 +85,23 @@ type Filing struct {
 	Status    FilingStatus
 }
 
+// VATFigures are the VAT return boxes needed for manual IoM filing in v1.
+type VATFigures struct {
+	Period      Period
+	Box1        money.Money
+	Box4        money.Money
+	Box6        money.Money
+	NetPosition money.Money
+}
+
+// VATPosition is the current-quarter advisor fact. DueDate is populated from
+// REP-3 jurisdiction filing deadlines when company facts are available.
+type VATPosition struct {
+	Period  Period
+	Figures VATFigures
+	DueDate *time.Time
+}
+
 // Reports is the v1 reports read API.
 type Reports interface {
 	ProfitAndLoss(context.Context, Period) (PL, error)
@@ -105,5 +125,6 @@ type CompanyFactsProvider = Identity
 type Invoicing interface {
 	Invoice(context.Context, string) (invoicing.Invoice, error)
 	InvoiceByNumber(context.Context, string) (invoicing.Invoice, error)
+	InvoiceVATContextBySendEntryID(context.Context, ledger.EntryID) (invoicing.InvoiceVATContext, error)
 	Client(context.Context, string) (invoicing.Client, error)
 }

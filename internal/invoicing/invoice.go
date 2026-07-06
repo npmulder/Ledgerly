@@ -94,6 +94,12 @@ type Invoice struct {
 	UpdatedAt         time.Time     `json:"updated_at"`
 }
 
+// InvoiceVATContext is the narrow sent-invoice tax context consumed by reports.
+type InvoiceVATContext struct {
+	InvoiceID    string
+	VATTreatment VATTreatment
+}
+
 // InvoiceLine is an ordered invoice row. LineTotal is computed from quantity
 // and unit price with money.MulRat round-half-even semantics.
 type InvoiceLine struct {

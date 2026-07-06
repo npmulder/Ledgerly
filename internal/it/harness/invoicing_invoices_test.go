@@ -367,6 +367,62 @@ func TestInvoicingSendGBPUsesIdentityLockAndPosting(t *testing.T) {
 	it.AssertLedgerBalanced(t, h)
 }
 
+func TestInvoicingRevertedDraftCanBeDeletedAfterVATContext(t *testing.T) {
+	h := harness.New(t, harness.Options{ClockStart: time.Date(2025, 5, 1, 9, 0, 0, 0, time.UTC)})
+	service := newInvoiceService(t, h)
+	ctx := context.Background()
+
+	fabrikam := fixtures.Fabrikam(t, h)
+	draft, err := service.CreateDraft(ctx, fabrikam.ID)
+	if err != nil {
+		t.Fatalf("CreateDraft() error = %v", err)
+	}
+	lines := []invoicing.InvoiceLineInput{{
+		Description: "GBP delivery",
+		Qty:         invoicing.MustQuantity("1"),
+		UnitPrice:   invoicing.Money{Amount: 10_000, Currency: string(invoicing.CurrencyGBP)},
+	}}
+	draft, err = service.UpdateDraft(ctx, draft.ID, invoicing.DraftPatch{Lines: &lines})
+	if err != nil {
+		t.Fatalf("UpdateDraft(lines) error = %v", err)
+	}
+
+	sent, err := service.Send(ctx, draft.ID)
+	if err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	if sent.SendLedgerEntryID == nil {
+		t.Fatal("sent SendLedgerEntryID = nil")
+	}
+	reverted, err := service.RevertToDraft(ctx, sent.ID)
+	if err != nil {
+		t.Fatalf("RevertToDraft() error = %v", err)
+	}
+	if reverted.Status != invoicing.InvoiceStatusDraft {
+		t.Fatalf("reverted Status = %q, want draft", reverted.Status)
+	}
+
+	if err := service.DeleteDraft(ctx, reverted.ID); err != nil {
+		t.Fatalf("DeleteDraft(reverted draft) error = %v", err)
+	}
+	if _, err := service.Invoice(ctx, reverted.ID); !errors.Is(err, invoicing.ErrInvoiceNotFound) {
+		t.Fatalf("Invoice(deleted reverted draft) error = %v, want ErrInvoiceNotFound", err)
+	}
+
+	modulePool := testdb.AsModule(t, invoicing.ModuleName)
+	var contextRows int
+	if err := modulePool.QueryRow(ctx, `
+SELECT count(*)
+FROM invoicing.invoice_send_vat_context
+WHERE send_ledger_entry_id = $1`, *sent.SendLedgerEntryID).Scan(&contextRows); err != nil {
+		t.Fatalf("count invoice_send_vat_context rows: %v", err)
+	}
+	if contextRows != 1 {
+		t.Fatalf("invoice_send_vat_context rows = %d, want 1", contextRows)
+	}
+	it.AssertLedgerBalanced(t, h)
+}
+
 func TestInvoicingSendDomesticEURSplitsVATAtLockedRate(t *testing.T) {
 	h := harness.New(t, harness.Options{ClockStart: time.Date(2025, 5, 1, 9, 0, 0, 0, time.UTC)})
 	fixtures.Rates(t, h)
