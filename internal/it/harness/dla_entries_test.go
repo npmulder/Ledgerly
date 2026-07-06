@@ -301,34 +301,64 @@ func TestDLAFutureDatedEntriesDoNotAffectCurrentFacts(t *testing.T) {
 	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
 	fixture := newDLAFixtureFromHarness(t, harness.New(t, harness.Options{ClockStart: now}))
 
+	var wentOverdrawn []dla.WentOverdrawn
+	fixture.harness.Bus.Subscribe(dla.WentOverdrawnName, func(ctx context.Context, tx db.Tx, evt bus.Event) error {
+		wentOverdrawn = append(wentOverdrawn, evt.(dla.WentOverdrawn))
+		return nil
+	})
+	var backInCredit []dla.BackInCredit
+	fixture.harness.Bus.Subscribe(dla.BackInCreditName, func(ctx context.Context, tx db.Tx, evt bus.Event) error {
+		backInCredit = append(backInCredit, evt.(dla.BackInCredit))
+		return nil
+	})
+
+	if err := fixture.dla.AddEntry(fixture.ctx, dla.NewEntry{
+		Date:               now.AddDate(0, 0, 1),
+		Kind:               dla.EntryKindExpenseOwed,
+		Description:        "Scheduled expense owed",
+		Amount:             gbp(1_000),
+		Source:             "manual:future-credit",
+		ExpenseAccountCode: "5010-software",
+	}); err != nil {
+		t.Fatalf("AddEntry(future expense owed) error = %v", err)
+	}
+	assertCurrentBalance(t, fixture.dla, gbp(0), dla.StatusCredit)
+	assertDLAEventCounts(t, wentOverdrawn, backInCredit, 0, 0)
+
 	fixture.fileDrawingFromBanking(t, dla.TxnRef{
 		Ref:             "banking:current-drawing",
 		Date:            now,
-		Amount:          gbp(1_000),
+		Amount:          gbp(500),
 		CashAccountCode: dlaCashAccount,
 	})
+	assertCurrentBalance(t, fixture.dla, gbp(-500), dla.StatusOverdrawn)
+	assertDLAEventCounts(t, wentOverdrawn, backInCredit, 1, 0)
+	if wentOverdrawn[0].Balance != gbp(-500) {
+		t.Fatalf("WentOverdrawn after future credit = %#v, want %#v", wentOverdrawn[0].Balance, gbp(-500))
+	}
+
 	if err := fixture.dla.AddEntry(fixture.ctx, dla.NewEntry{
 		Date:            now.AddDate(0, 0, 1),
 		Kind:            dla.EntryKindRepayment,
 		Description:     "Scheduled director repayment",
-		Amount:          gbp(1_000),
+		Amount:          gbp(500),
 		Source:          "manual:future-repayment",
 		CashAccountCode: dlaCashAccount,
 	}); err != nil {
 		t.Fatalf("AddEntry(future repayment) error = %v", err)
 	}
-
-	assertCurrentBalance(t, fixture.dla, gbp(-1_000), dla.StatusOverdrawn)
+	assertCurrentBalance(t, fixture.dla, gbp(-500), dla.StatusOverdrawn)
+	assertDLAEventCounts(t, wentOverdrawn, backInCredit, 1, 0)
 	clearance, err := fixture.dla.SuggestedClearanceAmount(fixture.ctx)
 	if err != nil {
 		t.Fatalf("SuggestedClearanceAmount() before future date error = %v", err)
 	}
-	if clearance != gbp(1_000) {
-		t.Fatalf("SuggestedClearanceAmount() before future date = %#v, want %#v", clearance, gbp(1_000))
+	if clearance != gbp(500) {
+		t.Fatalf("SuggestedClearanceAmount() before future date = %#v, want %#v", clearance, gbp(500))
 	}
 
 	fixture.harness.Clock.Set(now.AddDate(0, 0, 1))
-	assertCurrentBalance(t, fixture.dla, gbp(0), dla.StatusCredit)
+	assertCurrentBalance(t, fixture.dla, gbp(1_000), dla.StatusCredit)
 	it.AssertLedgerBalanced(t, fixture.harness)
 }
 

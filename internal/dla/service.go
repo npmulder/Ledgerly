@@ -126,11 +126,7 @@ func (s *Service) CurrentBalance(ctx context.Context) (money.Money, Status, erro
 	if s.pool == nil {
 		return money.Money{}, "", fmt.Errorf("dla: current balance requires pool")
 	}
-	clk := s.clock
-	if clk == nil {
-		clk = clock.New()
-	}
-	asOf, err := normalizeDate(clk.Now())
+	asOf, err := s.currentDate()
 	if err != nil {
 		return money.Money{}, "", err
 	}
@@ -176,13 +172,21 @@ func (s *Service) appendEntry(ctx context.Context, tx db.Tx, entry NewEntry, all
 	if err := lockBalanceMutation(ctx, tx); err != nil {
 		return err
 	}
-	preBalance, err := s.store.CurrentBalance(ctx, tx)
+	currentDate, err := s.currentDate()
 	if err != nil {
 		return err
 	}
-	postBalance, err := balanceAfterEntry(preBalance, normalized)
+	preBalance, err := s.store.CurrentBalanceAsOf(ctx, tx, currentDate)
 	if err != nil {
 		return err
+	}
+	publishTransition := !normalized.Date.After(currentDate)
+	postBalance := preBalance
+	if publishTransition {
+		postBalance, err = balanceAfterEntry(preBalance, normalized)
+		if err != nil {
+			return err
+		}
 	}
 	if _, err := s.store.InsertEntry(ctx, tx, normalized); err != nil {
 		return err
@@ -190,10 +194,21 @@ func (s *Service) appendEntry(ctx context.Context, tx db.Tx, entry NewEntry, all
 	if _, err := s.ledger.Post(ctx, tx, journalEntryFor(normalized)); err != nil {
 		return err
 	}
+	if !publishTransition {
+		return nil
+	}
 	if err := s.publishTransition(ctx, tx, preBalance, postBalance); err != nil {
 		return err
 	}
 	return nil
+}
+
+func (s *Service) currentDate() (time.Time, error) {
+	clk := s.clock
+	if clk == nil {
+		clk = clock.New()
+	}
+	return normalizeDate(clk.Now())
 }
 
 func lockBalanceMutation(ctx context.Context, tx db.Tx) error {
