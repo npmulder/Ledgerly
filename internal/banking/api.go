@@ -18,6 +18,9 @@ const ModuleName = "banking"
 type AccountID int64
 type TransactionID int64
 type ImportBatchID int64
+type SuggestionID int64
+type PayeeRuleID int64
+type TransactionStateChangeID int64
 
 type Provider string
 
@@ -25,15 +28,56 @@ const ProviderRevolut Provider = "revolut"
 
 type TransactionState string
 
-const TransactionStateUnreconciled TransactionState = "unreconciled"
+const (
+	TransactionStateUnreconciled TransactionState = "unreconciled"
+	TransactionStateSuggested    TransactionState = "suggested"
+	TransactionStateReconciled   TransactionState = "reconciled"
+	TransactionStateExcluded     TransactionState = "excluded"
+)
+
+type SuggestionKind string
+
+const (
+	SuggestionKindInvoiceMatch SuggestionKind = "invoice-match"
+	SuggestionKindDLA          SuggestionKind = "dla"
+	SuggestionKindPayeeRule    SuggestionKind = "payee-rule"
+)
+
+type PayeeRuleMatchMode string
+
+const (
+	PayeeRuleMatchExact    PayeeRuleMatchMode = "exact"
+	PayeeRuleMatchContains PayeeRuleMatchMode = "contains"
+)
+
+type PayeeRuleCreatedFrom string
+
+const (
+	PayeeRuleCreatedFromRecode PayeeRuleCreatedFrom = "recode"
+	PayeeRuleCreatedFromManual PayeeRuleCreatedFrom = "manual"
+)
+
+const (
+	DefaultFeedLimit               = 100
+	MaxFeedLimit                   = 500
+	DefaultRecentlyReconciledLimit = 10
+	MaxRecentlyReconciledLimit     = 100
+)
 
 var (
-	ErrInvalidAccount      = errors.New("banking: invalid account")
-	ErrUnsupportedProvider = errors.New("banking: unsupported provider")
-	ErrUnsupportedCurrency = errors.New("banking: unsupported currency")
-	ErrAccountNotFound     = errors.New("banking: account not found")
-	ErrInvalidImport       = errors.New("banking: invalid import")
-	ErrCurrencyMismatch    = errors.New("banking: currency mismatch")
+	ErrInvalidAccount           = errors.New("banking: invalid account")
+	ErrUnsupportedProvider      = errors.New("banking: unsupported provider")
+	ErrUnsupportedCurrency      = errors.New("banking: unsupported currency")
+	ErrAccountNotFound          = errors.New("banking: account not found")
+	ErrTransactionNotFound      = errors.New("banking: transaction not found")
+	ErrInvalidImport            = errors.New("banking: invalid import")
+	ErrCurrencyMismatch         = errors.New("banking: currency mismatch")
+	ErrInvalidStateTransition   = errors.New("banking: invalid transaction state transition")
+	ErrInvalidSuggestion        = errors.New("banking: invalid suggestion")
+	ErrInvalidPayeeRule         = errors.New("banking: invalid payee rule")
+	ErrInvalidTransactionFilter = errors.New("banking: invalid transaction filter")
+	ErrSuggestionNotFound       = errors.New("banking: suggestion not found")
+	ErrPayeeRuleNotFound        = errors.New("banking: payee rule not found")
 )
 
 // LedgerAccountEnsurer is the ledger capability banking needs when creating
@@ -68,6 +112,85 @@ type Transaction struct {
 	ImportBatchID ImportBatchID
 	State         TransactionState
 	CreatedAt     time.Time
+}
+
+type TransactionStateChange struct {
+	ID            TransactionStateChangeID
+	TransactionID TransactionID
+	From          TransactionState
+	To            TransactionState
+	ChangedAt     time.Time
+	Actor         string
+}
+
+type Suggestion struct {
+	ID            SuggestionID
+	TransactionID TransactionID
+	Kind          SuggestionKind
+	Confidence    float64
+	Target        string
+	Explanation   string
+	CreatedBy     string
+	CreatedAt     time.Time
+	SupersededAt  *time.Time
+}
+
+type SuggestionInput struct {
+	TransactionID TransactionID
+	Kind          SuggestionKind
+	Confidence    float64
+	Target        string
+	Explanation   string
+	CreatedBy     string
+}
+
+type PayeeRule struct {
+	ID            PayeeRuleID
+	Matcher       string
+	MatchMode     PayeeRuleMatchMode
+	AccountCode   ledger.AccountCode
+	TimesApplied  int
+	LastAppliedAt *time.Time
+	CreatedFrom   PayeeRuleCreatedFrom
+	CreatedAt     time.Time
+}
+
+type PayeeRuleInput struct {
+	Matcher     string
+	MatchMode   PayeeRuleMatchMode
+	AccountCode ledger.AccountCode
+	CreatedFrom PayeeRuleCreatedFrom
+}
+
+type FeedCursor struct {
+	Date time.Time
+	ID   TransactionID
+}
+
+type FeedFilter struct {
+	AccountID AccountID
+	State     TransactionState
+	From      *time.Time
+	To        *time.Time
+	After     *FeedCursor
+	Limit     int
+}
+
+type ReviewQueue struct {
+	InvoiceMatches []ReviewQueueItem
+	DLA            []ReviewQueueItem
+	PayeeRules     []ReviewQueueItem
+}
+
+type ReviewQueueItem struct {
+	Transaction Transaction
+	Suggestion  Suggestion
+}
+
+type ReconciledTransaction struct {
+	Transaction  Transaction
+	ReconciledAt time.Time
+	Actor        string
 }
 
 type ImportFile struct {
@@ -151,6 +274,32 @@ func (e *AccountNotFoundError) Error() string {
 
 func (e *AccountNotFoundError) Unwrap() error {
 	return ErrAccountNotFound
+}
+
+type TransactionNotFoundError struct {
+	ID TransactionID
+}
+
+func (e *TransactionNotFoundError) Error() string {
+	return fmt.Sprintf("banking: transaction %d was not found", e.ID)
+}
+
+func (e *TransactionNotFoundError) Unwrap() error {
+	return ErrTransactionNotFound
+}
+
+type InvalidStateTransitionError struct {
+	TransactionID TransactionID
+	From          TransactionState
+	To            TransactionState
+}
+
+func (e *InvalidStateTransitionError) Error() string {
+	return fmt.Sprintf("banking: transaction %d cannot transition from %s to %s", e.TransactionID, e.From, e.To)
+}
+
+func (e *InvalidStateTransitionError) Unwrap() error {
+	return ErrInvalidStateTransition
 }
 
 var defaultParsers = map[Provider]StatementParser{}

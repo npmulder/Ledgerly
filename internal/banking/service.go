@@ -172,6 +172,123 @@ func (s *Service) ImportCSV(ctx context.Context, accountID AccountID, file Impor
 	return summary, nil
 }
 
+func (s *Service) TransitionTransactionState(ctx context.Context, id TransactionID, to TransactionState, actor string) (_ TransactionStateChange, err error) {
+	if s.pool == nil {
+		return TransactionStateChange{}, fmt.Errorf("banking: state transition requires pool")
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return TransactionStateChange{}, fmt.Errorf("banking: begin state transition transaction: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	change, err := s.store.TransitionTransactionState(ctx, tx, id, to, actor)
+	if err != nil {
+		return TransactionStateChange{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return TransactionStateChange{}, fmt.Errorf("banking: commit state transition transaction: %w", err)
+	}
+	return change, nil
+}
+
+func (s *Service) RecordSuggestion(ctx context.Context, input SuggestionInput) (_ Suggestion, err error) {
+	if s.pool == nil {
+		return Suggestion{}, fmt.Errorf("banking: suggestion storage requires pool")
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Suggestion{}, fmt.Errorf("banking: begin suggestion transaction: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	suggestion, err := s.store.InsertSuggestion(ctx, tx, input)
+	if err != nil {
+		return Suggestion{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return Suggestion{}, fmt.Errorf("banking: commit suggestion transaction: %w", err)
+	}
+	return suggestion, nil
+}
+
+func (s *Service) SuggestionsForTransaction(ctx context.Context, txnID TransactionID) ([]Suggestion, error) {
+	if s.pool == nil {
+		return nil, fmt.Errorf("banking: suggestion history requires pool")
+	}
+	if txnID <= 0 {
+		return nil, fmt.Errorf("banking: suggestion transaction id is required: %w", ErrInvalidSuggestion)
+	}
+	return s.store.SuggestionsForTransaction(ctx, s.pool, txnID)
+}
+
+func (s *Service) CreatePayeeRule(ctx context.Context, input PayeeRuleInput) (PayeeRule, error) {
+	if s.pool == nil {
+		return PayeeRule{}, fmt.Errorf("banking: payee rule storage requires pool")
+	}
+	return s.store.InsertPayeeRule(ctx, s.pool, input)
+}
+
+func (s *Service) RecordPayeeRuleApplied(ctx context.Context, id PayeeRuleID) (PayeeRule, error) {
+	if s.pool == nil {
+		return PayeeRule{}, fmt.Errorf("banking: payee rule update requires pool")
+	}
+	if id <= 0 {
+		return PayeeRule{}, fmt.Errorf("banking: payee rule id is required: %w", ErrInvalidPayeeRule)
+	}
+	return s.store.RecordPayeeRuleApplied(ctx, s.pool, id)
+}
+
+func (s *Service) MatchingPayeeRules(ctx context.Context, payee string) ([]PayeeRule, error) {
+	if s.pool == nil {
+		return nil, fmt.Errorf("banking: payee rule matching requires pool")
+	}
+	return s.store.MatchingPayeeRules(ctx, s.pool, payee)
+}
+
+func (s *Service) Feed(ctx context.Context, filter FeedFilter) ([]Transaction, error) {
+	if s.pool == nil {
+		return nil, fmt.Errorf("banking: feed requires pool")
+	}
+	normalized, err := normalizeFeedFilter(filter)
+	if err != nil {
+		return nil, err
+	}
+	return s.store.Feed(ctx, s.pool, normalized)
+}
+
+func (s *Service) ReviewQueue(ctx context.Context) (ReviewQueue, error) {
+	if s.pool == nil {
+		return ReviewQueue{}, fmt.Errorf("banking: review queue requires pool")
+	}
+	return s.store.ReviewQueue(ctx, s.pool)
+}
+
+func (s *Service) RecentlyReconciled(ctx context.Context, limit int) ([]ReconciledTransaction, error) {
+	if s.pool == nil {
+		return nil, fmt.Errorf("banking: recently reconciled requires pool")
+	}
+	return s.store.RecentlyReconciled(ctx, s.pool, normalizeRecentlyReconciledLimit(limit))
+}
+
+func (s *Service) UnreconciledCount(ctx context.Context, accountID AccountID) (int, error) {
+	if s.pool == nil {
+		return 0, fmt.Errorf("banking: unreconciled count requires pool")
+	}
+	if accountID <= 0 {
+		return 0, fmt.Errorf("banking: account id is required: %w", ErrInvalidTransactionFilter)
+	}
+	return s.store.UnreconciledCount(ctx, s.pool, accountID)
+}
+
 func validateRawTxn(account BankAccount, raw RawTxn, row int) (newTransaction, error) {
 	date, err := dateOnly(raw.Date)
 	if err != nil {
@@ -293,4 +410,59 @@ func dedupeHash(accountID AccountID, date time.Time, amount money.Money, normali
 	)
 	sum := sha256.Sum256([]byte(payload))
 	return hex.EncodeToString(sum[:])
+}
+
+func normalizeFeedFilter(filter FeedFilter) (FeedFilter, error) {
+	normalized := filter
+	if normalized.State != "" && !validTransactionState(normalized.State) {
+		return FeedFilter{}, fmt.Errorf("banking: feed state %q: %w", normalized.State, ErrInvalidTransactionFilter)
+	}
+	if normalized.From != nil {
+		from, dateErr := dateOnly(*normalized.From)
+		if dateErr != nil {
+			return FeedFilter{}, fmt.Errorf("banking: feed from date: %w", ErrInvalidTransactionFilter)
+		}
+		normalized.From = &from
+	}
+	if normalized.To != nil {
+		to, dateErr := dateOnly(*normalized.To)
+		if dateErr != nil {
+			return FeedFilter{}, fmt.Errorf("banking: feed to date: %w", ErrInvalidTransactionFilter)
+		}
+		normalized.To = &to
+	}
+	if normalized.From != nil && normalized.To != nil && normalized.From.After(*normalized.To) {
+		return FeedFilter{}, fmt.Errorf("banking: feed from date %s is after to date %s: %w",
+			normalized.From.Format(time.DateOnly),
+			normalized.To.Format(time.DateOnly),
+			ErrInvalidTransactionFilter,
+		)
+	}
+	if normalized.After != nil {
+		afterDate, dateErr := dateOnly(normalized.After.Date)
+		if dateErr != nil {
+			return FeedFilter{}, fmt.Errorf("banking: feed cursor date: %w", ErrInvalidTransactionFilter)
+		}
+		if normalized.After.ID <= 0 {
+			return FeedFilter{}, fmt.Errorf("banking: feed cursor id is required: %w", ErrInvalidTransactionFilter)
+		}
+		normalized.After = &FeedCursor{Date: afterDate, ID: normalized.After.ID}
+	}
+	if normalized.Limit <= 0 {
+		normalized.Limit = DefaultFeedLimit
+	}
+	if normalized.Limit > MaxFeedLimit {
+		normalized.Limit = MaxFeedLimit
+	}
+	return normalized, nil
+}
+
+func normalizeRecentlyReconciledLimit(limit int) int {
+	if limit <= 0 {
+		return DefaultRecentlyReconciledLimit
+	}
+	if limit > MaxRecentlyReconciledLimit {
+		return MaxRecentlyReconciledLimit
+	}
+	return limit
 }

@@ -393,6 +393,450 @@ func TestImportCSVRejectsCurrencyMismatchWithoutWrites(t *testing.T) {
 	assertNoImportRows(t, ctx, pool, account.ID)
 }
 
+func TestTransactionStateTransitionMatrixRecordsAudit(t *testing.T) {
+	pool, ledgerPool := temporaryMigratedBankingDatabase(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	service := NewService(pool, ledger.New(ledgerPool))
+	account, err := service.CreateAccount(ctx, AccountInput{
+		Name:     "Revolut GBP",
+		Provider: ProviderRevolut,
+		Currency: "GBP",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount() error = %v", err)
+	}
+
+	legal := []struct {
+		name    string
+		prepare func(TransactionID)
+		from    TransactionState
+		to      TransactionState
+	}{
+		{
+			name: "unreconciled to suggested",
+			from: TransactionStateUnreconciled,
+			to:   TransactionStateSuggested,
+		},
+		{
+			name: "unreconciled to excluded",
+			from: TransactionStateUnreconciled,
+			to:   TransactionStateExcluded,
+		},
+		{
+			name: "suggested to reconciled",
+			prepare: func(txnID TransactionID) {
+				mustTransition(t, ctx, service, txnID, TransactionStateSuggested, "engine-run-1")
+			},
+			from: TransactionStateSuggested,
+			to:   TransactionStateReconciled,
+		},
+		{
+			name: "suggested to excluded",
+			prepare: func(txnID TransactionID) {
+				mustTransition(t, ctx, service, txnID, TransactionStateSuggested, "engine-run-1")
+			},
+			from: TransactionStateSuggested,
+			to:   TransactionStateExcluded,
+		},
+		{
+			name: "excluded to unreconciled",
+			prepare: func(txnID TransactionID) {
+				mustTransition(t, ctx, service, txnID, TransactionStateExcluded, "advisor")
+			},
+			from: TransactionStateExcluded,
+			to:   TransactionStateUnreconciled,
+		},
+	}
+	for i, tc := range legal {
+		t.Run(tc.name, func(t *testing.T) {
+			txnID := importSingleBankingTxn(t, ctx, pool, service, account.ID, revolutTestTxn{
+				Date:      time.Date(2026, 6, 1+i, 9, 0, 0, 0, time.UTC),
+				ID:        fmt.Sprintf("state-legal-%d", i),
+				Payee:     fmt.Sprintf("State legal %d", i),
+				Reference: fmt.Sprintf("state-legal-%d", i),
+				Amount:    money.Money{Amount: int64(1000 + i), Currency: "GBP"},
+			})
+			if tc.prepare != nil {
+				tc.prepare(txnID)
+			}
+
+			change, err := service.TransitionTransactionState(ctx, txnID, tc.to, "reviewer")
+			if err != nil {
+				t.Fatalf("TransitionTransactionState() error = %v", err)
+			}
+			if change.TransactionID != txnID || change.From != tc.from || change.To != tc.to || change.Actor != "reviewer" || change.ChangedAt.IsZero() {
+				t.Fatalf("state change = %#v, want txn/from/to/actor/timestamp", change)
+			}
+			assertStoredTransactionState(t, ctx, pool, txnID, tc.to)
+		})
+	}
+
+	illegal := []struct {
+		name    string
+		prepare func(TransactionID)
+		to      TransactionState
+		want    TransactionState
+	}{
+		{
+			name: "unreconciled cannot reconcile directly",
+			to:   TransactionStateReconciled,
+			want: TransactionStateUnreconciled,
+		},
+		{
+			name: "suggested cannot return to unreconciled",
+			prepare: func(txnID TransactionID) {
+				mustTransition(t, ctx, service, txnID, TransactionStateSuggested, "engine-run-2")
+			},
+			to:   TransactionStateUnreconciled,
+			want: TransactionStateSuggested,
+		},
+		{
+			name: "excluded cannot become suggested",
+			prepare: func(txnID TransactionID) {
+				mustTransition(t, ctx, service, txnID, TransactionStateExcluded, "reviewer")
+			},
+			to:   TransactionStateSuggested,
+			want: TransactionStateExcluded,
+		},
+		{
+			name: "reconciled is terminal",
+			prepare: func(txnID TransactionID) {
+				mustTransition(t, ctx, service, txnID, TransactionStateSuggested, "engine-run-3")
+				mustTransition(t, ctx, service, txnID, TransactionStateReconciled, "reviewer")
+			},
+			to:   TransactionStateExcluded,
+			want: TransactionStateReconciled,
+		},
+	}
+	for i, tc := range illegal {
+		t.Run(tc.name, func(t *testing.T) {
+			txnID := importSingleBankingTxn(t, ctx, pool, service, account.ID, revolutTestTxn{
+				Date:      time.Date(2026, 6, 20+i, 9, 0, 0, 0, time.UTC),
+				ID:        fmt.Sprintf("state-illegal-%d", i),
+				Payee:     fmt.Sprintf("State illegal %d", i),
+				Reference: fmt.Sprintf("state-illegal-%d", i),
+				Amount:    money.Money{Amount: int64(2000 + i), Currency: "GBP"},
+			})
+			if tc.prepare != nil {
+				tc.prepare(txnID)
+			}
+
+			_, err := service.TransitionTransactionState(ctx, txnID, tc.to, "reviewer")
+			if !errors.Is(err, ErrInvalidStateTransition) {
+				t.Fatalf("TransitionTransactionState() error = %v, want ErrInvalidStateTransition", err)
+			}
+			assertStoredTransactionState(t, ctx, pool, txnID, tc.want)
+		})
+	}
+}
+
+func TestSuggestionSupersedeKeepsHistoryAndOneActive(t *testing.T) {
+	pool, ledgerPool := temporaryMigratedBankingDatabase(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	service := NewService(pool, ledger.New(ledgerPool))
+	account, err := service.CreateAccount(ctx, AccountInput{
+		Name:     "Revolut GBP",
+		Provider: ProviderRevolut,
+		Currency: "GBP",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount() error = %v", err)
+	}
+	txnID := importSingleBankingTxn(t, ctx, pool, service, account.ID, revolutTestTxn{
+		Date:      time.Date(2026, 7, 1, 9, 0, 0, 0, time.UTC),
+		ID:        "suggestion-1",
+		Payee:     "Contoso GMBH",
+		Reference: "invoice 1001",
+		Amount:    money.Money{Amount: 98000, Currency: "GBP"},
+	})
+
+	first, err := service.RecordSuggestion(ctx, SuggestionInput{
+		TransactionID: txnID,
+		Kind:          SuggestionKindInvoiceMatch,
+		Confidence:    0.981,
+		Target:        "inv-1001",
+		Explanation:   "98% match - amount + payee + date",
+		CreatedBy:     "engine-run-a",
+	})
+	if err != nil {
+		t.Fatalf("RecordSuggestion() first error = %v", err)
+	}
+	second, err := service.RecordSuggestion(ctx, SuggestionInput{
+		TransactionID: txnID,
+		Kind:          SuggestionKindPayeeRule,
+		Confidence:    0.875,
+		Target:        "6200-software",
+		Explanation:   "88% match - recurring payee rule",
+		CreatedBy:     "engine-run-b",
+	})
+	if err != nil {
+		t.Fatalf("RecordSuggestion() second error = %v", err)
+	}
+	if first.ID == second.ID {
+		t.Fatalf("suggestion IDs both = %d, want replacement row", first.ID)
+	}
+	assertStoredTransactionState(t, ctx, pool, txnID, TransactionStateSuggested)
+
+	history, err := service.SuggestionsForTransaction(ctx, txnID)
+	if err != nil {
+		t.Fatalf("SuggestionsForTransaction() error = %v", err)
+	}
+	if len(history) != 2 {
+		t.Fatalf("suggestion history length = %d, want 2", len(history))
+	}
+	active := 0
+	superseded := 0
+	for _, suggestion := range history {
+		if suggestion.SupersededAt == nil {
+			active++
+			if suggestion.ID != second.ID {
+				t.Fatalf("active suggestion ID = %d, want second %d", suggestion.ID, second.ID)
+			}
+		} else {
+			superseded++
+			if suggestion.ID != first.ID {
+				t.Fatalf("superseded suggestion ID = %d, want first %d", suggestion.ID, first.ID)
+			}
+		}
+	}
+	if active != 1 || superseded != 1 {
+		t.Fatalf("active/superseded counts = %d/%d, want 1/1", active, superseded)
+	}
+
+	var dbActive int
+	if err := pool.QueryRow(ctx, `
+SELECT count(*)::integer
+FROM suggestions
+WHERE txn_id = $1
+	AND superseded_at IS NULL`, int64(txnID)).Scan(&dbActive); err != nil {
+		t.Fatalf("count active suggestions: %v", err)
+	}
+	if dbActive != 1 {
+		t.Fatalf("active suggestion rows = %d, want 1", dbActive)
+	}
+	var suggestedChanges int
+	if err := pool.QueryRow(ctx, `
+SELECT count(*)::integer
+FROM transaction_state_changes
+WHERE txn_id = $1
+	AND to_state = 'suggested'`, int64(txnID)).Scan(&suggestedChanges); err != nil {
+		t.Fatalf("count suggested state changes: %v", err)
+	}
+	if suggestedChanges != 1 {
+		t.Fatalf("suggested state changes = %d, want 1", suggestedChanges)
+	}
+}
+
+func TestFeedReviewQueueRecentlyReconciledAndCounts(t *testing.T) {
+	pool, ledgerPool := temporaryMigratedBankingDatabase(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	service := NewService(pool, ledger.New(ledgerPool))
+	account, err := service.CreateAccount(ctx, AccountInput{
+		Name:     "Revolut GBP",
+		Provider: ProviderRevolut,
+		Currency: "GBP",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount() account error = %v", err)
+	}
+	otherAccount, err := service.CreateAccount(ctx, AccountInput{
+		Name:     "Revolut EUR",
+		Provider: ProviderRevolut,
+		Currency: "EUR",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount() other account error = %v", err)
+	}
+
+	invoiceTxn := importSingleBankingTxn(t, ctx, pool, service, account.ID, revolutTestTxn{
+		Date:      time.Date(2026, 8, 1, 9, 0, 0, 0, time.UTC),
+		ID:        "queue-invoice",
+		Payee:     "Contoso GMBH",
+		Reference: "invoice 1002",
+		Amount:    money.Money{Amount: 120000, Currency: "GBP"},
+	})
+	dlaTxn := importSingleBankingTxn(t, ctx, pool, service, account.ID, revolutTestTxn{
+		Date:      time.Date(2026, 8, 2, 9, 0, 0, 0, time.UTC),
+		ID:        "queue-dla",
+		Payee:     "Director transfer",
+		Reference: "drawing",
+		Amount:    money.Money{Amount: -50000, Currency: "GBP"},
+	})
+	ruleTxn := importSingleBankingTxn(t, ctx, pool, service, account.ID, revolutTestTxn{
+		Date:      time.Date(2026, 8, 3, 9, 0, 0, 0, time.UTC),
+		ID:        "queue-rule",
+		Payee:     "SaaS Vendor",
+		Reference: "subscription",
+		Amount:    money.Money{Amount: -2400, Currency: "GBP"},
+	})
+	unreconciledTxn := importSingleBankingTxn(t, ctx, pool, service, account.ID, revolutTestTxn{
+		Date:      time.Date(2026, 8, 4, 9, 0, 0, 0, time.UTC),
+		ID:        "queue-unreconciled",
+		Payee:     "Unknown",
+		Reference: "unknown",
+		Amount:    money.Money{Amount: -1000, Currency: "GBP"},
+	})
+	excludedTxn := importSingleBankingTxn(t, ctx, pool, service, account.ID, revolutTestTxn{
+		Date:      time.Date(2026, 8, 5, 9, 0, 0, 0, time.UTC),
+		ID:        "queue-excluded",
+		Payee:     "Duplicate",
+		Reference: "duplicate",
+		Amount:    money.Money{Amount: -1, Currency: "GBP"},
+	})
+	otherUnreconciled := importSingleBankingTxn(t, ctx, pool, service, otherAccount.ID, revolutTestTxn{
+		Date:      time.Date(2026, 8, 6, 9, 0, 0, 0, time.UTC),
+		ID:        "queue-other",
+		Payee:     "EUR Unknown",
+		Reference: "eur-unknown",
+		Amount:    money.Money{Amount: -1000, Currency: "EUR"},
+		Balance:   money.Money{Amount: -1000, Currency: "EUR"},
+	})
+
+	mustRecordSuggestion(t, ctx, service, invoiceTxn, SuggestionKindInvoiceMatch, 0.982, "inv-1002", "98% match - amount + payee + date")
+	mustRecordSuggestion(t, ctx, service, dlaTxn, SuggestionKindDLA, 0.750, "director-loan", "75% match - director payee")
+	mustRecordSuggestion(t, ctx, service, ruleTxn, SuggestionKindPayeeRule, 0.910, "6200-software", "91% match - recurring payee rule")
+	mustTransition(t, ctx, service, excludedTxn, TransactionStateExcluded, "reviewer")
+	mustTransition(t, ctx, service, invoiceTxn, TransactionStateReconciled, "reviewer")
+
+	queue, err := service.ReviewQueue(ctx)
+	if err != nil {
+		t.Fatalf("ReviewQueue() error = %v", err)
+	}
+	if len(queue.InvoiceMatches) != 0 || len(queue.DLA) != 1 || len(queue.PayeeRules) != 1 {
+		t.Fatalf("ReviewQueue() group sizes = invoice %d dla %d rule %d, want 0/1/1 after invoice reconcile",
+			len(queue.InvoiceMatches),
+			len(queue.DLA),
+			len(queue.PayeeRules),
+		)
+	}
+	if queue.DLA[0].Transaction.ID != dlaTxn || queue.DLA[0].Suggestion.Explanation == "" {
+		t.Fatalf("DLA queue item = %#v, want card-ready DLA transaction and explanation", queue.DLA[0])
+	}
+	if queue.PayeeRules[0].Transaction.ID != ruleTxn || queue.PayeeRules[0].Suggestion.Target != "6200-software" {
+		t.Fatalf("payee-rule queue item = %#v, want transaction and account target", queue.PayeeRules[0])
+	}
+
+	count, err := service.UnreconciledCount(ctx, account.ID)
+	if err != nil {
+		t.Fatalf("UnreconciledCount() account error = %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("UnreconciledCount(account) = %d, want 1", count)
+	}
+	otherCount, err := service.UnreconciledCount(ctx, otherAccount.ID)
+	if err != nil {
+		t.Fatalf("UnreconciledCount() other account error = %v", err)
+	}
+	if otherCount != 1 {
+		t.Fatalf("UnreconciledCount(otherAccount) = %d, want 1", otherCount)
+	}
+
+	feed, err := service.Feed(ctx, FeedFilter{
+		AccountID: account.ID,
+		State:     TransactionStateSuggested,
+		Limit:     10,
+	})
+	if err != nil {
+		t.Fatalf("Feed() suggested error = %v", err)
+	}
+	if len(feed) != 2 || feed[0].ID != ruleTxn || feed[1].ID != dlaTxn {
+		t.Fatalf("Feed(suggested) IDs = %v, want rule then DLA by date desc", transactionIDs(feed))
+	}
+	cursorFeed, err := service.Feed(ctx, FeedFilter{
+		AccountID: account.ID,
+		After:     &FeedCursor{Date: feed[0].Date, ID: feed[0].ID},
+		Limit:     2,
+	})
+	if err != nil {
+		t.Fatalf("Feed() cursor error = %v", err)
+	}
+	if len(cursorFeed) != 2 || cursorFeed[0].ID != dlaTxn || cursorFeed[1].ID != invoiceTxn {
+		t.Fatalf("Feed(cursor) IDs = %v, want DLA then reconciled invoice after cursor", transactionIDs(cursorFeed))
+	}
+
+	recent, err := service.RecentlyReconciled(ctx, 5)
+	if err != nil {
+		t.Fatalf("RecentlyReconciled() error = %v", err)
+	}
+	if len(recent) != 1 || recent[0].Transaction.ID != invoiceTxn || recent[0].Actor != "reviewer" || recent[0].ReconciledAt.IsZero() {
+		t.Fatalf("RecentlyReconciled() = %#v, want reconciled invoice with actor/timestamp", recent)
+	}
+
+	assertStoredTransactionState(t, ctx, pool, unreconciledTxn, TransactionStateUnreconciled)
+	assertStoredTransactionState(t, ctx, pool, otherUnreconciled, TransactionStateUnreconciled)
+}
+
+func TestPayeeNormalizationAndRules(t *testing.T) {
+	normalization := []struct {
+		input string
+		want  string
+	}{
+		{input: "REVOLUT*Contoso GMBH  ", want: "revolut contoso gmbh"},
+		{input: "  Revolut   Contoso\tGMBH ", want: "revolut contoso gmbh"},
+		{input: "Card XX1234 Contoso GmbH", want: "contoso gmbh"},
+		{input: "Contoso-GMBH/Online", want: "contoso gmbh online"},
+	}
+	for _, tc := range normalization {
+		if got := NormalizePayee(tc.input); got != tc.want {
+			t.Fatalf("NormalizePayee(%q) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
+
+	pool, ledgerPool := temporaryMigratedBankingDatabase(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	service := NewService(pool, ledger.New(ledgerPool))
+	exact, err := service.CreatePayeeRule(ctx, PayeeRuleInput{
+		Matcher:     "REVOLUT*Contoso GMBH  ",
+		MatchMode:   PayeeRuleMatchExact,
+		AccountCode: "6200-software",
+		CreatedFrom: PayeeRuleCreatedFromManual,
+	})
+	if err != nil {
+		t.Fatalf("CreatePayeeRule() exact error = %v", err)
+	}
+	if exact.Matcher != "revolut contoso gmbh" || exact.TimesApplied != 0 || exact.LastAppliedAt != nil {
+		t.Fatalf("exact payee rule = %#v, want normalized unused rule", exact)
+	}
+	contains, err := service.CreatePayeeRule(ctx, PayeeRuleInput{
+		Matcher:     "contoso",
+		MatchMode:   PayeeRuleMatchContains,
+		AccountCode: "6200-software",
+		CreatedFrom: PayeeRuleCreatedFromRecode,
+	})
+	if err != nil {
+		t.Fatalf("CreatePayeeRule() contains error = %v", err)
+	}
+	applied, err := service.RecordPayeeRuleApplied(ctx, contains.ID)
+	if err != nil {
+		t.Fatalf("RecordPayeeRuleApplied() error = %v", err)
+	}
+	if applied.TimesApplied != 1 || applied.LastAppliedAt == nil {
+		t.Fatalf("applied payee rule = %#v, want incremented count and timestamp", applied)
+	}
+
+	matches, err := service.MatchingPayeeRules(ctx, "Card XX1234 Revolut Contoso GMBH")
+	if err != nil {
+		t.Fatalf("MatchingPayeeRules() error = %v", err)
+	}
+	if len(matches) != 2 {
+		t.Fatalf("MatchingPayeeRules() length = %d, want exact and contains matches", len(matches))
+	}
+	if matches[0].ID != contains.ID || matches[1].ID != exact.ID {
+		t.Fatalf("MatchingPayeeRules() order IDs = %d, %d; want applied contains before exact", matches[0].ID, matches[1].ID)
+	}
+}
+
 type recordingEnsurer struct {
 	calls int
 	specs []ledger.AccountSpec
@@ -478,6 +922,77 @@ func assertNoImportRows(t *testing.T, ctx context.Context, pool queryRower, acco
 	if transactions != 0 {
 		t.Fatalf("transaction count = %d, want 0", transactions)
 	}
+}
+
+func importSingleBankingTxn(t *testing.T, ctx context.Context, pool queryRower, service *Service, accountID AccountID, txn revolutTestTxn) TransactionID {
+	t.Helper()
+	if txn.Reference == "" {
+		txn.Reference = txn.Payee
+	}
+	if txn.Balance.Currency == "" {
+		txn.Balance = money.Money{Amount: txn.Amount.Amount, Currency: txn.Amount.Currency}
+	}
+	_, err := service.ImportCSV(ctx, accountID, ImportFile{
+		Filename: txn.ID + ".csv",
+		Reader:   bytes.NewReader(revolutTestCSV(txn)),
+	})
+	if err != nil {
+		t.Fatalf("ImportCSV() for %q error = %v", txn.ID, err)
+	}
+	var id int64
+	if err := pool.QueryRow(ctx, `
+SELECT id
+FROM transactions
+WHERE account_id = $1
+	AND reference = $2
+ORDER BY id DESC
+LIMIT 1`, int64(accountID), txn.Reference).Scan(&id); err != nil {
+		t.Fatalf("load imported transaction %q: %v", txn.Reference, err)
+	}
+	return TransactionID(id)
+}
+
+func mustTransition(t *testing.T, ctx context.Context, service *Service, txnID TransactionID, to TransactionState, actor string) {
+	t.Helper()
+	if _, err := service.TransitionTransactionState(ctx, txnID, to, actor); err != nil {
+		t.Fatalf("TransitionTransactionState(%d, %s) error = %v", txnID, to, err)
+	}
+}
+
+func mustRecordSuggestion(t *testing.T, ctx context.Context, service *Service, txnID TransactionID, kind SuggestionKind, confidence float64, target string, explanation string) {
+	t.Helper()
+	if _, err := service.RecordSuggestion(ctx, SuggestionInput{
+		TransactionID: txnID,
+		Kind:          kind,
+		Confidence:    confidence,
+		Target:        target,
+		Explanation:   explanation,
+		CreatedBy:     "engine-run-test",
+	}); err != nil {
+		t.Fatalf("RecordSuggestion(%d, %s) error = %v", txnID, kind, err)
+	}
+}
+
+func assertStoredTransactionState(t *testing.T, ctx context.Context, pool queryRower, txnID TransactionID, want TransactionState) {
+	t.Helper()
+	var got string
+	if err := pool.QueryRow(ctx, `
+SELECT state::text
+FROM transactions
+WHERE id = $1`, int64(txnID)).Scan(&got); err != nil {
+		t.Fatalf("load transaction %d state: %v", txnID, err)
+	}
+	if TransactionState(got) != want {
+		t.Fatalf("transaction %d state = %q, want %q", txnID, got, want)
+	}
+}
+
+func transactionIDs(txns []Transaction) []TransactionID {
+	ids := make([]TransactionID, len(txns))
+	for i, txn := range txns {
+		ids[i] = txn.ID
+	}
+	return ids
 }
 
 type queryRower interface {
