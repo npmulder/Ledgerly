@@ -76,6 +76,20 @@ func (s *Service) List(ctx context.Context, filter InvoiceListFilter) (InvoiceLi
 	}, nil
 }
 
+// InvoicesIssuedBetween returns sent/paid invoices issued in the inclusive date
+// range that already have stored PDF assets.
+func (s *Service) InvoicesIssuedBetween(ctx context.Context, from time.Time, to time.Time) ([]Invoice, error) {
+	if s.pool == nil {
+		return nil, fmt.Errorf("invoicing: issued invoice export requires pool")
+	}
+	from = dateOnly(from)
+	to = dateOnly(to)
+	if from.IsZero() || to.IsZero() || from.After(to) {
+		return nil, fmt.Errorf("%w: issued invoice date range is invalid", ErrInvalidInvoiceListFilter)
+	}
+	return s.store.InvoicesIssuedBetween(ctx, s.pool, from, to)
+}
+
 // Totals returns footer totals for the filtered invoice set. Pagination fields
 // are deliberately ignored because the footer describes the whole filter.
 func (s *Service) Totals(ctx context.Context, filter InvoiceListFilter) (InvoiceTotalsSummary, error) {

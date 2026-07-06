@@ -144,9 +144,10 @@ func dashboardComponents() map[string]any {
 			},
 			"DashboardRecentInvoice": map[string]any{
 				"type":                 "object",
-				"required":             []string{"number", "client", "amount", "status"},
+				"required":             []string{"id", "number", "client", "amount", "status"},
 				"additionalProperties": false,
 				"properties": map[string]any{
+					"id":           map[string]any{"type": "string"},
 					"number":       map[string]any{"type": "string", "nullable": true},
 					"client":       map[string]any{"type": "string"},
 					"amount":       map[string]any{"$ref": "#/components/schemas/DashboardMoney"},

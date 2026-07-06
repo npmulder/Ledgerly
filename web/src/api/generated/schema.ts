@@ -204,6 +204,86 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/dividends/declarations/{id}/documents/render": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Render and store dividend documents
+         * @description Explicit recovery action for render failures. If immutable voucher and minutes assets are already stored, they are returned unchanged.
+         */
+        post: operations["dividendsRenderDeclarationDocuments"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/dividends/declarations/{id}/minutes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Redirect to a stored board minutes PDF asset
+         * @description Redirects to the immutable stored board minutes PDF asset.
+         */
+        get: operations["dividendsGetMinutesPDF"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/dividends/declarations/{id}/print": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Return dividend document print route payload
+         * @description Returns the declaration-time snapshot payload consumed by the React dividend voucher and board-minutes print routes.
+         */
+        get: operations["dividendsGetDeclarationDocumentPayload"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/dividends/declarations/{id}/voucher": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Redirect to a stored dividend voucher PDF asset
+         * @description Redirects to the immutable stored dividend voucher PDF asset.
+         */
+        get: operations["dividendsGetVoucherPDF"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/dla/balance": {
         parameters: {
             query?: never;
@@ -782,6 +862,126 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/reports/calendar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Return filing calendar
+         * @description Returns the current filing calendar enriched with due-date status colors for reports and advisor surfaces.
+         */
+        get: operations["reportsGetFilingCalendar"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/reports/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Generate and download an accountant export pack
+         * @description Generates or reuses the immutable export-pack ZIP for an inclusive posting-date range and redirects to the stored archive asset.
+         */
+        get: operations["reportsExportPack"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/reports/pl": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Return profit and loss for a period
+         * @description Returns income grouped by client/currency, realised FX gains, expenses by account category, corporate tax, and net profit for an inclusive posting-date range.
+         */
+        get: operations["reportsGetProfitAndLoss"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/reports/profit-ytd": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Return year-to-date profit
+         * @description Returns net profit for the company financial year identified by taxYear.
+         */
+        get: operations["reportsGetProfitYTD"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/reports/share": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Share an export pack with an accountant
+         * @description Emails the export-pack ZIP as an attachment when it is within the platform mail size guard; larger packs return a manual-send response.
+         */
+        post: operations["reportsShareExportPack"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/reports/vat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Return VAT return figures for a quarter
+         * @description Returns Isle of Man VAT return boxes 1, 4, and 6 plus net position for a calendar quarter period.
+         */
+        get: operations["reportsGetVATReturn"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/healthz": {
         parameters: {
             query?: never;
@@ -1157,6 +1357,7 @@ export interface components {
             amount: components["schemas"]["DashboardMoney"];
             client: string;
             days_overdue?: number | null;
+            id: string;
             number: string | null;
             status: string;
         };
@@ -1193,6 +1394,70 @@ export interface components {
         DashboardToReconcile: {
             accounts: components["schemas"]["DashboardReconcileAccount"][];
             review_queue: components["schemas"]["DashboardReviewQueueItem"][];
+        };
+        DividendsAddress: {
+            country: string;
+            line1: string;
+            line2: string;
+            locality: string;
+            postal_code: string;
+            region: string;
+        };
+        DividendsCompanySnapshot: {
+            company_number: string;
+            director_name: string;
+            legal_name: string;
+            registered_office: components["schemas"]["DividendsAddress"];
+            trading_name: string;
+        };
+        DividendsDeclaration: {
+            amount: components["schemas"]["DividendsMoney"];
+            company_snapshot?: components["schemas"]["DividendsCompanySnapshot"] | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            declared_date: string;
+            headroom_snapshot?: components["schemas"]["DividendsHeadroomBreakdown"] | null;
+            id: string;
+            minutes_asset: string | null;
+            per_share: components["schemas"]["DividendsMoney"];
+            shareholder_name: string;
+            shareholder_snapshot?: components["schemas"]["DividendsShareholderSnapshot"] | null;
+            /** Format: int64 */
+            shares: number;
+            voucher_asset: string | null;
+            withholding_snapshot?: components["schemas"]["DividendsWithholdingSnapshot"] | null;
+        };
+        DividendsDocumentPayload: {
+            declaration: components["schemas"]["DividendsDeclaration"];
+        };
+        DividendsHeadroomBreakdown: {
+            /** Format: date-time */
+            as_of: string;
+            available: components["schemas"]["DividendsMoney"];
+            distributable: boolean;
+            financial_year: string;
+            lines: components["schemas"]["DividendsMoneyLine"][];
+        };
+        DividendsMoney: {
+            /** Format: int64 */
+            amount: number;
+            currency: string;
+        };
+        DividendsMoneyLine: {
+            amount: components["schemas"]["DividendsMoney"];
+            label: string;
+        };
+        DividendsShareholderSnapshot: {
+            class: string;
+            name: string;
+            /** Format: int64 */
+            shares: number;
+        };
+        DividendsWithholdingSnapshot: {
+            note: string;
+            policy: string;
+            tax_year: string;
         };
         FieldError: {
             detail: string;
@@ -1650,6 +1915,97 @@ export interface components {
             locality: string;
             postal_code: string;
             region: string;
+        };
+        ReportsArchiveRef: {
+            data_version: string;
+            /** Format: date-time */
+            generated_at: string;
+            sha256: string;
+            /** Format: int64 */
+            size_bytes: number;
+            /** Format: uri-reference */
+            url: string;
+        };
+        ReportsExpenseLine: {
+            account_code: string;
+            account_name: string;
+            amount: components["schemas"]["ReportsMoney"];
+        };
+        ReportsFiling: {
+            authority: string;
+            /** Format: int32 */
+            days_until: number;
+            /** Format: date */
+            due_date: string;
+            key: string;
+            label: string;
+            /** @enum {string} */
+            status: "upcoming" | "due-soon" | "overdue";
+        };
+        ReportsFilingCalendarResponse: {
+            filings: components["schemas"]["ReportsFiling"][];
+        };
+        ReportsIncomeLine: {
+            amount: components["schemas"]["ReportsMoney"];
+            client_id: string;
+            client_name: string;
+            currency: string;
+            label: string;
+        };
+        ReportsLineItem: {
+            amount: components["schemas"]["ReportsMoney"];
+            label: string;
+        };
+        ReportsMoney: {
+            /** Format: int64 */
+            amount_minor: number;
+            currency: string;
+        };
+        ReportsPLResponse: {
+            corporate_tax: components["schemas"]["ReportsTaxLine"];
+            expense_total: components["schemas"]["ReportsMoney"];
+            expenses: components["schemas"]["ReportsExpenseLine"][];
+            income: components["schemas"]["ReportsIncomeLine"][];
+            income_total: components["schemas"]["ReportsMoney"];
+            net_profit: components["schemas"]["ReportsMoney"];
+            period: components["schemas"]["ReportsPeriod"];
+            profit_before_tax: components["schemas"]["ReportsMoney"];
+            realised_fx_gains: components["schemas"]["ReportsLineItem"];
+            tax_year: string;
+        };
+        ReportsPeriod: {
+            /** Format: date */
+            from: string;
+            /** Format: date */
+            to: string;
+        };
+        ReportsProfitYTDResponse: {
+            profit: components["schemas"]["ReportsMoney"];
+            tax_year: string;
+        };
+        ReportsShareRequest: {
+            /** Format: email */
+            email: string;
+            period: components["schemas"]["ReportsPeriod"];
+        };
+        ReportsShareResponse: {
+            archive: components["schemas"]["ReportsArchiveRef"];
+            message: string;
+            /** @enum {string} */
+            status: "sent" | "manual-send";
+        };
+        ReportsTaxLine: {
+            amount: components["schemas"]["ReportsMoney"];
+            label: string;
+            rate: string;
+            tax_year: string;
+        };
+        ReportsVATResponse: {
+            box1: components["schemas"]["ReportsMoney"];
+            box4: components["schemas"]["ReportsMoney"];
+            box6: components["schemas"]["ReportsMoney"];
+            net_position: components["schemas"]["ReportsMoney"];
+            period: components["schemas"]["ReportsPeriod"];
         };
         Shareholder: {
             class: string;
@@ -2402,6 +2758,182 @@ export interface operations {
                 };
                 content: {
                     "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    dividendsRenderDeclarationDocuments: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Declaration with document assets */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DividendsDeclaration"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Declaration was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Declaration cannot be rendered */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ValidationProblem"];
+                };
+            };
+        };
+    };
+    dividendsGetMinutesPDF: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Redirect to stored board minutes PDF asset */
+            302: {
+                headers: {
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Board minutes PDF asset was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ValidationProblem"];
+                };
+            };
+        };
+    };
+    dividendsGetDeclarationDocumentPayload: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Dividend document payload */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DividendsDocumentPayload"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Declaration was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Declaration is missing document snapshots */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ValidationProblem"];
+                };
+            };
+        };
+    };
+    dividendsGetVoucherPDF: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Redirect to stored voucher PDF asset */
+            302: {
+                headers: {
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Voucher PDF asset was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ValidationProblem"];
                 };
             };
         };
@@ -4151,6 +4683,281 @@ export interface operations {
             };
             /** @description Rate was not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    reportsGetFilingCalendar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Filing calendar */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportsFilingCalendarResponse"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Company profile not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    reportsExportPack: {
+        parameters: {
+            query: {
+                /** @description Inclusive posting date lower bound. */
+                from: string;
+                /** @description Inclusive posting date upper bound. */
+                to: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Redirect to stored export ZIP asset */
+            302: {
+                headers: {
+                    /** @description Immutable export ZIP asset URL. */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid export query */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Company profile not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    reportsGetProfitAndLoss: {
+        parameters: {
+            query: {
+                /** @description Inclusive posting date lower bound. */
+                from: string;
+                /** @description Inclusive posting date upper bound. */
+                to: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Profit and loss report */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportsPLResponse"];
+                };
+            };
+            /** @description Invalid reports P&L query */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    reportsGetProfitYTD: {
+        parameters: {
+            query: {
+                /** @description Tax year in YYYY-YY form, for example 2026-27. */
+                taxYear: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Profit YTD */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportsProfitYTDResponse"];
+                };
+            };
+            /** @description Invalid profit YTD query */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Company profile not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    reportsShareExportPack: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReportsShareRequest"];
+            };
+        };
+        responses: {
+            /** @description Share result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportsShareResponse"];
+                };
+            };
+            /** @description Invalid share request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Company profile not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    reportsGetVATReturn: {
+        parameters: {
+            query: {
+                /** @description Calendar VAT quarter in YYYY-QN form, for example 2026-Q2. */
+                period: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description VAT return figures */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportsVATResponse"];
+                };
+            };
+            /** @description Invalid VAT return query */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

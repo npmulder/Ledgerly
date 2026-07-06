@@ -35,7 +35,7 @@ var (
 		"ledger":       dependencySet(),
 		"moneyfx":      dependencySet("ledger", "invoicing"),
 		"platform":     dependencySet(),
-		"reports":      dependencySet("ledger", "jurisdiction", "identity", "invoicing"),
+		"reports":      dependencySet("ledger", "jurisdiction", "identity", "invoicing", "dla"),
 	}
 	rateLiteralAllowedModules = []string{"jurisdiction"}
 	guardedLiterals           = []string{"0.20", "0.10", "0.21", "6500", "14750"}

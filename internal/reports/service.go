@@ -30,15 +30,24 @@ const (
 var (
 	ErrInvalidPeriod   = errors.New("reports: invalid period")
 	ErrInvalidTaxYear  = errors.New("reports: invalid tax year")
+	ErrInvalidShare    = errors.New("reports: invalid share request")
 	ErrMissingProvider = errors.New("reports: missing provider")
 )
 
 // Service composes existing module read APIs into derived report read models.
 type Service struct {
-	ledger    Ledger
-	identity  Identity
-	invoicing Invoicing
-	clock     clock.Clock
+	ledger         Ledger
+	identity       Identity
+	facts          CompanyFactsProvider
+	invoicing      Invoicing
+	dla            DLA
+	dividends      DividendDocumentProvider
+	archiveStore   ExportArchiveStore
+	pdfEngine      PLPDFEngine
+	mailer         Mailer
+	clock          clock.Clock
+	appVersion     string
+	shareSizeLimit int64
 }
 
 var _ Reports = (*Service)(nil)
@@ -53,12 +62,64 @@ func WithClock(clk clock.Clock) Option {
 	}
 }
 
+// WithDLA injects the director's loan read API used by export packs.
+func WithDLA(api DLA) Option {
+	return func(s *Service) {
+		s.dla = api
+	}
+}
+
+// WithDividendDocuments injects the optional dividend document provider.
+func WithDividendDocuments(provider DividendDocumentProvider) Option {
+	return func(s *Service) {
+		s.dividends = provider
+	}
+}
+
+// WithExportArchiveStore injects immutable archive/document asset storage.
+func WithExportArchiveStore(store ExportArchiveStore) Option {
+	return func(s *Service) {
+		s.archiveStore = store
+	}
+}
+
+// WithPLPDFEngine injects the renderer for pl.pdf.
+func WithPLPDFEngine(engine PLPDFEngine) Option {
+	return func(s *Service) {
+		s.pdfEngine = engine
+	}
+}
+
+// WithMailer injects the platform mail sender used by share with accountant.
+func WithMailer(sender Mailer) Option {
+	return func(s *Service) {
+		s.mailer = sender
+	}
+}
+
+// WithAppVersion records the app version in generated export manifests.
+func WithAppVersion(version string) Option {
+	return func(s *Service) {
+		s.appVersion = strings.TrimSpace(version)
+	}
+}
+
+// WithShareSizeLimit overrides the attachment size guard for tests.
+func WithShareSizeLimit(limit int64) Option {
+	return func(s *Service) {
+		if limit >= 0 {
+			s.shareSizeLimit = limit
+		}
+	}
+}
+
 // New returns the reports read API. Reports v1 is derived reads only; it owns no
 // persistence or cache.
 func New(ledgerAPI Ledger, identityAPI Identity, invoicingAPI Invoicing, opts ...Option) *Service {
 	service := &Service{
 		ledger:    ledgerAPI,
 		identity:  identityAPI,
+		facts:     identityAPI,
 		invoicing: invoicingAPI,
 		clock:     clock.New(),
 	}
@@ -67,6 +128,12 @@ func New(ledgerAPI Ledger, identityAPI Identity, invoicingAPI Invoicing, opts ..
 	}
 	if service.clock == nil {
 		service.clock = clock.New()
+	}
+	if service.appVersion == "" {
+		service.appVersion = "dev"
+	}
+	if service.shareSizeLimit == 0 {
+		service.shareSizeLimit = defaultShareAttachmentLimit
 	}
 	return service
 }
@@ -77,7 +144,9 @@ func NewService(identityAPI CompanyFactsProvider, opts ...Option) (*Service, err
 	if identityAPI == nil {
 		return nil, fmt.Errorf("reports: identity facts provider is required")
 	}
-	return New(nil, identityAPI, nil, opts...), nil
+	service := New(nil, nil, nil, opts...)
+	service.facts = identityAPI
+	return service, nil
 }
 
 // ProfitAndLoss returns the inclusive-period P&L using frozen ledger GBP
@@ -99,10 +168,10 @@ func (s *Service) ProfitAndLoss(ctx context.Context, period Period) (PL, error) 
 // ProfitYTD returns net profit for the company financial year identified by
 // taxYear, using the identity year end rather than the calendar year.
 func (s *Service) ProfitYTD(ctx context.Context, taxYear string) (money.Money, error) {
-	if s.identity == nil {
+	if s.facts == nil {
 		return money.Money{}, fmt.Errorf("identity: %w", ErrMissingProvider)
 	}
-	facts, err := s.identity.CompanyFacts(ctx)
+	facts, err := s.facts.CompanyFacts(ctx)
 	if err != nil {
 		return money.Money{}, err
 	}

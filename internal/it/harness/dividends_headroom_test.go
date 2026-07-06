@@ -3,8 +3,14 @@
 package harness_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	nethttp "net/http"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -211,6 +217,197 @@ func TestDividendsDeclareHarnessWritesDeclarationLedgerDLAAndEvent(t *testing.T)
 	it.AssertLedgerBalanced(t, h)
 }
 
+func TestDividendsDeclareSchedulesDocumentRenderAfterCommitWithRetry(t *testing.T) {
+	ctx := context.Background()
+	h := newDividendsHarness(t)
+	loadDividendsPack(t, "")
+	postRetainedEarnings(t, h, "2025-03-31", 2_000_000)
+	engine := newRecordingDividendDocumentPDFEngine(1)
+	assets := &recordingDividendDocumentAssetStore{}
+	var logs bytes.Buffer
+	service := newDividendsService(
+		t,
+		h,
+		dividends.WithDocumentPDFEngine(engine),
+		dividends.WithDocumentAssetStore(assets),
+		dividends.WithDocumentRetryBackoff(0),
+		dividends.WithLogger(slog.New(slog.NewTextHandler(&logs, nil))),
+	)
+
+	declaration, err := service.Declare(ctx, harnessMoney(300_000))
+	if err != nil {
+		t.Fatalf("Declare() error = %v", err)
+	}
+	if declaration.VoucherAsset != nil || declaration.MinutesAsset != nil {
+		t.Fatalf("Declare() assets = voucher %v minutes %v, want async render after response", declaration.VoucherAsset, declaration.MinutesAsset)
+	}
+
+	waitForDividendDocumentAssets(t, service, declaration.ID, "test-dividend-document-1", "test-dividend-document-2", func() string {
+		return fmt.Sprintf("attempts=%d asset_calls=%d logs=%q", engine.attemptCount(), assets.callCount(), logs.String())
+	})
+	if got := engine.attemptCount(); got != 3 {
+		t.Fatalf("document render attempts = %d, want voucher failure then voucher/minutes retry", got)
+	}
+	if got := assets.callCount(); got != 2 {
+		t.Fatalf("document asset store calls = %d, want voucher and minutes", got)
+	}
+	if !strings.Contains(logs.String(), "dividend document render failed") {
+		t.Fatalf("logs = %q, want render failure log", logs.String())
+	}
+}
+
+func TestDividendsDocumentRenderFailureLeavesDeclarationAndRecoverySucceeds(t *testing.T) {
+	ctx := context.Background()
+	h := newDividendsHarness(t)
+	loadDividendsPack(t, "")
+	postRetainedEarnings(t, h, "2025-03-31", 2_000_000)
+	engine := newRecordingDividendDocumentPDFEngine(10)
+	assets := &recordingDividendDocumentAssetStore{}
+	service := newDividendsService(
+		t,
+		h,
+		dividends.WithDocumentPDFEngine(engine),
+		dividends.WithDocumentAssetStore(assets),
+		dividends.WithDocumentRetryBackoff(0),
+	)
+
+	declaration, err := service.Declare(ctx, harnessMoney(300_000))
+	if err != nil {
+		t.Fatalf("Declare() error = %v", err)
+	}
+	waitForDividendDocumentAttempts(t, engine, 3)
+	persisted, err := service.Declaration(ctx, declaration.ID)
+	if err != nil {
+		t.Fatalf("Declaration() after render failures error = %v", err)
+	}
+	if persisted.VoucherAsset != nil || persisted.MinutesAsset != nil {
+		t.Fatalf("Declaration assets after failed renders = voucher %v minutes %v, want nil", persisted.VoucherAsset, persisted.MinutesAsset)
+	}
+
+	engine.setFailures(0)
+	recovered, err := service.RenderDeclarationDocumentsNow(ctx, declaration.ID)
+	if err != nil {
+		t.Fatalf("RenderDeclarationDocumentsNow() recovery error = %v", err)
+	}
+	if recovered.VoucherAsset == nil || *recovered.VoucherAsset != "test-dividend-document-1" ||
+		recovered.MinutesAsset == nil || *recovered.MinutesAsset != "test-dividend-document-2" {
+		t.Fatalf("recovered assets = voucher %v minutes %v, want test asset ids", recovered.VoucherAsset, recovered.MinutesAsset)
+	}
+}
+
+func TestDividendsDocumentsAreImmutableAndPreviewPayloadUsesSnapshotsAfterIdentityChange(t *testing.T) {
+	ctx := context.Background()
+	h := newDividendsHarness(t)
+	loadDividendsPack(t, "")
+	postRetainedEarnings(t, h, "2025-03-31", 2_000_000)
+	engine := newRecordingDividendDocumentPDFEngine(0)
+	assets := &recordingDividendDocumentAssetStore{}
+	service := newDividendsService(
+		t,
+		h,
+		dividends.WithDocumentPDFEngine(engine),
+		dividends.WithDocumentAssetStore(assets),
+		dividends.WithDocumentRetryBackoff(0),
+	)
+
+	declaration, err := service.Declare(ctx, harnessMoney(300_000))
+	if err != nil {
+		t.Fatalf("Declare() error = %v", err)
+	}
+	waitForDividendDocumentAssets(t, service, declaration.ID, "test-dividend-document-1", "test-dividend-document-2", func() string {
+		return fmt.Sprintf("attempts=%d asset_calls=%d", engine.attemptCount(), assets.callCount())
+	})
+	firstVoucher := assets.bytesAt(0)
+	firstMinutes := assets.bytesAt(1)
+
+	renamedLegalName := "Renamed NPM Limited"
+	renamedTradingName := "Renamed Trading"
+	renamedShareholders := []identity.Shareholder{{Name: "Changed Shareholder", Shares: 100, Class: "ordinary £1"}}
+	identityService := identity.NewTransactionalProfileService(testdb.AsModule(t, "identity"), h.Bus)
+	if err := identityService.UpdateProfile(ctx, identity.UpdateProfilePatch{
+		LegalName:    &renamedLegalName,
+		TradingName:  &renamedTradingName,
+		Shareholders: &renamedShareholders,
+	}); err != nil {
+		t.Fatalf("UpdateProfile() error = %v", err)
+	}
+
+	payload, err := service.DeclarationDocumentPayload(ctx, declaration.ID)
+	if err != nil {
+		t.Fatalf("DeclarationDocumentPayload() after identity change error = %v", err)
+	}
+	if payload.Declaration.CompanySnapshot == nil || payload.Declaration.CompanySnapshot.LegalName != "NPM Limited" {
+		t.Fatalf("company snapshot = %#v, want original NPM Limited", payload.Declaration.CompanySnapshot)
+	}
+	if payload.Declaration.ShareholderSnapshot == nil || payload.Declaration.ShareholderSnapshot.Name != "N. Meyer" {
+		t.Fatalf("shareholder snapshot = %#v, want original N. Meyer", payload.Declaration.ShareholderSnapshot)
+	}
+
+	engine.setVersion("changed-after-identity-update")
+	after, err := service.RenderDeclarationDocumentsNow(ctx, declaration.ID)
+	if err != nil {
+		t.Fatalf("RenderDeclarationDocumentsNow() after identity change error = %v", err)
+	}
+	if after.VoucherAsset == nil || *after.VoucherAsset != "test-dividend-document-1" ||
+		after.MinutesAsset == nil || *after.MinutesAsset != "test-dividend-document-2" {
+		t.Fatalf("assets after recovery render = voucher %v minutes %v, want originals", after.VoucherAsset, after.MinutesAsset)
+	}
+	if got := assets.callCount(); got != 2 {
+		t.Fatalf("asset store calls after immutable recovery render = %d, want unchanged 2", got)
+	}
+	if !bytes.Equal(assets.bytesAt(0), firstVoucher) || !bytes.Equal(assets.bytesAt(1), firstMinutes) {
+		t.Fatal("stored dividend document PDF bytes changed after identity update and recovery render")
+	}
+}
+
+func TestDividendsDocumentPrintPayloadHTTPUsesDeclarationSnapshots(t *testing.T) {
+	ctx := context.Background()
+	h := newDividendsHarness(t)
+	loadDividendsPack(t, "")
+	postRetainedEarnings(t, h, "2025-03-31", 2_000_000)
+	service := newDividendsService(t, h)
+
+	declaration, err := service.Declare(ctx, harnessMoney(300_000))
+	if err != nil {
+		t.Fatalf("Declare() error = %v", err)
+	}
+
+	renamedLegalName := "Renamed NPM Limited"
+	identityService := identity.NewTransactionalProfileService(testdb.AsModule(t, "identity"), h.Bus)
+	if err := identityService.UpdateProfile(ctx, identity.UpdateProfilePatch{LegalName: &renamedLegalName}); err != nil {
+		t.Fatalf("UpdateProfile() error = %v", err)
+	}
+
+	req, err := nethttp.NewRequestWithContext(ctx, nethttp.MethodGet, "/api/dividends/declarations/"+string(declaration.ID)+"/print", nil)
+	if err != nil {
+		t.Fatalf("create print payload request: %v", err)
+	}
+	resp, err := h.Do(req)
+	if err != nil {
+		t.Fatalf("GET dividend print payload: %v", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read print payload body: %v", err)
+	}
+	if resp.StatusCode != nethttp.StatusOK {
+		t.Fatalf("GET dividend print payload status = %d, want 200; body=%s", resp.StatusCode, string(body))
+	}
+	var payload dividends.DividendDocumentPayload
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("decode print payload: %v; body=%s", err, string(body))
+	}
+	if payload.Declaration.CompanySnapshot == nil || payload.Declaration.CompanySnapshot.LegalName != "NPM Limited" {
+		t.Fatalf("HTTP company snapshot = %#v, want declaration-time NPM Limited", payload.Declaration.CompanySnapshot)
+	}
+	if payload.Declaration.HeadroomSnapshot == nil || payload.Declaration.HeadroomSnapshot.Available.Amount != 2_000_000 {
+		t.Fatalf("HTTP headroom snapshot = %#v, want declaration-time £20,000.00", payload.Declaration.HeadroomSnapshot)
+	}
+}
+
 func TestDividendsDeclareRejectsOverHeadroomWithoutWrites(t *testing.T) {
 	ctx := context.Background()
 	h := newDividendsHarness(t)
@@ -335,20 +532,24 @@ func newDividendsHarness(t testing.TB) *harness.Harness {
 	return h
 }
 
-func newDividendsService(t testing.TB, h *harness.Harness) *dividends.Service {
+func newDividendsService(t testing.TB, h *harness.Harness, opts ...dividends.Option) *dividends.Service {
 	t.Helper()
 
 	identityService := identity.NewTransactionalProfileService(testdb.AsModule(t, "identity"), h.Bus)
 	ledgerService := ledger.New(h.LedgerPool, h.Bus)
 	reportsService := reports.New(ledgerService, identityService, dividendsTestInvoicing{})
+	serviceOpts := []dividends.Option{
+		dividends.WithDLA(dla.NewWithBusAndClock(h.DLAPool, h.Bus, h.Clock, ledgerService)),
+		dividends.WithBus(h.Bus),
+		dividends.WithClock(h.Clock),
+	}
+	serviceOpts = append(serviceOpts, opts...)
 	return dividends.New(
 		testdb.AsModule(t, dividends.ModuleName),
 		ledgerService,
 		reportsService,
 		identityService,
-		dividends.WithDLA(dla.NewWithBusAndClock(h.DLAPool, h.Bus, h.Clock, ledgerService)),
-		dividends.WithBus(h.Bus),
-		dividends.WithClock(h.Clock),
+		serviceOpts...,
 	)
 }
 
@@ -613,10 +814,145 @@ func (dividendsTestInvoicing) InvoiceByNumber(context.Context, string) (invoicin
 	return invoicing.Invoice{}, errors.New("unexpected invoice lookup")
 }
 
+func (dividendsTestInvoicing) InvoicesIssuedBetween(context.Context, time.Time, time.Time) ([]invoicing.Invoice, error) {
+	return nil, errors.New("unexpected issued invoice lookup")
+}
+
 func (dividendsTestInvoicing) InvoiceVATContextBySendEntryID(context.Context, ledger.EntryID) (invoicing.InvoiceVATContext, error) {
 	return invoicing.InvoiceVATContext{}, errors.New("unexpected invoice VAT context lookup")
 }
 
 func (dividendsTestInvoicing) Client(context.Context, string) (invoicing.Client, error) {
 	return invoicing.Client{}, errors.New("unexpected client lookup")
+}
+
+type recordingDividendDocumentPDFEngine struct {
+	mu       sync.Mutex
+	failures int
+	attempts int
+	version  string
+}
+
+func newRecordingDividendDocumentPDFEngine(failures int) *recordingDividendDocumentPDFEngine {
+	return &recordingDividendDocumentPDFEngine{
+		failures: failures,
+		version:  "initial",
+	}
+}
+
+func (e *recordingDividendDocumentPDFEngine) RenderDividendVoucherPDF(_ context.Context, payload dividends.DividendDocumentPayload) ([]byte, error) {
+	return e.render("voucher", payload)
+}
+
+func (e *recordingDividendDocumentPDFEngine) RenderBoardMinutesPDF(_ context.Context, payload dividends.DividendDocumentPayload) ([]byte, error) {
+	return e.render("minutes", payload)
+}
+
+func (e *recordingDividendDocumentPDFEngine) render(kind string, payload dividends.DividendDocumentPayload) ([]byte, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.attempts++
+	if e.attempts <= e.failures {
+		return nil, errors.New("forced dividend document render failure")
+	}
+	company := ""
+	if payload.Declaration.CompanySnapshot != nil {
+		company = payload.Declaration.CompanySnapshot.LegalName
+	}
+	data := fmt.Sprintf("%%PDF-1.4\n%s\n%s\n%s\n%%%%EOF\n", kind, company, e.version)
+	return []byte(data), nil
+}
+
+func (e *recordingDividendDocumentPDFEngine) attemptCount() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.attempts
+}
+
+func (e *recordingDividendDocumentPDFEngine) setFailures(failures int) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.failures = failures
+}
+
+func (e *recordingDividendDocumentPDFEngine) setVersion(version string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.version = version
+}
+
+type recordingDividendDocumentAssetStore struct {
+	mu    sync.Mutex
+	bytes [][]byte
+}
+
+func (s *recordingDividendDocumentAssetStore) StoreDividendDocumentPDF(_ context.Context, pdf []byte) (identity.AssetID, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.bytes = append(s.bytes, append([]byte{}, pdf...))
+	return identity.AssetID(fmt.Sprintf("test-dividend-document-%d", len(s.bytes))), nil
+}
+
+func (s *recordingDividendDocumentAssetStore) callCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.bytes)
+}
+
+func (s *recordingDividendDocumentAssetStore) bytesAt(i int) []byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]byte{}, s.bytes[i]...)
+}
+
+func waitForDividendDocumentAssets(
+	t testing.TB,
+	service *dividends.Service,
+	id dividends.DeclarationID,
+	wantVoucher identity.AssetID,
+	wantMinutes identity.AssetID,
+	debug func() string,
+) {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		declaration, err := service.Declaration(context.Background(), id)
+		if err != nil {
+			t.Fatalf("Declaration(%s) while waiting for documents: %v", id, err)
+		}
+		if declaration.VoucherAsset != nil && *declaration.VoucherAsset == wantVoucher &&
+			declaration.MinutesAsset != nil && *declaration.MinutesAsset == wantMinutes {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("timed out waiting for document assets %s/%s; declaration assets = %v/%v; %s",
+				wantVoucher,
+				wantMinutes,
+				declaration.VoucherAsset,
+				declaration.MinutesAsset,
+				debug(),
+			)
+		case <-tick.C:
+		}
+	}
+}
+
+func waitForDividendDocumentAttempts(t testing.TB, engine *recordingDividendDocumentPDFEngine, want int) {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		if got := engine.attemptCount(); got >= want {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("timed out waiting for %d document render attempts; got %d", want, engine.attemptCount())
+		case <-tick.C:
+		}
+	}
 }

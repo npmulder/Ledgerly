@@ -177,7 +177,7 @@ func validateAssetUpload(upload AssetUpload) (validatedAsset, error) {
 		return validatedAsset{}, err
 	}
 	data := append([]byte{}, upload.Bytes...)
-	if len(data) == 0 || !bytes.HasPrefix(bytes.TrimSpace(data), []byte("%PDF-")) {
+	if !documentBytesMatchMIME(data, mediaType) {
 		return validatedAsset{}, fmt.Errorf("%w: %s", ErrUnsupportedAsset, mediaType)
 	}
 	return validatedAsset{
@@ -209,10 +209,21 @@ func normalizeDocumentAssetMIME(value string) (string, error) {
 	}
 	mediaType = strings.ToLower(mediaType)
 	switch mediaType {
-	case "application/pdf":
+	case "application/pdf", "application/zip":
 		return mediaType, nil
 	default:
 		return "", fmt.Errorf("%w: %s", ErrUnsupportedAsset, mediaType)
+	}
+}
+
+func documentBytesMatchMIME(data []byte, mediaType string) bool {
+	switch mediaType {
+	case "application/pdf":
+		return len(data) > 0 && bytes.HasPrefix(bytes.TrimSpace(data), []byte("%PDF-"))
+	case "application/zip":
+		return len(data) >= 4 && bytes.Equal(data[:4], []byte("PK\x03\x04"))
+	default:
+		return false
 	}
 }
 
