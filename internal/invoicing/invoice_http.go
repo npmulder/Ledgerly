@@ -190,7 +190,7 @@ func (h invoiceHandler) lockedRateForInvoice(r *nethttp.Request, invoice Invoice
 	if err != nil {
 		return lockedRateResponse{}, err
 	}
-	return lockedRateResponse{ID: lock.ID, Rate: lock.Rate}, nil
+	return lockedRateResponse(lock), nil
 }
 
 func invoiceIDParam(r *nethttp.Request) string {
