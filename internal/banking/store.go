@@ -148,10 +148,10 @@ RETURNING id, account_id, filename, imported_at, total_rows, new_rows, duplicate
 	return summary, nil
 }
 
-func (Store) InsertTransaction(ctx context.Context, tx db.Tx, txn newTransaction) (bool, error) {
+func (Store) InsertTransaction(ctx context.Context, tx db.Tx, txn newTransaction) (TransactionID, bool, error) {
 	meta, err := marshalProviderMeta(txn.ProviderMeta)
 	if err != nil {
-		return false, err
+		return 0, false, err
 	}
 	var id int64
 	err = tx.QueryRow(ctx, `
@@ -189,12 +189,12 @@ RETURNING id`,
 		txn.DedupeHash,
 	).Scan(&id)
 	if err == nil {
-		return true, nil
+		return TransactionID(id), true, nil
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
+		return 0, false, nil
 	}
-	return false, fmt.Errorf("banking: insert transaction: %w", err)
+	return 0, false, fmt.Errorf("banking: insert transaction: %w", err)
 }
 
 func (Store) Transaction(ctx context.Context, tx db.Tx, id TransactionID) (Transaction, error) {
@@ -220,6 +220,67 @@ FOR UPDATE`, int64(id)))
 		return Transaction{}, fmt.Errorf("banking: lock transaction %d: %w", id, err)
 	}
 	return txn, nil
+}
+
+func (Store) MatchableTransactions(ctx context.Context, tx db.Tx) ([]Transaction, error) {
+	rows, err := tx.Query(ctx, transactionSelectSQL()+`
+WHERE state IN ('unreconciled', 'suggested')
+ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("banking: matchable transactions: %w", err)
+	}
+	defer rows.Close()
+	txns, err := pgx.CollectRows(rows, scanTransaction)
+	if err != nil {
+		return nil, fmt.Errorf("banking: collect matchable transactions: %w", err)
+	}
+	return txns, nil
+}
+
+func (Store) MatchableTransactionsByID(ctx context.Context, tx db.Tx, ids []TransactionID) ([]Transaction, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	intIDs := transactionIDsToInt64(ids)
+	rows, err := tx.Query(ctx, transactionSelectSQL()+`
+WHERE id = ANY($1::bigint[])
+	AND state IN ('unreconciled', 'suggested')
+ORDER BY array_position($1::bigint[], id)`, intIDs)
+	if err != nil {
+		return nil, fmt.Errorf("banking: matchable transactions by id: %w", err)
+	}
+	defer rows.Close()
+	txns, err := pgx.CollectRows(rows, scanTransaction)
+	if err != nil {
+		return nil, fmt.Errorf("banking: collect matchable transactions by id: %w", err)
+	}
+	return txns, nil
+}
+
+func (Store) InsertMatchEngineRun(ctx context.Context, tx db.Tx, trigger MatchEngineTrigger, txnIDs []TransactionID) (MatchEngineRun, error) {
+	var (
+		run            MatchEngineRun
+		id             int64
+		scannedTrigger string
+	)
+	if err := tx.QueryRow(ctx, `
+INSERT INTO match_engine_runs (trigger, txns_evaluated)
+VALUES ($1, $2::bigint[])
+RETURNING id, trigger, created_at`,
+		string(trigger),
+		transactionIDsToInt64(txnIDs),
+	).Scan(
+		&id,
+		&scannedTrigger,
+		&run.CreatedAt,
+	); err != nil {
+		return MatchEngineRun{}, fmt.Errorf("banking: insert match engine run: %w", err)
+	}
+	run.ID = MatchEngineRunID(id)
+	run.Trigger = MatchEngineTrigger(scannedTrigger)
+	run.TxnsEvaluated = append([]TransactionID{}, txnIDs...)
+	run.CreatedAt = run.CreatedAt.UTC()
+	return run, nil
 }
 
 func (s Store) TransitionTransactionState(ctx context.Context, tx db.Tx, id TransactionID, to TransactionState, actor string) (TransactionStateChange, error) {
@@ -298,14 +359,15 @@ WHERE txn_id = $1
 		return Suggestion{}, fmt.Errorf("banking: supersede active suggestion for transaction %d: %w", normalized.TransactionID, err)
 	}
 	return scanSuggestionRow(tx.QueryRow(ctx, `
-INSERT INTO suggestions (txn_id, kind, confidence, target, explanation, created_by)
-VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, txn_id, kind, confidence::float8, target, explanation, created_by, created_at, superseded_at`,
+INSERT INTO suggestions (txn_id, kind, confidence, target, explanation, auto_postable, created_by)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, txn_id, kind, confidence::float8, target, explanation, auto_postable, created_by, created_at, superseded_at`,
 		int64(normalized.TransactionID),
 		string(normalized.Kind),
 		normalized.Confidence,
 		normalized.Target,
 		normalized.Explanation,
+		normalized.AutoPostable,
 		normalized.CreatedBy,
 	))
 }
@@ -394,6 +456,45 @@ ORDER BY times_applied DESC, last_applied_at DESC NULLS LAST, id`, normalized)
 	return rules, nil
 }
 
+func (Store) PayeeRuleSuggestionRecorded(ctx context.Context, tx db.Tx, txnID TransactionID, accountCode ledger.AccountCode) (bool, error) {
+	var exists bool
+	if err := tx.QueryRow(ctx, `
+SELECT EXISTS (
+	SELECT 1
+	FROM suggestions
+	WHERE txn_id = $1
+		AND kind = 'payee-rule'
+		AND target = $2
+)`,
+		int64(txnID),
+		string(accountCode),
+	).Scan(&exists); err != nil {
+		return false, fmt.Errorf("banking: check payee rule suggestion for transaction %d: %w", txnID, err)
+	}
+	return exists, nil
+}
+
+func (Store) LearnPayeeRuleFromRecode(ctx context.Context, tx db.Tx, txn Transaction, accountCode ledger.AccountCode) (PayeeRule, error) {
+	matcher := NormalizePayee(txn.Payee)
+	code := ledger.AccountCode(strings.TrimSpace(string(accountCode)))
+	if matcher == "" {
+		return PayeeRule{}, fmt.Errorf("banking: recode payee is required: %w", ErrInvalidPayeeRule)
+	}
+	if code == "" {
+		return PayeeRule{}, fmt.Errorf("banking: recode account code is required: %w", ErrInvalidPayeeRule)
+	}
+	return scanPayeeRuleRow(tx.QueryRow(ctx, `
+INSERT INTO payee_rules (matcher, match_mode, account_code, times_applied, last_applied_at, created_from)
+VALUES ($1, 'exact', $2, 1, now(), 'recode')
+ON CONFLICT (matcher, match_mode, account_code)
+DO UPDATE SET times_applied = payee_rules.times_applied + 1,
+	last_applied_at = now()
+RETURNING id, matcher, match_mode, account_code, times_applied, last_applied_at, created_from, created_at`,
+		matcher,
+		string(code),
+	))
+}
+
 func (Store) Feed(ctx context.Context, tx db.Tx, filter FeedFilter) ([]Transaction, error) {
 	var (
 		fromDate any
@@ -447,6 +548,7 @@ SELECT `+transactionColumns("t")+`,
 	s.confidence::float8,
 	s.target,
 	s.explanation,
+	s.auto_postable,
 	s.created_by,
 	s.created_at,
 	s.superseded_at
@@ -560,6 +662,7 @@ func suggestionSelectSQL() string {
 	confidence::float8,
 	target,
 	explanation,
+	auto_postable,
 	created_by,
 	created_at,
 	superseded_at
@@ -694,6 +797,7 @@ func scanSuggestionRow(row suggestionRow) (Suggestion, error) {
 		&suggestion.Confidence,
 		&suggestion.Target,
 		&suggestion.Explanation,
+		&suggestion.AutoPostable,
 		&suggestion.CreatedBy,
 		&suggestion.CreatedAt,
 		&supersededAt,
@@ -785,6 +889,7 @@ func scanReviewQueueItem(row transactionRow) (ReviewQueueItem, error) {
 		&item.Suggestion.Confidence,
 		&item.Suggestion.Target,
 		&item.Suggestion.Explanation,
+		&item.Suggestion.AutoPostable,
 		&item.Suggestion.CreatedBy,
 		&item.Suggestion.CreatedAt,
 		&supersededAt,
@@ -865,6 +970,14 @@ func marshalProviderMeta(meta map[string]string) ([]byte, error) {
 	return data, nil
 }
 
+func transactionIDsToInt64(ids []TransactionID) []int64 {
+	intIDs := make([]int64, len(ids))
+	for i, id := range ids {
+		intIDs[i] = int64(id)
+	}
+	return intIDs
+}
+
 func validTransactionState(state TransactionState) bool {
 	switch state {
 	case TransactionStateUnreconciled,
@@ -899,6 +1012,7 @@ func normalizeSuggestionInput(input SuggestionInput) (SuggestionInput, error) {
 		Confidence:    input.Confidence,
 		Target:        strings.TrimSpace(input.Target),
 		Explanation:   strings.TrimSpace(input.Explanation),
+		AutoPostable:  input.AutoPostable,
 		CreatedBy:     strings.TrimSpace(input.CreatedBy),
 	}
 	if normalized.TransactionID <= 0 {

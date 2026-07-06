@@ -21,6 +21,7 @@ type ImportBatchID int64
 type SuggestionID int64
 type PayeeRuleID int64
 type TransactionStateChangeID int64
+type MatchEngineRunID int64
 
 type Provider string
 
@@ -130,6 +131,7 @@ type Suggestion struct {
 	Confidence    float64
 	Target        string
 	Explanation   string
+	AutoPostable  bool
 	CreatedBy     string
 	CreatedAt     time.Time
 	SupersededAt  *time.Time
@@ -141,6 +143,7 @@ type SuggestionInput struct {
 	Confidence    float64
 	Target        string
 	Explanation   string
+	AutoPostable  bool
 	CreatedBy     string
 }
 
@@ -206,6 +209,45 @@ type BatchSummary struct {
 	TotalRows     int
 	NewRows       int
 	DuplicateRows int
+}
+
+type MatchEngineTrigger string
+
+const (
+	MatchEngineTriggerImportCompletion MatchEngineTrigger = "import-completion"
+	MatchEngineTriggerInvoiceSent      MatchEngineTrigger = "invoicing.InvoiceSent"
+	MatchEngineTriggerManualRefresh    MatchEngineTrigger = "manual-refresh"
+)
+
+type MatchEngineRun struct {
+	ID            MatchEngineRunID
+	Trigger       MatchEngineTrigger
+	TxnsEvaluated []TransactionID
+	Suggestions   []Suggestion
+	CreatedAt     time.Time
+}
+
+type InvoiceMatchCandidate struct {
+	InvoiceID  string
+	Number     string
+	ClientName string
+	IssueDate  time.Time
+	DueDate    time.Time
+	TermsDays  int
+	Amount     money.Money
+	Status     string
+	Settled    bool
+}
+
+// InvoiceCandidateSource supplies already-known invoice facts to banking. It
+// keeps the scorer deterministic while avoiding a hard dependency on
+// invoicing's internal store shape.
+type InvoiceCandidateSource interface {
+	InvoiceCandidates(ctx context.Context, tx db.Tx, currency string) ([]InvoiceMatchCandidate, error)
+}
+
+type DirectorNameSource interface {
+	DirectorNames(ctx context.Context) ([]string, error)
 }
 
 // RawTxn is a parsed provider transaction before account-specific validation
