@@ -11,7 +11,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/npmulder/ledgerly/internal/ledger"
 	"github.com/npmulder/ledgerly/internal/platform/db"
 )
 
@@ -508,11 +507,12 @@ WHERE id = $1
 	return ErrInvoiceNotFound
 }
 
-func (s Store) SetInvoiceSent(ctx context.Context, tx db.Tx, id string, number string, lockID int64) (Invoice, error) {
+func (s Store) SetInvoiceSent(ctx context.Context, tx db.Tx, id string, number string, lockID int64, sendLedgerEntryID int64) (Invoice, error) {
 	updated, err := scanInvoiceRow(tx.QueryRow(ctx, `
 UPDATE invoicing.invoices
 SET number = $2,
 	lock_id = $3,
+	send_ledger_entry_id = $4,
 	status = 'sent',
 	updated_at = now()
 WHERE id = $1
@@ -521,6 +521,7 @@ RETURNING `+invoiceColumnsSQL(),
 		id,
 		number,
 		strconv.FormatInt(lockID, 10),
+		sendLedgerEntryID,
 	))
 	if errors.Is(err, ErrInvoiceNotFound) {
 		exists, existsErr := s.invoiceExists(ctx, tx, id)
@@ -570,6 +571,7 @@ func (s Store) RevertSentToDraft(ctx context.Context, tx db.Tx, id string) (Invo
 UPDATE invoicing.invoices
 SET number = NULL,
 	lock_id = NULL,
+	send_ledger_entry_id = NULL,
 	status = 'draft',
 	updated_at = now()
 WHERE id = $1
@@ -588,25 +590,6 @@ RETURNING `+invoiceColumnsSQL(), id))
 		}
 	}
 	return updated, err
-}
-
-func (Store) SendLedgerEntryID(ctx context.Context, tx db.Tx, number string) (ledger.EntryID, error) {
-	var id int64
-	err := tx.QueryRow(ctx, `
-SELECT id
-FROM ledger.journal_entries
-WHERE source_module = $1
-	AND source_ref = $2
-	AND reversal_of IS NULL
-ORDER BY id DESC
-LIMIT 1`, ModuleName, invoiceSendSourceRef(number)).Scan(&id)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return 0, ErrInvoicePostingNotFound
-	}
-	if err != nil {
-		return 0, fmt.Errorf("invoicing: load send ledger entry: %w", err)
-	}
-	return ledger.EntryID(id), nil
 }
 
 func (Store) NextNumber(ctx context.Context, tx db.Tx, year int) (string, error) {
@@ -663,6 +646,7 @@ func invoiceColumnsSQL() string {
 	due_date,
 	currency,
 	lock_id,
+	send_ledger_entry_id,
 	vat_treatment,
 	settlement_txn_ref,
 	settled_date,
@@ -680,6 +664,7 @@ func scanInvoiceRow(row clientRow) (Invoice, error) {
 		status           string
 		currency         string
 		lockID           sql.NullString
+		sendEntryID      sql.NullInt64
 		vatTreatment     string
 		settlementTxnRef sql.NullString
 		settledDate      sql.NullTime
@@ -696,6 +681,7 @@ func scanInvoiceRow(row clientRow) (Invoice, error) {
 		&invoice.DueDate,
 		&currency,
 		&lockID,
+		&sendEntryID,
 		&vatTreatment,
 		&settlementTxnRef,
 		&settledDate,
@@ -718,6 +704,9 @@ func scanInvoiceRow(row clientRow) (Invoice, error) {
 	invoice.Currency = Currency(currency)
 	if lockID.Valid {
 		invoice.LockID = &lockID.String
+	}
+	if sendEntryID.Valid {
+		invoice.SendLedgerEntryID = &sendEntryID.Int64
 	}
 	invoice.VATTreatment = VATTreatment(vatTreatment)
 	if settlementTxnRef.Valid {

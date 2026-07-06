@@ -322,20 +322,26 @@ func (s *Service) Send(ctx context.Context, id string) (_ Invoice, err error) {
 		return Invoice{}, err
 	}
 
-	sent, err := s.store.SetInvoiceSent(ctx, tx, draft.ID, number, lock.ID)
+	lockID := strconv.FormatInt(lock.ID, 10)
+	sentForPosting := draft
+	sentForPosting.Number = &number
+	sentForPosting.LockID = &lockID
+	sentForPosting.Status = InvoiceStatusSent
+
+	entry, err := invoiceSendJournalEntry(sentForPosting, lock)
+	if err != nil {
+		return Invoice{}, err
+	}
+	entryID, err := s.ledger.Post(ctx, tx, entry)
+	if err != nil {
+		return Invoice{}, fmt.Errorf("invoicing: post send ledger entry: %w", err)
+	}
+	sent, err := s.store.SetInvoiceSent(ctx, tx, draft.ID, number, lock.ID, int64(entryID))
 	if err != nil {
 		return Invoice{}, err
 	}
 	sent.Lines = draft.Lines
 	sent.Totals = draft.Totals
-
-	entry, err := invoiceSendJournalEntry(sent, lock)
-	if err != nil {
-		return Invoice{}, err
-	}
-	if _, err := s.ledger.Post(ctx, tx, entry); err != nil {
-		return Invoice{}, fmt.Errorf("invoicing: post send ledger entry: %w", err)
-	}
 	if err := s.publish(ctx, tx, InvoiceSent{
 		InvoiceID: sent.ID,
 		Number:    number,
@@ -447,10 +453,10 @@ func (s *Service) RevertToDraft(ctx context.Context, id string) (_ Invoice, err 
 	if err := validateRevertibleInvoice(invoice, dateOnly(s.now())); err != nil {
 		return Invoice{}, err
 	}
-	entryID, err := s.store.SendLedgerEntryID(ctx, tx, *invoice.Number)
-	if err != nil {
-		return Invoice{}, err
+	if invoice.SendLedgerEntryID == nil || *invoice.SendLedgerEntryID <= 0 {
+		return Invoice{}, ErrInvoicePostingNotFound
 	}
+	entryID := ledger.EntryID(*invoice.SendLedgerEntryID)
 	if _, err := s.ledger.Reverse(ctx, tx, entryID, "invoice reverted to draft"); err != nil {
 		return Invoice{}, fmt.Errorf("invoicing: reverse send ledger entry: %w", err)
 	}

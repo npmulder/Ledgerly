@@ -67,23 +67,24 @@ type Quantity string
 // Invoice is an invoice header, ordered lines, settlement metadata, and
 // computed totals. Totals are never stored.
 type Invoice struct {
-	ID               string        `json:"id"`
-	Number           *string       `json:"number"`
-	ClientID         string        `json:"client_id"`
-	Status           InvoiceStatus `json:"status"`
-	IssueDate        time.Time     `json:"issue_date"`
-	DueDate          time.Time     `json:"due_date"`
-	Currency         Currency      `json:"currency"`
-	LockID           *string       `json:"lock_id"`
-	VATTreatment     VATTreatment  `json:"vat_treatment"`
-	SettlementTxnRef *string       `json:"settlement_txn_ref"`
-	SettledDate      *time.Time    `json:"settled_date"`
-	SettledAmount    *Money        `json:"settled_amount"`
-	PDFAsset         *string       `json:"pdf_asset"`
-	Lines            []InvoiceLine `json:"lines"`
-	Totals           InvoiceTotals `json:"totals"`
-	CreatedAt        time.Time     `json:"created_at"`
-	UpdatedAt        time.Time     `json:"updated_at"`
+	ID                string        `json:"id"`
+	Number            *string       `json:"number"`
+	ClientID          string        `json:"client_id"`
+	Status            InvoiceStatus `json:"status"`
+	IssueDate         time.Time     `json:"issue_date"`
+	DueDate           time.Time     `json:"due_date"`
+	Currency          Currency      `json:"currency"`
+	LockID            *string       `json:"lock_id"`
+	SendLedgerEntryID *int64        `json:"-"`
+	VATTreatment      VATTreatment  `json:"vat_treatment"`
+	SettlementTxnRef  *string       `json:"settlement_txn_ref"`
+	SettledDate       *time.Time    `json:"settled_date"`
+	SettledAmount     *Money        `json:"settled_amount"`
+	PDFAsset          *string       `json:"pdf_asset"`
+	Lines             []InvoiceLine `json:"lines"`
+	Totals            InvoiceTotals `json:"totals"`
+	CreatedAt         time.Time     `json:"created_at"`
+	UpdatedAt         time.Time     `json:"updated_at"`
 }
 
 // InvoiceLine is an ordered invoice row. LineTotal is computed from quantity
