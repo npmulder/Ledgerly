@@ -12,8 +12,16 @@ tax:
   corporate_income:
     "2025-26":
       standard_rate: "0.0"
+    "2026-27":
+      standard_rate: "0.0"
   personal_income:
     "2025-26":
+      personal_allowance_minor_units: 1475000
+      bands:
+        - upto_minor_units: 650000
+          rate: "0.10"
+        - rate: "0.21"
+    "2026-27":
       personal_allowance_minor_units: 1475000
       bands:
         - upto_minor_units: 650000
@@ -23,10 +31,15 @@ tax:
     "2025-26":
       withholding: none
       personal_tax_set_aside_template: 'set aside personally {{ estimate }}'
+    "2026-27":
+      withholding: none
+      personal_tax_set_aside_template: 'set aside personally {{ estimate }}'
   vat:
     regime: uk-shared
     authority: Isle of Man Customs & Excise
     "2025-26":
+      standard_rate: "0.20"
+    "2026-27":
       standard_rate: "0.20"
     treatments:
       domestic:

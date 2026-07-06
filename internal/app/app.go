@@ -76,6 +76,8 @@ type ModuleDeps struct {
 	PDFEngine      invoicing.InvoicePDFEngine
 	PDFBaseURL     string
 	MailSender     mail.Sender
+
+	ReportsInvoicing reports.Invoicing
 }
 
 // Module is a module contribution to the HTTP router and in-process bus.
@@ -450,6 +452,22 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 	modules = append(modules, invoicingModule.HTTPModule)
 	fragments = append(fragments, invoicingModule.OpenAPIFragment)
 
+	reportsBuilder := buildReportsModule
+	if deps.ModuleBuilders != nil && deps.ModuleBuilders[reports.ModuleName] != nil {
+		reportsBuilder = deps.ModuleBuilders[reports.ModuleName]
+	}
+	reportsModule, err := reportsBuilder(ctx, ModuleDeps{
+		Clock:            clk,
+		Ledger:           ledgerService,
+		Identity:         identityProfile,
+		ReportsInvoicing: dashboardInvoicingService,
+	})
+	if err != nil {
+		return nil, err
+	}
+	modules = append(modules, reportsModule.HTTPModule)
+	fragments = append(fragments, reportsModule.OpenAPIFragment)
+
 	dividendsModule, err := dividends.NewModule(dividends.Config{
 		Pool:               dividendsPool,
 		Clock:              clk,
@@ -581,6 +599,7 @@ func OpenAPIDocument(version string) map[string]any {
 		ledger.OpenAPIFragment(),
 		dla.OpenAPIFragment(),
 		invoicing.OpenAPIFragment(),
+		reports.OpenAPIFragment(),
 		dividends.OpenAPIFragment(),
 		dashboardOpenAPIFragment(),
 	)
@@ -647,6 +666,22 @@ func buildInvoicingModule(_ context.Context, deps ModuleDeps) (Module, error) {
 			Schedule: invoicing.OverdueSweepSchedule,
 			Run:      invoicingModule.RunOverdueSweep,
 		}},
+	}, nil
+}
+
+func buildReportsModule(_ context.Context, deps ModuleDeps) (Module, error) {
+	reportsModule, err := reports.NewModule(reports.Config{
+		Ledger:    deps.Ledger,
+		Identity:  deps.Identity,
+		Invoicing: deps.ReportsInvoicing,
+		Clock:     deps.Clock,
+	})
+	if err != nil {
+		return Module{}, err
+	}
+	return Module{
+		HTTPModule:      reportsModule.HTTPModule(),
+		OpenAPIFragment: reportsModule.OpenAPIFragment(),
 	}, nil
 }
 

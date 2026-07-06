@@ -417,9 +417,9 @@ func TestActivePackOverviewReturnsIsleOfManSummaries(t *testing.T) {
 	}
 
 	want := map[string]string{
-		ruleSummaryCorporateTax: "0% CIT (2025-26)",
-		ruleSummaryPersonalTax:  "no dividend WHT; personal allowance GBP 14,750; bands 10% to GBP 6,500, then 21% (2025-26/2025-26)",
-		ruleSummaryVAT:          "VAT 20% via Isle of Man Customs & Excise; reverse charge via Article 196, Directive 2006/112/EC (2025-26)",
+		ruleSummaryCorporateTax: "0% CIT (2026-27)",
+		ruleSummaryPersonalTax:  "no dividend WHT; personal allowance GBP 14,750; bands 10% to GBP 6,500, then 21% (2026-27/2026-27)",
+		ruleSummaryVAT:          "VAT 20% via Isle of Man Customs & Excise; reverse charge via Article 196, Directive 2006/112/EC (2026-27)",
 		ruleSummaryAnnualReturn: "due incorporation anniversary + 1 month with IoM Companies Registry",
 		ruleSummaryCompanyTax:   "due accounting year end + 12 months + 1 day; required at zero rate",
 		ruleSummaryDirectorLoan: "no s455 charge; overdrawn warning: benefit in kind interest free; remedy: clear with dividend",
