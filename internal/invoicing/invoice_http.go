@@ -39,11 +39,16 @@ type sendInvoiceResponse struct {
 }
 
 type lockedRateResponse struct {
-	ID   int64  `json:"id"`
-	Rate string `json:"rate"`
+	ID       int64  `json:"id"`
+	From     string `json:"from"`
+	To       string `json:"to"`
+	Rate     string `json:"rate"`
+	RateDate string `json:"rate_date"`
+	Source   string `json:"source"`
 }
 
 type invoicePatch struct {
+	clientID     *string
 	issueDate    *time.Time
 	dueDate      *time.Time
 	currency     *Currency
@@ -157,6 +162,42 @@ func (h invoiceHandler) revertInvoice(w nethttp.ResponseWriter, r *nethttp.Reque
 	writeInvoiceJSON(w, nethttp.StatusOK, invoiceForResponse(invoice))
 }
 
+func (h invoiceHandler) getInvoicePrintPayload(w nethttp.ResponseWriter, r *nethttp.Request) {
+	draftWatermark, err := parseInvoiceDraftWatermark(r)
+	if err != nil {
+		writeInvoiceBadRequest(w, r, err)
+		return
+	}
+	payload, err := h.service.InvoicePrintPayload(r.Context(), invoiceIDParam(r), draftWatermark)
+	if err != nil {
+		writeInvoiceError(w, r, err)
+		return
+	}
+	writeInvoiceJSON(w, nethttp.StatusOK, payload)
+}
+
+func (h invoiceHandler) previewInvoicePDF(w nethttp.ResponseWriter, r *nethttp.Request) {
+	pdfBytes, err := h.service.PreviewDraftInvoicePDF(r.Context(), invoiceIDParam(r))
+	if err != nil {
+		writeInvoiceError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", invoicePDFMIME)
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Length", strconv.Itoa(len(pdfBytes)))
+	w.WriteHeader(nethttp.StatusOK)
+	_, _ = w.Write(pdfBytes)
+}
+
+func (h invoiceHandler) renderInvoicePDF(w nethttp.ResponseWriter, r *nethttp.Request) {
+	invoice, err := h.service.RenderInvoicePDFNow(r.Context(), invoiceIDParam(r))
+	if err != nil {
+		writeInvoiceError(w, r, err)
+		return
+	}
+	writeInvoiceJSON(w, nethttp.StatusOK, invoiceForResponse(invoice))
+}
+
 func (h invoiceHandler) getInvoicePDF(w nethttp.ResponseWriter, r *nethttp.Request) {
 	invoice, err := h.service.Invoice(r.Context(), invoiceIDParam(r))
 	if err != nil {
@@ -178,11 +219,31 @@ func (h invoiceHandler) getInvoicePDF(w nethttp.ResponseWriter, r *nethttp.Reque
 	nethttp.Redirect(w, r, strings.TrimSpace(*invoice.PDFAsset), nethttp.StatusFound)
 }
 
+func parseInvoiceDraftWatermark(r *nethttp.Request) (bool, error) {
+	value := strings.TrimSpace(r.URL.Query().Get("draft"))
+	if value == "" {
+		return false, nil
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return false, fmt.Errorf("draft must be true or false")
+	}
+	return parsed, nil
+}
+
 func lockedRateForSentInvoice(invoice Invoice) (lockedRateResponse, error) {
 	if invoice.sendRateLock == nil {
 		return lockedRateResponse{}, fmt.Errorf("invoicing: sent invoice %s has no rate lock", invoice.ID)
 	}
-	return lockedRateResponse(*invoice.sendRateLock), nil
+	lock := invoice.sendRateLock
+	return lockedRateResponse{
+		ID:       lock.ID,
+		From:     lock.From,
+		To:       lock.To,
+		Rate:     lock.Rate,
+		RateDate: dateOnly(lock.RateDate).Format(time.DateOnly),
+		Source:   lock.Source,
+	}, nil
 }
 
 func invoiceIDParam(r *nethttp.Request) string {
@@ -244,6 +305,21 @@ func decodeInvoicePatch(w nethttp.ResponseWriter, r *nethttp.Request) (invoicePa
 	)
 	for field, value := range raw {
 		switch field {
+		case "client_id":
+			if rejectClientJSONNull(value, "/client_id", "must be a string", &fieldErrors) {
+				continue
+			}
+			var clientID string
+			if err := decodeClientStrict(value, &clientID); err != nil {
+				fieldErrors = append(fieldErrors, FieldError{Pointer: "/client_id", Detail: "must be a string"})
+				continue
+			}
+			trimmed := strings.TrimSpace(clientID)
+			if trimmed == "" {
+				fieldErrors = append(fieldErrors, FieldError{Pointer: "/client_id", Detail: "is required"})
+				continue
+			}
+			patch.clientID = &trimmed
 		case "issue_date":
 			assignDatePatch(value, "/issue_date", &patch.issueDate, &fieldErrors)
 		case "due_date":
@@ -298,6 +374,7 @@ func assignDatePatch(value json.RawMessage, pointer string, dst **time.Time, fie
 
 func (p invoicePatch) draftPatch() DraftPatch {
 	return DraftPatch{
+		ClientID:     p.clientID,
 		IssueDate:    p.issueDate,
 		DueDate:      p.dueDate,
 		Currency:     p.currency,

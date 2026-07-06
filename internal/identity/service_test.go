@@ -352,6 +352,39 @@ func TestReplaceLogoStoresContentAddressedAssetAndPublishesEvent(t *testing.T) {
 	}
 }
 
+func TestAssetWriterStoresPDFContentAddressedAsset(t *testing.T) {
+	ctx, pool := temporaryMigratedDatabase(t)
+	dataDir := t.TempDir()
+	writer := NewAssetWriter(pool, dataDir)
+	pdfBytes := []byte("%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF\n")
+	pdfSHA := sha256Hex(pdfBytes)
+
+	firstID, err := writer.StoreAsset(ctx, AssetUpload{MIME: "application/pdf", Bytes: pdfBytes})
+	if err != nil {
+		t.Fatalf("StoreAsset() first error = %v", err)
+	}
+	assertAssetFile(t, dataDir, pdfSHA, pdfBytes)
+	assertAssetFileCount(t, dataDir, 1)
+
+	firstAsset, err := New(pool, discardBus(), WithDataDir(dataDir)).Asset(ctx, firstID)
+	if err != nil {
+		t.Fatalf("Asset(first PDF) error = %v", err)
+	}
+	if firstAsset.MIME != "application/pdf" || firstAsset.SHA256 != pdfSHA || !bytes.Equal(firstAsset.Bytes, pdfBytes) {
+		t.Fatalf("first PDF asset = %#v, want application/pdf bytes with sha %s", firstAsset, pdfSHA)
+	}
+
+	secondID, err := writer.StoreAsset(ctx, AssetUpload{MIME: "application/pdf; charset=binary", Bytes: pdfBytes})
+	if err != nil {
+		t.Fatalf("StoreAsset() second error = %v", err)
+	}
+	if secondID == firstID {
+		t.Fatalf("second StoreAsset() reused asset id %s; want a new reference to the same sha file", secondID)
+	}
+	assertAssetFile(t, dataDir, pdfSHA, pdfBytes)
+	assertAssetFileCount(t, dataDir, 1)
+}
+
 func TestReplaceLogoRejectsOversizedAndWrongMIME(t *testing.T) {
 	ctx, tx := migratedIdentityTx(t)
 	service := New(tx, discardBus(), WithDataDir(t.TempDir()))

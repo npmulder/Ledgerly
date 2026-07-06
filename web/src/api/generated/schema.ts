@@ -326,9 +326,69 @@ export interface paths {
         };
         /**
          * Redirect to an invoice PDF asset
-         * @description Returns 404 until INV-8 stores invoice PDF assets; once present, redirects to the stored asset URL.
+         * @description Redirects to the immutable stored invoice PDF asset.
          */
         get: operations["invoicingGetInvoicePDF"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/invoicing/invoices/{id}/pdf/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Render a draft invoice PDF preview
+         * @description Renders a DRAFT-watermarked PDF on demand and never stores the result.
+         */
+        get: operations["invoicingPreviewInvoicePDF"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/invoicing/invoices/{id}/pdf/render": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Render and store an invoice PDF
+         * @description Explicit recovery action for render failures. If an immutable PDF is already stored, it is returned unchanged.
+         */
+        post: operations["invoicingRenderInvoicePDF"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/invoicing/invoices/{id}/print": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Return invoice print route payload
+         * @description Returns the authoritative payload consumed by the React invoice print route.
+         */
+        get: operations["invoicingGetInvoicePrintPayload"];
         put?: never;
         post?: never;
         delete?: never;
@@ -926,6 +986,7 @@ export interface components {
             updated_at: string;
         };
         InvoicingInvoicePatch: {
+            client_id?: string;
             /** @enum {string} */
             currency?: "EUR" | "GBP";
             /** Format: date */
@@ -935,6 +996,29 @@ export interface components {
             lines?: components["schemas"]["InvoicingInvoiceLineInput"][];
             /** @enum {string} */
             vat_treatment?: "domestic" | "reverse-charge-eu-b2b";
+        };
+        InvoicingInvoicePrintIdentity: {
+            address: components["schemas"]["InvoicingAddress"];
+            bank_name: string;
+            bic: string;
+            company_number: string;
+            iban: string;
+            legal_name: string;
+            /** Format: uri-reference */
+            logo_asset_url?: string | null;
+            logo_data_uri?: string | null;
+            trading_name: string;
+            vat_number?: string | null;
+        };
+        InvoicingInvoicePrintPayload: {
+            client: components["schemas"]["InvoicingClient"];
+            draft_watermark: boolean;
+            identity: components["schemas"]["InvoicingInvoicePrintIdentity"];
+            invoice: components["schemas"]["InvoicingInvoice"];
+            locked_rate?: components["schemas"]["InvoicingLockedRate"] | null;
+            reverse_charge_note?: string | null;
+            vat_rate: string;
+            vat_tax_year: string;
         };
         InvoicingInvoiceStatusCount: {
             count: number;
@@ -960,9 +1044,16 @@ export interface components {
             totals: components["schemas"]["InvoicingInvoiceTotalsSummary"];
         };
         InvoicingLockedRate: {
+            /** @enum {string} */
+            from: "EUR" | "GBP";
             /** Format: int64 */
             id: number;
             rate: string;
+            /** Format: date */
+            rate_date: string;
+            source: string;
+            /** @enum {string} */
+            to: "EUR" | "GBP";
         };
         InvoicingMoney: {
             /** Format: int64 */
@@ -2306,6 +2397,138 @@ export interface operations {
                 };
                 content: {
                     "application/problem+json": components["schemas"]["ValidationProblem"];
+                };
+            };
+        };
+    };
+    invoicingPreviewInvoicePDF: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Draft PDF preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/pdf": string;
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Invoice was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    invoicingRenderInvoicePDF: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Invoice with PDF asset */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvoicingInvoice"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Invoice was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    invoicingGetInvoicePrintPayload: {
+        parameters: {
+            query?: {
+                /** @description Render the payload with the draft watermark enabled. */
+                draft?: boolean;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Invoice print payload */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvoicingInvoicePrintPayload"];
+                };
+            };
+            /** @description Invalid print query */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Invoice was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };

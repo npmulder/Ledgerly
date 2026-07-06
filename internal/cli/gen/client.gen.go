@@ -176,6 +176,18 @@ const (
 	InvoicingInvoiceStatusCountStatusSent    InvoicingInvoiceStatusCountStatus = "sent"
 )
 
+// Defines values for InvoicingLockedRateFrom.
+const (
+	InvoicingLockedRateFromEUR InvoicingLockedRateFrom = "EUR"
+	InvoicingLockedRateFromGBP InvoicingLockedRateFrom = "GBP"
+)
+
+// Defines values for InvoicingLockedRateTo.
+const (
+	InvoicingLockedRateToEUR InvoicingLockedRateTo = "EUR"
+	InvoicingLockedRateToGBP InvoicingLockedRateTo = "GBP"
+)
+
 // Defines values for InvoicingMoneyCurrency.
 const (
 	InvoicingMoneyCurrencyEUR InvoicingMoneyCurrency = "EUR"
@@ -617,6 +629,7 @@ type InvoicingInvoiceListItemStatus string
 
 // InvoicingInvoicePatch defines model for InvoicingInvoicePatch.
 type InvoicingInvoicePatch struct {
+	ClientId     *string                            `json:"client_id,omitempty"`
 	Currency     *InvoicingInvoicePatchCurrency     `json:"currency,omitempty"`
 	DueDate      *openapi_types.Date                `json:"due_date,omitempty"`
 	IssueDate    *openapi_types.Date                `json:"issue_date,omitempty"`
@@ -629,6 +642,32 @@ type InvoicingInvoicePatchCurrency string
 
 // InvoicingInvoicePatchVatTreatment defines model for InvoicingInvoicePatch.VatTreatment.
 type InvoicingInvoicePatchVatTreatment string
+
+// InvoicingInvoicePrintIdentity defines model for InvoicingInvoicePrintIdentity.
+type InvoicingInvoicePrintIdentity struct {
+	Address       InvoicingAddress `json:"address"`
+	BankName      string           `json:"bank_name"`
+	Bic           string           `json:"bic"`
+	CompanyNumber string           `json:"company_number"`
+	Iban          string           `json:"iban"`
+	LegalName     string           `json:"legal_name"`
+	LogoAssetUrl  *string          `json:"logo_asset_url"`
+	LogoDataUri   *string          `json:"logo_data_uri"`
+	TradingName   string           `json:"trading_name"`
+	VatNumber     *string          `json:"vat_number"`
+}
+
+// InvoicingInvoicePrintPayload defines model for InvoicingInvoicePrintPayload.
+type InvoicingInvoicePrintPayload struct {
+	Client            InvoicingClient               `json:"client"`
+	DraftWatermark    bool                          `json:"draft_watermark"`
+	Identity          InvoicingInvoicePrintIdentity `json:"identity"`
+	Invoice           InvoicingInvoice              `json:"invoice"`
+	LockedRate        *InvoicingLockedRate          `json:"locked_rate"`
+	ReverseChargeNote *string                       `json:"reverse_charge_note"`
+	VatRate           string                        `json:"vat_rate"`
+	VatTaxYear        string                        `json:"vat_tax_year"`
+}
 
 // InvoicingInvoiceStatusCount defines model for InvoicingInvoiceStatusCount.
 type InvoicingInvoiceStatusCount struct {
@@ -665,9 +704,19 @@ type InvoicingInvoicesResponse struct {
 
 // InvoicingLockedRate defines model for InvoicingLockedRate.
 type InvoicingLockedRate struct {
-	Id   int64  `json:"id"`
-	Rate string `json:"rate"`
+	From     InvoicingLockedRateFrom `json:"from"`
+	Id       int64                   `json:"id"`
+	Rate     string                  `json:"rate"`
+	RateDate openapi_types.Date      `json:"rate_date"`
+	Source   string                  `json:"source"`
+	To       InvoicingLockedRateTo   `json:"to"`
 }
+
+// InvoicingLockedRateFrom defines model for InvoicingLockedRate.From.
+type InvoicingLockedRateFrom string
+
+// InvoicingLockedRateTo defines model for InvoicingLockedRate.To.
+type InvoicingLockedRateTo string
 
 // InvoicingMoney defines model for InvoicingMoney.
 type InvoicingMoney struct {
@@ -882,6 +931,12 @@ type InvoicingListInvoicesParams struct {
 
 // InvoicingListInvoicesParamsStatus defines parameters for InvoicingListInvoices.
 type InvoicingListInvoicesParamsStatus string
+
+// InvoicingGetInvoicePrintPayloadParams defines parameters for InvoicingGetInvoicePrintPayload.
+type InvoicingGetInvoicePrintPayloadParams struct {
+	// Draft Render the payload with the draft watermark enabled.
+	Draft *bool `form:"draft,omitempty" json:"draft,omitempty"`
+}
 
 // LedgerListEntriesParams defines parameters for LedgerListEntries.
 type LedgerListEntriesParams struct {
@@ -1500,6 +1555,15 @@ type ClientInterface interface {
 	// InvoicingGetInvoicePDF request
 	InvoicingGetInvoicePDF(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// InvoicingPreviewInvoicePDF request
+	InvoicingPreviewInvoicePDF(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// InvoicingRenderInvoicePDF request
+	InvoicingRenderInvoicePDF(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// InvoicingGetInvoicePrintPayload request
+	InvoicingGetInvoicePrintPayload(ctx context.Context, id string, params *InvoicingGetInvoicePrintPayloadParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// InvoicingRevertInvoice request
 	InvoicingRevertInvoice(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -1920,6 +1984,42 @@ func (c *Client) InvoicingPatchInvoice(ctx context.Context, id string, body Invo
 
 func (c *Client) InvoicingGetInvoicePDF(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewInvoicingGetInvoicePDFRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) InvoicingPreviewInvoicePDF(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewInvoicingPreviewInvoicePDFRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) InvoicingRenderInvoicePDF(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewInvoicingRenderInvoicePDFRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) InvoicingGetInvoicePrintPayload(ctx context.Context, id string, params *InvoicingGetInvoicePrintPayloadParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewInvoicingGetInvoicePrintPayloadRequest(c.Server, id, params)
 	if err != nil {
 		return nil, err
 	}
@@ -3031,6 +3131,130 @@ func NewInvoicingGetInvoicePDFRequest(server string, id string) (*http.Request, 
 	return req, nil
 }
 
+// NewInvoicingPreviewInvoicePDFRequest generates requests for InvoicingPreviewInvoicePDF
+func NewInvoicingPreviewInvoicePDFRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/invoicing/invoices/%s/pdf/preview", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewInvoicingRenderInvoicePDFRequest generates requests for InvoicingRenderInvoicePDF
+func NewInvoicingRenderInvoicePDFRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/invoicing/invoices/%s/pdf/render", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewInvoicingGetInvoicePrintPayloadRequest generates requests for InvoicingGetInvoicePrintPayload
+func NewInvoicingGetInvoicePrintPayloadRequest(server string, id string, params *InvoicingGetInvoicePrintPayloadParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/invoicing/invoices/%s/print", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Draft != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "draft", runtime.ParamLocationQuery, *params.Draft); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewInvoicingRevertInvoiceRequest generates requests for InvoicingRevertInvoice
 func NewInvoicingRevertInvoiceRequest(server string, id string) (*http.Request, error) {
 	var err error
@@ -3632,6 +3856,15 @@ type ClientWithResponsesInterface interface {
 
 	// InvoicingGetInvoicePDFWithResponse request
 	InvoicingGetInvoicePDFWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*InvoicingGetInvoicePDFResponse, error)
+
+	// InvoicingPreviewInvoicePDFWithResponse request
+	InvoicingPreviewInvoicePDFWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*InvoicingPreviewInvoicePDFResponse, error)
+
+	// InvoicingRenderInvoicePDFWithResponse request
+	InvoicingRenderInvoicePDFWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*InvoicingRenderInvoicePDFResponse, error)
+
+	// InvoicingGetInvoicePrintPayloadWithResponse request
+	InvoicingGetInvoicePrintPayloadWithResponse(ctx context.Context, id string, params *InvoicingGetInvoicePrintPayloadParams, reqEditors ...RequestEditorFn) (*InvoicingGetInvoicePrintPayloadResponse, error)
 
 	// InvoicingRevertInvoiceWithResponse request
 	InvoicingRevertInvoiceWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*InvoicingRevertInvoiceResponse, error)
@@ -4261,6 +4494,78 @@ func (r InvoicingGetInvoicePDFResponse) StatusCode() int {
 	return 0
 }
 
+type InvoicingPreviewInvoicePDFResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	ApplicationproblemJSON401 *Problem
+	ApplicationproblemJSON404 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r InvoicingPreviewInvoicePDFResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r InvoicingPreviewInvoicePDFResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type InvoicingRenderInvoicePDFResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON200                   *InvoicingInvoice
+	ApplicationproblemJSON401 *Problem
+	ApplicationproblemJSON404 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r InvoicingRenderInvoicePDFResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r InvoicingRenderInvoicePDFResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type InvoicingGetInvoicePrintPayloadResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON200                   *InvoicingInvoicePrintPayload
+	ApplicationproblemJSON400 *Problem
+	ApplicationproblemJSON401 *Problem
+	ApplicationproblemJSON404 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r InvoicingGetInvoicePrintPayloadResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r InvoicingGetInvoicePrintPayloadResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type InvoicingRevertInvoiceResponse struct {
 	Body                      []byte
 	HTTPResponse              *http.Response
@@ -4811,6 +5116,33 @@ func (c *ClientWithResponses) InvoicingGetInvoicePDFWithResponse(ctx context.Con
 		return nil, err
 	}
 	return ParseInvoicingGetInvoicePDFResponse(rsp)
+}
+
+// InvoicingPreviewInvoicePDFWithResponse request returning *InvoicingPreviewInvoicePDFResponse
+func (c *ClientWithResponses) InvoicingPreviewInvoicePDFWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*InvoicingPreviewInvoicePDFResponse, error) {
+	rsp, err := c.InvoicingPreviewInvoicePDF(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseInvoicingPreviewInvoicePDFResponse(rsp)
+}
+
+// InvoicingRenderInvoicePDFWithResponse request returning *InvoicingRenderInvoicePDFResponse
+func (c *ClientWithResponses) InvoicingRenderInvoicePDFWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*InvoicingRenderInvoicePDFResponse, error) {
+	rsp, err := c.InvoicingRenderInvoicePDF(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseInvoicingRenderInvoicePDFResponse(rsp)
+}
+
+// InvoicingGetInvoicePrintPayloadWithResponse request returning *InvoicingGetInvoicePrintPayloadResponse
+func (c *ClientWithResponses) InvoicingGetInvoicePrintPayloadWithResponse(ctx context.Context, id string, params *InvoicingGetInvoicePrintPayloadParams, reqEditors ...RequestEditorFn) (*InvoicingGetInvoicePrintPayloadResponse, error) {
+	rsp, err := c.InvoicingGetInvoicePrintPayload(ctx, id, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseInvoicingGetInvoicePrintPayloadResponse(rsp)
 }
 
 // InvoicingRevertInvoiceWithResponse request returning *InvoicingRevertInvoiceResponse
@@ -5988,6 +6320,126 @@ func ParseInvoicingGetInvoicePDFResponse(rsp *http.Response) (*InvoicingGetInvoi
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest ValidationProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseInvoicingPreviewInvoicePDFResponse parses an HTTP response from a InvoicingPreviewInvoicePDFWithResponse call
+func ParseInvoicingPreviewInvoicePDFResponse(rsp *http.Response) (*InvoicingPreviewInvoicePDFResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &InvoicingPreviewInvoicePDFResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseInvoicingRenderInvoicePDFResponse parses an HTTP response from a InvoicingRenderInvoicePDFWithResponse call
+func ParseInvoicingRenderInvoicePDFResponse(rsp *http.Response) (*InvoicingRenderInvoicePDFResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &InvoicingRenderInvoicePDFResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest InvoicingInvoice
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseInvoicingGetInvoicePrintPayloadResponse parses an HTTP response from a InvoicingGetInvoicePrintPayloadWithResponse call
+func ParseInvoicingGetInvoicePrintPayloadResponse(rsp *http.Response) (*InvoicingGetInvoicePrintPayloadResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &InvoicingGetInvoicePrintPayloadResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest InvoicingInvoicePrintPayload
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

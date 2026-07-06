@@ -32,6 +32,7 @@ export const queryKeys = {
       "clients",
       { includeArchived },
     ],
+    invoice: (id: string): ApiQueryKey => ["invoicing", "invoice", { id }],
     invoices: ({
       limit = 50,
       offset = 0,
