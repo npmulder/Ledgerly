@@ -19,9 +19,13 @@ const (
 	FactDLASuggestedClearance FactKey = "dla.suggestedClearance"
 	FactRuleDLABalance        FactKey = "balance"
 	FactRuleDLAStatus         FactKey = "status"
+	FactRuleDLAClearance      FactKey = "clearance_amount"
+	FactRuleDLAClearanceMinor FactKey = "clearance_amount_minor_units"
 
 	FactDividendsHeadroom      FactKey = "dividends.headroom"
 	FactDividendsDistributable FactKey = "dividends.distributable"
+	FactDividendHeadroom       FactKey = "dividend_headroom"
+	FactDividendHeadroomMinor  FactKey = "headroom_minor_units"
 	FactDividendsYTD           FactKey = "dividends_ytd"
 	FactDividendEstimate       FactKey = "estimate"
 	FactDividendEstimateMinor  FactKey = "estimate_minor_units"

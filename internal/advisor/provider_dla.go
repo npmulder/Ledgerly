@@ -29,6 +29,8 @@ func (p dlaFactProvider) Keys() []FactKey {
 		FactDLASuggestedClearance,
 		FactRuleDLABalance,
 		FactRuleDLAStatus,
+		FactRuleDLAClearance,
+		FactRuleDLAClearanceMinor,
 	}
 }
 
@@ -50,6 +52,8 @@ func (p dlaFactProvider) Gather(ctx context.Context) (map[FactKey]FactValue, err
 		FactDLASuggestedClearance: clearance,
 		FactRuleDLABalance:        balance,
 		FactRuleDLAStatus:         string(status),
+		FactRuleDLAClearance:      clearance,
+		FactRuleDLAClearanceMinor: clearance.Amount,
 	}, nil
 }
 

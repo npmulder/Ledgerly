@@ -1,0 +1,29 @@
+rule: overdue_invoice
+severity: amber
+surfaces: dashboard,invoices
+text: Invoice INV-2026-01 is 9 days overdue. Send a reminder to Contoso GmbH.
+cta: Send reminder | invoicing.sendReminder | {invoice_id=inv-123}
+
+rule: dla_overdrawn_bik
+severity: amber
+surfaces: dashboard,dla
+text: Your loan account is -£1,500.00 overdrawn. The Isle of Man has no UK-style s455 charge, but an interest-free loan can create a taxable benefit in kind - charge interest at the official rate or clear it with a dividend.
+cta: Clear with dividend | navigate:/dividends?amount=150000 | {}
+
+rule: filing_deadline_window
+severity: amber
+surfaces: dashboard,reports
+text: VAT return due 2026-07-30 - file with Isle of Man Customs & Excise.
+cta: Open filing calendar | reports.openFilingCalendar | {}
+
+rule: dividend_set_aside
+severity: teal
+surfaces: dashboard,dividends
+text: Set aside £150.00 personally for IoM income tax if you declare the available £1,500.00 dividend headroom.
+cta: Open dividends | dividends.open | {}
+
+rule: rates_stale
+severity: amber
+surfaces: banking,dashboard,invoices
+text: ECB rates are stale. Refresh rates before issuing or settling foreign-currency transactions.
+cta: Refresh rates | moneyfx.refreshRates | {}

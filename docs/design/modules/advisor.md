@@ -16,7 +16,7 @@ Example v1 rules (from handoff): overdue invoice → amber + "Send reminder" CTA
 
 ## Evaluation
 
-Triggered by: daily cron; relevant domain events (`invoicing.InvoiceOverdue`, `dla.WentOverdrawn`, `ledger.EntryPosted`, `moneyfx.RatesStale`); manual refresh. Evaluation is split into a pure `Evaluate(rules, facts, now)` step over injected facts and an `Apply(delta)` store step that upserts/resolves insights — cheap enough to run whole-set every time (few dozen rules, one company).
+Triggered by: daily cron; relevant domain events (`invoicing.InvoiceOverdue`, `dla.WentOverdrawn`, `dla.BackInCredit`, `dividends.Declared`, `ledger.EntryPosted`, `moneyfx.RatesStale`, `identity.ProfileUpdated`); manual refresh. Event triggers are post-commit: the subscriber registers a PostgreSQL notification inside the source transaction and the evaluator runs only after commit, so failed advisor evaluation cannot roll back a financial source transaction. Evaluation is split into a pure `Evaluate(rules, facts, now)` step over injected facts and an `Apply(delta)` store step that upserts/resolves insights — cheap enough to run whole-set every time (few dozen rules, one company).
 
 ## Public API (Go)
 

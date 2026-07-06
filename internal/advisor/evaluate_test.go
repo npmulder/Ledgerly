@@ -48,6 +48,35 @@ func TestTemplateRenderingFormatsMoneyAndDates(t *testing.T) {
 	}
 }
 
+func TestTemplateRenderingFormatsCTAAction(t *testing.T) {
+	rule := compileTestRule(t, RuleDef{
+		ID:           "cta-action-format",
+		Severity:     SeverityAmber,
+		Surfaces:     []Surface{SurfaceDLA},
+		FactQuery:    []FactKey{"amount_minor_units"},
+		Condition:    "amount_minor_units > 0",
+		TextTemplate: "Clear the balance",
+		CTA: CTA{
+			Label:  "Clear with dividend",
+			Action: "navigate:/dividends?amount={{ amount_minor_units }}",
+		},
+	})
+
+	delta, err := Evaluate([]RuleDef{rule}, Facts{"amount_minor_units": int64(150000)}, time.Date(2026, 7, 6, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("Evaluate() error = %v", err)
+	}
+	if len(delta.Warnings) != 0 {
+		t.Fatalf("warnings = %#v, want none", delta.Warnings)
+	}
+	if len(delta.Insights) != 1 {
+		t.Fatalf("insights length = %d, want 1", len(delta.Insights))
+	}
+	if delta.Insights[0].CTA.Action != "navigate:/dividends?amount=150000" {
+		t.Fatalf("cta action = %q", delta.Insights[0].CTA.Action)
+	}
+}
+
 func TestTemplateErrorSkipsOnlyBadRule(t *testing.T) {
 	bad := compileTestRule(t, RuleDef{
 		ID:           "bad-template",

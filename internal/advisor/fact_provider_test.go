@@ -117,14 +117,20 @@ func TestDividendsFactProviderMapsHeadroom(t *testing.T) {
 	if got := facts[FactDividendsDistributable]; got != true {
 		t.Fatalf("dividends.distributable = %#v, want true", got)
 	}
+	if got := facts[FactDividendHeadroom]; got != (money.Money{Amount: 250000, Currency: "GBP"}) {
+		t.Fatalf("dividend_headroom = %#v", got)
+	}
+	if got := facts[FactDividendHeadroomMinor]; got != int64(250000) {
+		t.Fatalf("headroom_minor_units = %#v, want 250000", got)
+	}
 	if got := facts[FactDividendsYTD]; got != (money.Money{Amount: 2000000, Currency: "GBP"}) {
 		t.Fatalf("dividends_ytd = %#v", got)
 	}
-	if got := facts[FactDividendEstimate]; got != (money.Money{Amount: 52500, Currency: "GBP"}) {
-		t.Fatalf("estimate = %#v, want GBP 525.00", got)
+	if got := facts[FactDividendEstimate]; got != (money.Money{Amount: 38750, Currency: "GBP"}) {
+		t.Fatalf("estimate = %#v, want GBP 387.50", got)
 	}
-	if got := facts[FactDividendEstimateMinor]; got != int64(52500) {
-		t.Fatalf("estimate_minor_units = %#v, want 52500", got)
+	if got := facts[FactDividendEstimateMinor]; got != int64(38750) {
+		t.Fatalf("estimate_minor_units = %#v, want 38750", got)
 	}
 }
 

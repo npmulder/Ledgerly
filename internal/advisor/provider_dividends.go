@@ -28,6 +28,8 @@ func (p dividendsFactProvider) Keys() []FactKey {
 	return []FactKey{
 		FactDividendsHeadroom,
 		FactDividendsDistributable,
+		FactDividendHeadroom,
+		FactDividendHeadroomMinor,
 		FactDividendsYTD,
 		FactDividendEstimate,
 		FactDividendEstimateMinor,
@@ -54,15 +56,29 @@ func (p dividendsFactProvider) Gather(ctx context.Context) (map[FactKey]FactValu
 	if err != nil {
 		return nil, err
 	}
-	estimate, err := jurisdiction.PersonalTaxEstimate(taxYear, declared)
+	withHeadroom, err := declared.Add(headroom.Available)
+	if err != nil {
+		return nil, err
+	}
+	priorEstimate, err := jurisdiction.PersonalTaxEstimate(taxYear, declared)
+	if err != nil {
+		return nil, err
+	}
+	withHeadroomEstimate, err := jurisdiction.PersonalTaxEstimate(taxYear, withHeadroom)
+	if err != nil {
+		return nil, err
+	}
+	marginalEstimate, err := withHeadroomEstimate.Total.Sub(priorEstimate.Total)
 	if err != nil {
 		return nil, err
 	}
 	return map[FactKey]FactValue{
 		FactDividendsHeadroom:      headroom.Available,
 		FactDividendsDistributable: headroom.Distributable,
+		FactDividendHeadroom:       headroom.Available,
+		FactDividendHeadroomMinor:  headroom.Available.Amount,
 		FactDividendsYTD:           declared,
-		FactDividendEstimate:       estimate.Total,
-		FactDividendEstimateMinor:  estimate.Total.Amount,
+		FactDividendEstimate:       marginalEstimate,
+		FactDividendEstimateMinor:  marginalEstimate.Amount,
 	}, nil
 }

@@ -33,7 +33,12 @@ const (
 	DefaultECBRetryBackoff = 250 * time.Millisecond
 )
 
-const ratesStaleEventName = "moneyfx.RatesStale"
+const (
+	// RatesStaleName is the bus event name for stale ECB-rate facts.
+	RatesStaleName = "moneyfx.RatesStale"
+
+	ratesStaleEventName = RatesStaleName
+)
 
 // RatesStale is published after a failed ECB run when stored rates are more
 // than three calendar days behind the current ECB date.

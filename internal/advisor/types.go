@@ -104,6 +104,27 @@ type Delta struct {
 	GeneratedAt      time.Time
 }
 
+// ApplySummary counts durable insight state changes made by Store.Apply.
+type ApplySummary struct {
+	InsightsCreated    int
+	InsightsSuperseded int
+	InsightsResolved   int
+}
+
+// EvaluationRun is the durable audit row for one whole-set evaluation.
+type EvaluationRun struct {
+	ID                 int64
+	Trigger            string
+	StartedAt          time.Time
+	FinishedAt         time.Time
+	Duration           time.Duration
+	InsightsCreated    int
+	InsightsSuperseded int
+	InsightsResolved   int
+	Error              string
+	Warnings           []Warning
+}
+
 var templateIdentPattern = regexp.MustCompile(`\A[A-Za-z_][A-Za-z0-9_]*\z`)
 
 // CompileRule validates and compiles a rule definition before evaluation.

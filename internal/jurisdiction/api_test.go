@@ -224,10 +224,10 @@ func TestIsleOfManAccessorsReturnHandoffValues2025_26(t *testing.T) {
 					"dla_overdrawn_bik": {
 						severity:     "amber",
 						surfaces:     []string{"dashboard", "dla"},
-						factQuery:    []string{"balance", "status"},
+						factQuery:    []string{"balance", "clearance_amount_minor_units", "status"},
 						textTemplate: "Your loan account is {{ balance }} overdrawn. The Isle of Man has no UK-style s455 charge, but an interest-free loan can create a taxable benefit in kind - charge interest at the official rate or clear it with a dividend.",
 						ctaLabel:     "Clear with dividend",
-						ctaAction:    "dla.clearWithDividend",
+						ctaAction:    "navigate:/dividends?amount={{ clearance_amount_minor_units }}",
 					},
 					"filing_deadline_window": {
 						severity:     "amber",
@@ -240,8 +240,8 @@ func TestIsleOfManAccessorsReturnHandoffValues2025_26(t *testing.T) {
 					"dividend_set_aside": {
 						severity:     "teal",
 						surfaces:     []string{"dashboard", "dividends"},
-						factQuery:    []string{"dividends_ytd", "estimate", "estimate_minor_units"},
-						textTemplate: "Set aside {{ estimate }} personally for IoM income tax on {{ dividends_ytd }} dividends YTD (10% band, then 21%).",
+						factQuery:    []string{"dividend_headroom", "estimate", "estimate_minor_units", "headroom_minor_units"},
+						textTemplate: "Set aside {{ estimate }} personally for IoM income tax if you declare the available {{ dividend_headroom }} dividend headroom.",
 						ctaLabel:     "Open dividends",
 						ctaAction:    "dividends.open",
 					},
