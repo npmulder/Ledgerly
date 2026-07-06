@@ -50,7 +50,7 @@ func (r Rate) Rat() (*big.Rat, error) {
 
 type rateReader interface {
 	ECBRate(ctx context.Context, date time.Time, currency string) (StoredECBRate, error)
-	ECBRateDateOnOrBefore(ctx context.Context, date time.Time, minDate time.Time) (time.Time, bool, error)
+	ECBRateDateOnOrBefore(ctx context.Context, date time.Time, minDate time.Time, currencies []string) (time.Time, bool, error)
 	LatestRateDate(ctx context.Context) (time.Time, bool, error)
 }
 
@@ -98,7 +98,8 @@ func (s *Service) RateOn(ctx context.Context, date time.Time, from string, to st
 		return Rate{}, fmt.Errorf("moneyfx: rate store is required")
 	}
 
-	actualDate, ok, err := s.store.ECBRateDateOnOrBefore(ctx, rateDate, rateDate.AddDate(0, 0, -maxRateLookback))
+	requiredCurrencies := requiredECBCurrencies(from, to)
+	actualDate, ok, err := s.store.ECBRateDateOnOrBefore(ctx, rateDate, rateDate.AddDate(0, 0, -maxRateLookback), requiredCurrencies)
 	if err != nil {
 		return Rate{}, err
 	}
@@ -238,6 +239,22 @@ func normalizeRatePair(from string, to string) (string, string, error) {
 		return "", "", fmt.Errorf("moneyfx: to currency: %w", err)
 	}
 	return normalizedFrom, normalizedTo, nil
+}
+
+func requiredECBCurrencies(from string, to string) []string {
+	seen := make(map[string]struct{}, 2)
+	currencies := make([]string, 0, 2)
+	for _, currency := range []string{from, to} {
+		if currency == "EUR" {
+			continue
+		}
+		if _, ok := seen[currency]; ok {
+			continue
+		}
+		seen[currency] = struct{}{}
+		currencies = append(currencies, currency)
+	}
+	return currencies
 }
 
 func exactRateValue(r *big.Rat) string {

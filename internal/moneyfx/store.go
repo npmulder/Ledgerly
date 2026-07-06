@@ -132,9 +132,10 @@ WHERE date = $1 AND currency = $2`,
 }
 
 // ECBRateDateOnOrBefore returns the newest stored ECB rate date in the inclusive
-// window. Rate lookups issue direct indexed queries; request-scope caching is
-// unnecessary for the small per-request read surface.
-func (s Store) ECBRateDateOnOrBefore(ctx context.Context, date time.Time, minDate time.Time) (time.Time, bool, error) {
+// window that has every requested non-EUR currency. Rate lookups issue direct
+// indexed queries; request-scope caching is unnecessary for the small
+// per-request read surface.
+func (s Store) ECBRateDateOnOrBefore(ctx context.Context, date time.Time, minDate time.Time, currencies []string) (time.Time, bool, error) {
 	if s.pool == nil {
 		return time.Time{}, false, fmt.Errorf("moneyfx: load rate date requires pool")
 	}
@@ -143,17 +144,44 @@ func (s Store) ECBRateDateOnOrBefore(ctx context.Context, date time.Time, minDat
 	if normalizedDate.IsZero() || normalizedMinDate.IsZero() {
 		return time.Time{}, false, fmt.Errorf("moneyfx: rate date window is required")
 	}
+	normalizedCurrencies, err := normalizeCurrencyFilter(currencies)
+	if err != nil {
+		return time.Time{}, false, err
+	}
 
 	var rateDate time.Time
-	err := s.pool.QueryRow(ctx, `
+	if len(normalizedCurrencies) == 0 {
+		err := s.pool.QueryRow(ctx, `
 SELECT date
 FROM moneyfx.ecb_rates
 WHERE date <= $1 AND date >= $2
 GROUP BY date
 ORDER BY date DESC
 LIMIT 1`,
+			normalizedDate,
+			normalizedMinDate,
+		).Scan(&rateDate)
+		if err == pgx.ErrNoRows {
+			return time.Time{}, false, nil
+		}
+		if err != nil {
+			return time.Time{}, false, fmt.Errorf("moneyfx: load ECB rate date: %w", err)
+		}
+		return normalizeRateDate(rateDate), true, nil
+	}
+
+	err = s.pool.QueryRow(ctx, `
+SELECT date
+FROM moneyfx.ecb_rates
+WHERE date <= $1 AND date >= $2 AND currency = ANY($3::text[])
+GROUP BY date
+HAVING count(DISTINCT currency) = $4
+ORDER BY date DESC
+LIMIT 1`,
 		normalizedDate,
 		normalizedMinDate,
+		normalizedCurrencies,
+		len(normalizedCurrencies),
 	).Scan(&rateDate)
 	if err == pgx.ErrNoRows {
 		return time.Time{}, false, nil
@@ -162,6 +190,26 @@ LIMIT 1`,
 		return time.Time{}, false, fmt.Errorf("moneyfx: load ECB rate date: %w", err)
 	}
 	return normalizeRateDate(rateDate), true, nil
+}
+
+func normalizeCurrencyFilter(currencies []string) ([]string, error) {
+	seen := make(map[string]struct{}, len(currencies))
+	normalized := make([]string, 0, len(currencies))
+	for _, currency := range currencies {
+		currency, err := normalizeCurrency(currency)
+		if err != nil {
+			return nil, err
+		}
+		if currency == "EUR" {
+			continue
+		}
+		if _, ok := seen[currency]; ok {
+			continue
+		}
+		seen[currency] = struct{}{}
+		normalized = append(normalized, currency)
+	}
+	return normalized, nil
 }
 
 // CountECBRates returns the number of stored ECB rate rows.

@@ -85,6 +85,38 @@ func TestServiceRateOnCrossRatesAndWeekendFallback(t *testing.T) {
 	}
 }
 
+func TestServiceRateOnSkipsPartialFallbackDates(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	friday := time.Date(2030, 1, 4, 0, 0, 0, 0, time.UTC)
+	monday := friday.AddDate(0, 0, 3)
+	store := newMemoryRateReader()
+	store.seed(t, friday, "GBP", "0.8")
+	store.seed(t, friday, "USD", "1.25")
+	store.seed(t, monday.AddDate(0, 0, -1), "CHF", "0.95")
+	store.seed(t, monday, "USD", "1.3")
+	service := NewService(store, clock.NewFake(monday.Add(12*time.Hour)))
+
+	rate, err := service.RateOn(ctx, monday, "EUR", "GBP")
+	if err != nil {
+		t.Fatalf("RateOn(EUR,GBP) error = %v", err)
+	}
+	if !rate.RateDate.Equal(friday) {
+		t.Fatalf("RateOn(EUR,GBP) date = %s, want %s", rate.RateDate.Format(time.DateOnly), friday.Format(time.DateOnly))
+	}
+	assertRat(t, rate, "4/5")
+
+	rate, err = service.RateOn(ctx, monday, "USD", "GBP")
+	if err != nil {
+		t.Fatalf("RateOn(USD,GBP) error = %v", err)
+	}
+	if !rate.RateDate.Equal(friday) {
+		t.Fatalf("RateOn(USD,GBP) date = %s, want %s", rate.RateDate.Format(time.DateOnly), friday.Format(time.DateOnly))
+	}
+	assertRat(t, rate, "16/25")
+}
+
 func TestServiceTodayRateReturnsLatestRateAndFetchTimestamp(t *testing.T) {
 	t.Parallel()
 
@@ -225,11 +257,15 @@ func (s *memoryRateReader) ECBRate(_ context.Context, date time.Time, currency s
 	return rate, nil
 }
 
-func (s *memoryRateReader) ECBRateDateOnOrBefore(_ context.Context, date time.Time, minDate time.Time) (time.Time, bool, error) {
+func (s *memoryRateReader) ECBRateDateOnOrBefore(_ context.Context, date time.Time, minDate time.Time, currencies []string) (time.Time, bool, error) {
 	normalizedDate := normalizeRateDate(date)
 	normalizedMinDate := normalizeRateDate(minDate)
+	required, err := normalizeCurrencyFilter(currencies)
+	if err != nil {
+		return time.Time{}, false, err
+	}
 	for _, rateDate := range s.rateDates() {
-		if !rateDate.After(normalizedDate) && !rateDate.Before(normalizedMinDate) {
+		if !rateDate.After(normalizedDate) && !rateDate.Before(normalizedMinDate) && s.hasRates(rateDate, required) {
 			return rateDate, true, nil
 		}
 	}
@@ -257,6 +293,15 @@ func (s *memoryRateReader) rateDates() []time.Time {
 		return dates[i].After(dates[j])
 	})
 	return dates
+}
+
+func (s *memoryRateReader) hasRates(date time.Time, currencies []string) bool {
+	for _, currency := range currencies {
+		if _, ok := s.rates[memoryRateKey(date, currency)]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func memoryRateKey(date time.Time, currency string) string {
