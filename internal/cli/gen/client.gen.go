@@ -176,6 +176,18 @@ const (
 	InvoicingInvoiceStatusCountStatusSent    InvoicingInvoiceStatusCountStatus = "sent"
 )
 
+// Defines values for InvoicingLockedRateFrom.
+const (
+	InvoicingLockedRateFromEUR InvoicingLockedRateFrom = "EUR"
+	InvoicingLockedRateFromGBP InvoicingLockedRateFrom = "GBP"
+)
+
+// Defines values for InvoicingLockedRateTo.
+const (
+	InvoicingLockedRateToEUR InvoicingLockedRateTo = "EUR"
+	InvoicingLockedRateToGBP InvoicingLockedRateTo = "GBP"
+)
+
 // Defines values for InvoicingMoneyCurrency.
 const (
 	InvoicingMoneyCurrencyEUR InvoicingMoneyCurrency = "EUR"
@@ -617,6 +629,7 @@ type InvoicingInvoiceListItemStatus string
 
 // InvoicingInvoicePatch defines model for InvoicingInvoicePatch.
 type InvoicingInvoicePatch struct {
+	ClientId     *string                            `json:"client_id,omitempty"`
 	Currency     *InvoicingInvoicePatchCurrency     `json:"currency,omitempty"`
 	DueDate      *openapi_types.Date                `json:"due_date,omitempty"`
 	IssueDate    *openapi_types.Date                `json:"issue_date,omitempty"`
@@ -665,9 +678,19 @@ type InvoicingInvoicesResponse struct {
 
 // InvoicingLockedRate defines model for InvoicingLockedRate.
 type InvoicingLockedRate struct {
-	Id   int64  `json:"id"`
-	Rate string `json:"rate"`
+	From     InvoicingLockedRateFrom `json:"from"`
+	Id       int64                   `json:"id"`
+	Rate     string                  `json:"rate"`
+	RateDate openapi_types.Date      `json:"rate_date"`
+	Source   string                  `json:"source"`
+	To       InvoicingLockedRateTo   `json:"to"`
 }
+
+// InvoicingLockedRateFrom defines model for InvoicingLockedRate.From.
+type InvoicingLockedRateFrom string
+
+// InvoicingLockedRateTo defines model for InvoicingLockedRate.To.
+type InvoicingLockedRateTo string
 
 // InvoicingMoney defines model for InvoicingMoney.
 type InvoicingMoney struct {
