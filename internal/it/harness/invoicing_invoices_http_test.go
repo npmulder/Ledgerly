@@ -211,6 +211,74 @@ func TestInvoicingInvoiceHTTPErrorCases(t *testing.T) {
 	}
 }
 
+func TestInvoicingInvoiceHTTPClientLineIDsAreScopedPerInvoice(t *testing.T) {
+	h := harness.New(t, harness.Options{ClockStart: time.Date(2025, 5, 1, 9, 0, 0, 0, time.UTC)})
+	fixtures.Rates(t, h)
+	fabrikam := fixtures.Fabrikam(t, h)
+
+	first := createDraftInvoiceViaHTTP(t, h, fabrikam.ID)
+	second := createDraftInvoiceViaHTTP(t, h, fabrikam.ID)
+
+	firstPatched := patchDraftInvoiceLinesViaHTTP(t, h, first.ID, "line-1")
+	secondPatched := patchDraftInvoiceLinesViaHTTP(t, h, second.ID, "line-1")
+
+	if len(firstPatched.Lines) != 1 || firstPatched.Lines[0].ID != "line-1" {
+		t.Fatalf("first invoice lines = %+v, want client id line-1", firstPatched.Lines)
+	}
+	if len(secondPatched.Lines) != 1 || secondPatched.Lines[0].ID != "line-1" {
+		t.Fatalf("second invoice lines = %+v, want client id line-1", secondPatched.Lines)
+	}
+
+	firstGet := performInvoiceRequest(t, h, nethttp.MethodGet, "/api/invoicing/invoices/"+first.ID, nil, true)
+	if firstGet.StatusCode != nethttp.StatusOK {
+		t.Fatalf("get first invoice status = %d, want %d; body=%s", firstGet.StatusCode, nethttp.StatusOK, firstGet.BodyString())
+	}
+	firstFetched := decodeInvoiceResponse(t, firstGet)
+	if len(firstFetched.Lines) != 1 || firstFetched.Lines[0].ID != "line-1" {
+		t.Fatalf("first fetched lines = %+v, want client id line-1", firstFetched.Lines)
+	}
+}
+
+func TestInvoicingInvoiceHTTPDetailDerivesOverdueStatus(t *testing.T) {
+	h := harness.New(t, harness.Options{ClockStart: time.Date(2025, 5, 1, 9, 0, 0, 0, time.UTC)})
+	fixtures.Rates(t, h)
+	fabrikam := fixtures.Fabrikam(t, h)
+
+	draft := createDraftInvoiceViaHTTP(t, h, fabrikam.ID)
+	patch := performInvoiceRequest(t, h, nethttp.MethodPatch, "/api/invoicing/invoices/"+draft.ID, mustInvoiceJSON(t, map[string]any{
+		"due_date": "2025-05-02",
+		"lines": []map[string]any{
+			{
+				"id":          "line-overdue",
+				"description": "GBP delivery",
+				"qty":         "1",
+				"unit_price": map[string]any{
+					"amount":   int64(10_000),
+					"currency": string(invoicing.CurrencyGBP),
+				},
+			},
+		},
+	}), true)
+	if patch.StatusCode != nethttp.StatusOK {
+		t.Fatalf("patch invoice status = %d, want %d; body=%s", patch.StatusCode, nethttp.StatusOK, patch.BodyString())
+	}
+	patched := decodeInvoiceResponse(t, patch)
+	send := performInvoiceRequest(t, h, nethttp.MethodPost, "/api/invoicing/invoices/"+patched.ID+"/send", nil, true)
+	if send.StatusCode != nethttp.StatusOK {
+		t.Fatalf("send invoice status = %d, want %d; body=%s", send.StatusCode, nethttp.StatusOK, send.BodyString())
+	}
+
+	h.Clock.Set(patched.DueDate.AddDate(0, 0, 1))
+	detail := performInvoiceRequest(t, h, nethttp.MethodGet, "/api/invoicing/invoices/"+patched.ID, nil, true)
+	if detail.StatusCode != nethttp.StatusOK {
+		t.Fatalf("get overdue invoice status = %d, want %d; body=%s", detail.StatusCode, nethttp.StatusOK, detail.BodyString())
+	}
+	invoice := decodeInvoiceResponse(t, detail)
+	if invoice.Status != invoicing.InvoiceStatusOverdue {
+		t.Fatalf("detail invoice status = %q, want %q", invoice.Status, invoicing.InvoiceStatusOverdue)
+	}
+}
+
 func TestInvoicingInvoiceHTTPRoutesRequireAuthentication(t *testing.T) {
 	h := harness.New(t, harness.Options{})
 

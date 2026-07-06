@@ -92,6 +92,7 @@ type Invoice struct {
 	Totals            InvoiceTotals `json:"totals"`
 	CreatedAt         time.Time     `json:"created_at"`
 	UpdatedAt         time.Time     `json:"updated_at"`
+	sendRateLock      *RateLock
 }
 
 // InvoiceLine is an ordered invoice row. LineTotal is computed from quantity

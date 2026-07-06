@@ -136,7 +136,7 @@ func (h invoiceHandler) sendInvoice(w nethttp.ResponseWriter, r *nethttp.Request
 		writeInvoiceError(w, r, fmt.Errorf("invoicing: sent invoice %s has no number", invoice.ID))
 		return
 	}
-	lockedRate, err := h.lockedRateForInvoice(r, invoice)
+	lockedRate, err := lockedRateForSentInvoice(invoice)
 	if err != nil {
 		writeInvoiceError(w, r, err)
 		return
@@ -178,19 +178,11 @@ func (h invoiceHandler) getInvoicePDF(w nethttp.ResponseWriter, r *nethttp.Reque
 	nethttp.Redirect(w, r, strings.TrimSpace(*invoice.PDFAsset), nethttp.StatusFound)
 }
 
-func (h invoiceHandler) lockedRateForInvoice(r *nethttp.Request, invoice Invoice) (lockedRateResponse, error) {
-	lockID, err := invoiceLockID(invoice)
-	if err != nil {
-		return lockedRateResponse{}, err
+func lockedRateForSentInvoice(invoice Invoice) (lockedRateResponse, error) {
+	if invoice.sendRateLock == nil {
+		return lockedRateResponse{}, fmt.Errorf("invoicing: sent invoice %s has no rate lock", invoice.ID)
 	}
-	if h.service.rateLocks == nil {
-		return lockedRateResponse{}, fmt.Errorf("invoicing: rate lock reader is required")
-	}
-	lock, err := h.service.rateLocks.RateLock(r.Context(), lockID)
-	if err != nil {
-		return lockedRateResponse{}, err
-	}
-	return lockedRateResponse(lock), nil
+	return lockedRateResponse(*invoice.sendRateLock), nil
 }
 
 func invoiceIDParam(r *nethttp.Request) string {

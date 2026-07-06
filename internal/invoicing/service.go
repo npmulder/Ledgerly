@@ -201,7 +201,7 @@ func (s *Service) Invoice(ctx context.Context, id string) (Invoice, error) {
 	if err != nil {
 		return Invoice{}, err
 	}
-	return s.withComputedTotals(ctx, invoice)
+	return s.withReadComputedTotals(ctx, invoice)
 }
 
 // InvoiceByNumber returns an invoice by its immutable sent invoice number.
@@ -210,7 +210,7 @@ func (s *Service) InvoiceByNumber(ctx context.Context, number string) (Invoice, 
 	if err != nil {
 		return Invoice{}, err
 	}
-	return s.withComputedTotals(ctx, invoice)
+	return s.withReadComputedTotals(ctx, invoice)
 }
 
 // UpdateDraft applies a patch to a mutable draft invoice only.
@@ -370,6 +370,7 @@ func (s *Service) Send(ctx context.Context, id string) (_ Invoice, err error) {
 	}
 	sent.Lines = draft.Lines
 	sent.Totals = draft.Totals
+	sent.sendRateLock = &lock
 	if err := s.publish(ctx, tx, InvoiceSent{
 		InvoiceID: sent.ID,
 		Number:    number,
@@ -940,6 +941,18 @@ func validateInvoiceMoney(pointer string, invoiceCurrency Currency, amount Money
 
 func (s *Service) withComputedTotals(ctx context.Context, invoice Invoice) (Invoice, error) {
 	return s.computeTotals(ctx, invoice, invoice.Status == InvoiceStatusDraft)
+}
+
+func (s *Service) withReadComputedTotals(ctx context.Context, invoice Invoice) (Invoice, error) {
+	invoice.Status = virtualInvoiceStatus(invoice, dateOnly(s.now()))
+	return s.withComputedTotals(ctx, invoice)
+}
+
+func virtualInvoiceStatus(invoice Invoice, today time.Time) InvoiceStatus {
+	if invoice.Status == InvoiceStatusSent && dateOnly(invoice.DueDate).Before(dateOnly(today)) {
+		return InvoiceStatusOverdue
+	}
+	return invoice.Status
 }
 
 func (s *Service) computeTotals(ctx context.Context, invoice Invoice, includeDraftApprox bool) (Invoice, error) {

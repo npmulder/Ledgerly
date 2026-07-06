@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -467,6 +468,7 @@ func (Store) ReplaceInvoiceLines(ctx context.Context, tx db.Tx, invoiceID string
 		return fmt.Errorf("invoicing: delete invoice lines: %w", err)
 	}
 	for _, line := range lines {
+		storageLineID := invoiceLineStorageID(invoiceID, line.ID)
 		if _, err := tx.Exec(ctx, `
 INSERT INTO invoice_lines (
 	id,
@@ -485,7 +487,7 @@ INSERT INTO invoice_lines (
 	$6,
 	$7
 )`,
-			line.ID,
+			storageLineID,
 			invoiceID,
 			line.Position,
 			line.Description,
@@ -769,7 +771,22 @@ func scanInvoiceLine(row pgx.CollectableRow) (InvoiceLine, error) {
 	}
 	line.Qty = Quantity(qty)
 	line.UnitPrice.Currency = currency
+	line.ID = invoiceLineClientID(line.InvoiceID, line.ID)
 	return line, nil
+}
+
+func invoiceLineStorageID(invoiceID string, clientLineID string) string {
+	prefix := strings.TrimSpace(invoiceID)
+	lineID := strings.TrimSpace(clientLineID)
+	if prefix == "" {
+		return lineID
+	}
+	return prefix + ":" + lineID
+}
+
+func invoiceLineClientID(invoiceID string, storageLineID string) string {
+	prefix := strings.TrimSpace(invoiceID) + ":"
+	return strings.TrimPrefix(storageLineID, prefix)
 }
 
 func nullableTime(value *time.Time) sql.NullTime {
