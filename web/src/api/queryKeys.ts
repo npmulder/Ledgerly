@@ -12,6 +12,16 @@ export type InvoicesQueryParams = {
 };
 
 export const queryKeys = {
+  banking: {
+    accounts: (): ApiQueryKey => ["banking", "accounts", {}],
+    feed: (accountId: number | null = null): ApiQueryKey => [
+      "banking",
+      "feed",
+      { accountId },
+    ],
+    recent: (limit = 10): ApiQueryKey => ["banking", "recent", { limit }],
+    review: (): ApiQueryKey => ["banking", "review", {}],
+  },
   dashboard: {
     summary: (): ApiQueryKey => ["dashboard", "summary", {}],
   },

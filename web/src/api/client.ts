@@ -157,6 +157,14 @@ export class ApiClient {
     return this.request<Path, "post">(path, "POST", options, body);
   }
 
+  async postForm<Path extends ApiPostPath>(
+    path: Path,
+    body: FormData,
+    options: ApiRequestOptions<OperationFor<Path, "post">> = {},
+  ): Promise<SuccessBody<OperationFor<Path, "post">>> {
+    return this.request<Path, "post">(path, "POST", options, body);
+  }
+
   async put<Path extends ApiPutPath>(
     path: Path,
     body?: FormData | JsonRequestBody<OperationFor<Path, "put">>,
