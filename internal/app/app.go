@@ -24,6 +24,7 @@ import (
 	"github.com/npmulder/ledgerly/internal/invoicing"
 	"github.com/npmulder/ledgerly/internal/jurisdiction"
 	"github.com/npmulder/ledgerly/internal/ledger"
+	"github.com/npmulder/ledgerly/internal/moneyfx"
 	"github.com/npmulder/ledgerly/internal/platform/bus"
 	"github.com/npmulder/ledgerly/internal/platform/clock"
 	"github.com/npmulder/ledgerly/internal/platform/config"
@@ -78,6 +79,7 @@ type Dependencies struct {
 
 	IdentityPool  *pgxpool.Pool
 	LedgerPool    *pgxpool.Pool
+	MoneyFXPool   *pgxpool.Pool
 	DemoPool      *pgxpool.Pool
 	InvoicingPool *pgxpool.Pool
 
@@ -113,6 +115,7 @@ type App struct {
 	HealthDB        httpserver.Pinger
 	IdentityPool    *pgxpool.Pool
 	LedgerPool      *pgxpool.Pool
+	MoneyFXPool     *pgxpool.Pool
 	DemoPool        *pgxpool.Pool
 	InvoicingPool   *pgxpool.Pool
 	IdentityService *identity.Service
@@ -170,6 +173,10 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 	if err != nil {
 		return nil, err
 	}
+	moneyFXPool, err := modulePool(ctx, cfg.Runtime.DatabaseURL, moneyfx.ModuleName, deps.MoneyFXPool, openPool, &closeFuncs)
+	if err != nil {
+		return nil, err
+	}
 	demoPool, err := modulePool(ctx, cfg.Runtime.DatabaseURL, demo.ModuleName, deps.DemoPool, openPool, &closeFuncs)
 	if err != nil {
 		return nil, err
@@ -188,6 +195,16 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 
 	ledgerService := ledger.New(ledgerPool, eventBus)
 	trialBalanceStatus := ledger.NewTrialBalanceStatus()
+	moneyFXFetcher, err := moneyfx.NewECBFetcher(moneyfx.ECBFetcherConfig{
+		Pool:         moneyFXPool,
+		Bus:          eventBus,
+		Clock:        clk,
+		HTTPTimeout:  cfg.Runtime.ECBHTTPTimeout,
+		RetryBackoff: moneyfx.DefaultECBRetryBackoff,
+	})
+	if err != nil {
+		return nil, err
+	}
 	cronRunner := platformcron.New(platformcron.Config{
 		Logger: logger,
 		Clock:  clk,
@@ -196,6 +213,9 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		_, err := ledgerService.RunTrialBalanceInvariant(ctx, clk.Now(), logger, trialBalanceStatus)
 		return err
 	}); err != nil {
+		return nil, err
+	}
+	if err := cronRunner.Register(moneyfx.ECBFetchJobName, moneyfx.ECBFetchSchedule, moneyFXFetcher.Run); err != nil {
 		return nil, err
 	}
 	identityService := identity.NewService(
@@ -309,6 +329,7 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		HealthDB:        healthDB,
 		IdentityPool:    identityPool,
 		LedgerPool:      ledgerPool,
+		MoneyFXPool:     moneyFXPool,
 		DemoPool:        demoPool,
 		InvoicingPool:   invoicingPool,
 		IdentityService: identityService,

@@ -20,6 +20,7 @@ import (
 	"github.com/npmulder/ledgerly/internal/identity"
 	"github.com/npmulder/ledgerly/internal/jurisdiction"
 	"github.com/npmulder/ledgerly/internal/ledger"
+	"github.com/npmulder/ledgerly/internal/moneyfx"
 	"github.com/npmulder/ledgerly/internal/platform/chrome"
 	"github.com/npmulder/ledgerly/internal/platform/config"
 	"github.com/npmulder/ledgerly/internal/platform/db"
@@ -30,6 +31,7 @@ import (
 var version = "dev"
 
 var loadActiveJurisdiction = jurisdiction.LoadActive
+var fetchRatesRunner = runFetchRates
 
 const (
 	migrationsDirEnv = app.MigrationsDirEnv
@@ -80,6 +82,11 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 		return runOpenAPI(stdout)
 	case "check":
 		return runCheck(ctx, args[1:], stdout)
+	case "fetch-rates":
+		if len(args) != 1 {
+			return fmt.Errorf("usage: ledgerly fetch-rates")
+		}
+		return fetchRatesRunner(ctx, stdout)
 	case "version", "--version", "-v":
 		return printVersion(stdout)
 	default:
@@ -161,6 +168,44 @@ func runCheckTrialBalance(ctx context.Context, stdout io.Writer) error {
 	if encodeErr := encoder.Encode(report); encodeErr != nil {
 		return encodeErr
 	}
+	return err
+}
+
+func runFetchRates(ctx context.Context, stdout io.Writer) (err error) {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+
+	logger := platformlog.Configure(platformlog.Config{
+		Env:   string(cfg.Env),
+		Level: cfg.LogLevel,
+	})
+
+	startupCtx, startupCancel := context.WithTimeout(ctx, 45*time.Second)
+	defer startupCancel()
+
+	builtApp, err := app.Build(startupCtx, app.Config{
+		Runtime: cfg,
+		Version: version,
+	}, app.Dependencies{
+		Logger:             logger,
+		JurisdictionLoader: loadActiveJurisdiction,
+	})
+	if err != nil {
+		return err
+	}
+	defer func() {
+		closeErr := builtApp.Close()
+		if err == nil && closeErr != nil {
+			err = closeErr
+		}
+	}()
+
+	if err := builtApp.RunJob(ctx, moneyfx.ECBFetchJobName); err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(stdout, "fetched ECB rates")
 	return err
 }
 

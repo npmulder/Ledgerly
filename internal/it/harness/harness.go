@@ -24,6 +24,7 @@ import (
 	"github.com/npmulder/ledgerly/internal/identity"
 	"github.com/npmulder/ledgerly/internal/it/testdb"
 	"github.com/npmulder/ledgerly/internal/ledger"
+	"github.com/npmulder/ledgerly/internal/moneyfx"
 	"github.com/npmulder/ledgerly/internal/platform/bus"
 	"github.com/npmulder/ledgerly/internal/platform/clock"
 	"github.com/npmulder/ledgerly/internal/platform/config"
@@ -88,6 +89,7 @@ func New(t testing.TB, opts Options) *Harness {
 	rawPool := testdb.Raw(t)
 	identityPool := testdb.AsModule(t, "identity")
 	ledgerPool := testdb.AsModule(t, "ledger")
+	moneyFXPool := testdb.AsModule(t, moneyfx.ModuleName)
 	demoPool := testdb.AsModule(t, demo.ModuleName)
 	invoicingPool := testdb.AsModule(t, "invoicing")
 
@@ -112,6 +114,7 @@ func New(t testing.TB, opts Options) *Harness {
 		HealthDB:      pgxPinger{pool: rawPool},
 		IdentityPool:  identityPool,
 		LedgerPool:    ledgerPool,
+		MoneyFXPool:   moneyFXPool,
 		DemoPool:      demoPool,
 		InvoicingPool: invoicingPool,
 		BusOptions: []bus.Option{
