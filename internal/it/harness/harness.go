@@ -12,6 +12,7 @@ import (
 	nethttp "net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -22,6 +23,7 @@ import (
 	"github.com/npmulder/ledgerly/internal/demo"
 	"github.com/npmulder/ledgerly/internal/identity"
 	"github.com/npmulder/ledgerly/internal/it/testdb"
+	"github.com/npmulder/ledgerly/internal/ledger"
 	"github.com/npmulder/ledgerly/internal/moneyfx"
 	"github.com/npmulder/ledgerly/internal/platform/bus"
 	"github.com/npmulder/ledgerly/internal/platform/clock"
@@ -30,20 +32,37 @@ import (
 )
 
 const (
-	defaultOwnerEmail    = "owner@example.test"
-	defaultOwnerPassword = "correct horse battery staple"
-	defaultOwnerName     = "Owner"
-	defaultJobTimeout    = 10 * time.Second
-	defaultTxTimeout     = 10 * time.Second
+	defaultOwnerEmail     = "owner@example.test"
+	defaultOwnerPassword  = "correct horse battery staple"
+	defaultOwnerName      = "Owner"
+	defaultJobTimeout     = 10 * time.Second
+	defaultTxTimeout      = 10 * time.Second
+	defaultBalanceTimeout = 10 * time.Second
 )
+
+var balanceCheckAsOf = time.Date(9999, 12, 31, 0, 0, 0, 0, time.UTC)
 
 // Options customizes an integration harness. Cron autostart defaults to off.
 type Options struct {
 	ClockStart    time.Time
 	CronAutostart bool
+	BalanceCheck  BalanceCheckOption
 
 	ModuleBuilders map[string]app.ModuleBuilder
 	Jobs           map[string]app.Job
+}
+
+// BalanceCheckOption controls the default teardown trial-balance assertion.
+type BalanceCheckOption struct {
+	disabled      bool
+	justification string
+}
+
+// WithoutBalanceCheck disables the default teardown trial-balance assertion.
+// Call sites must include an in-code comment explaining why the suite is allowed
+// to leave ledger postings unbalanced.
+func WithoutBalanceCheck(justification string) BalanceCheckOption {
+	return BalanceCheckOption{disabled: true, justification: justification}
 }
 
 // Harness is a running in-process Ledgerly app.
@@ -138,8 +157,45 @@ func New(t testing.TB, opts Options) *Harness {
 			t.Fatalf("close app harness: %v", err)
 		}
 	})
+	if opts.BalanceCheck.disabled {
+		justification := strings.TrimSpace(opts.BalanceCheck.justification)
+		if justification == "" {
+			t.Fatalf("harness: WithoutBalanceCheck requires a justification")
+		}
+		t.Logf("harness ledger balance check disabled: %s", justification)
+	} else {
+		t.Cleanup(func() {
+			AssertLedgerBalanced(t, h)
+		})
+	}
 
 	return h
+}
+
+// AssertLedgerBalanced fails t when any stored ledger entry leaves the ledger
+// out of trial balance. Harnesses register this in cleanup by default.
+func AssertLedgerBalanced(t testing.TB, h *Harness) {
+	t.Helper()
+
+	if h == nil {
+		t.Fatalf("ledger balance check: nil harness")
+		return
+	}
+	if h.LedgerPool == nil {
+		t.Fatalf("ledger balance check: nil ledger pool")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), defaultBalanceTimeout)
+	defer cancel()
+
+	report, err := ledger.New(h.LedgerPool).TrialBalance(ctx, balanceCheckAsOf)
+	if err != nil {
+		t.Fatalf("ledger balance check failed: %v; report=%+v", err, report)
+	}
+	if !report.Balanced {
+		t.Fatalf("ledger balance check failed: report=%+v", report)
+	}
 }
 
 // Do executes req with the harness' authenticated client. Relative request URLs

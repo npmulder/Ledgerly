@@ -77,6 +77,7 @@ Dig deeper:
 
 - 📘 [High-level design](docs/design/hld.md) — architecture, trade-offs, build order
 - 📗 Module designs: [core-ledger](docs/design/modules/core-ledger.md) · [core-money-fx](docs/design/modules/core-money-fx.md) · [invoicing](docs/design/modules/invoicing.md) · [banking](docs/design/modules/banking.md) · [dla](docs/design/modules/dla.md) · [dividends](docs/design/modules/dividends.md) · [reports](docs/design/modules/reports.md) · [compliance-jurisdiction](docs/design/modules/compliance-jurisdiction.md) · [advisor](docs/design/modules/advisor.md) · [settings-identity](docs/design/modules/settings-identity.md) · [cli](docs/design/modules/cli.md)
+- 🧪 [Testing guide](docs/testing.md) — unit, integration, golden, and harness conventions
 - 🎨 [Design handoff](docs/design_handoff_keel/README.md) — nine high-fidelity screens and design tokens
 
 ## Tech stack
@@ -118,7 +119,7 @@ task: Available tasks for this project:
 * lint:fmt:               Check Go formatting
 * lint:golangci:          Run golangci-lint
 * lint:rates:             Prevent compliance literals outside jurisdiction packs
-* test:integration:       Run integration tests when LEDGERLY_TEST_DB is configured
+* test:integration:       Run integration tests
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full development guide, including the module-boundary rules every PR is held to.
