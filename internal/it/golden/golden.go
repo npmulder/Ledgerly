@@ -39,9 +39,10 @@ var update = flag.Bool("update", false, "rewrite golden document snapshots")
 type Option func(*config)
 
 type config struct {
-	masks       []textMask
-	artifactDir string
-	dpi         float64
+	masks         []textMask
+	artifactDir   string
+	dpi           float64
+	canonicalText bool
 }
 
 type textMask struct {
@@ -70,6 +71,15 @@ func WithMask(pattern, replacement string) Option {
 			pattern:     pattern,
 			replacement: replacement,
 		})
+	}
+}
+
+// WithCanonicalText compares the extracted PDF text as words rather than
+// extractor-specific line wraps and glyph ligatures. Raster hashing still pins
+// the document layout.
+func WithCanonicalText() Option {
+	return func(cfg *config) {
+		cfg.canonicalText = true
 	}
 }
 
@@ -143,6 +153,9 @@ func (cfg *config) compileMasks() error {
 func (cfg config) normalizeText(text string) string {
 	text = strings.ReplaceAll(text, "\r\n", "\n")
 	text = strings.ReplaceAll(text, "\r", "\n")
+	if cfg.canonicalText {
+		text = canonicalPDFText(text)
+	}
 	lines := strings.Split(text, "\n")
 	for i := range lines {
 		lines[i] = strings.TrimRight(lines[i], " \t")
@@ -156,6 +169,22 @@ func (cfg config) normalizeText(text string) string {
 		text = mask.re.ReplaceAllString(text, mask.replacement)
 	}
 	return text
+}
+
+func canonicalPDFText(text string) string {
+	for _, replacement := range []struct {
+		old string
+		new string
+	}{
+		{"\ufb00", "ff"},
+		{"\ufb01", "fi"},
+		{"\ufb02", "fl"},
+		{"\ufb03", "ffi"},
+		{"\ufb04", "ffl"},
+	} {
+		text = strings.ReplaceAll(text, replacement.old, replacement.new)
+	}
+	return strings.Join(strings.Fields(text), " ")
 }
 
 type paths struct {

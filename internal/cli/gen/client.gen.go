@@ -442,6 +442,82 @@ type DashboardToReconcile struct {
 	ReviewQueue []DashboardReviewQueueItem  `json:"review_queue"`
 }
 
+// DividendsAddress defines model for DividendsAddress.
+type DividendsAddress struct {
+	Country    string `json:"country"`
+	Line1      string `json:"line1"`
+	Line2      string `json:"line2"`
+	Locality   string `json:"locality"`
+	PostalCode string `json:"postal_code"`
+	Region     string `json:"region"`
+}
+
+// DividendsCompanySnapshot defines model for DividendsCompanySnapshot.
+type DividendsCompanySnapshot struct {
+	CompanyNumber    string           `json:"company_number"`
+	DirectorName     string           `json:"director_name"`
+	LegalName        string           `json:"legal_name"`
+	RegisteredOffice DividendsAddress `json:"registered_office"`
+	TradingName      string           `json:"trading_name"`
+}
+
+// DividendsDeclaration defines model for DividendsDeclaration.
+type DividendsDeclaration struct {
+	Amount              DividendsMoney                `json:"amount"`
+	CompanySnapshot     *DividendsCompanySnapshot     `json:"company_snapshot"`
+	CreatedAt           time.Time                     `json:"created_at"`
+	DeclaredDate        time.Time                     `json:"declared_date"`
+	HeadroomSnapshot    *DividendsHeadroomBreakdown   `json:"headroom_snapshot"`
+	Id                  string                        `json:"id"`
+	MinutesAsset        *string                       `json:"minutes_asset"`
+	PerShare            DividendsMoney                `json:"per_share"`
+	ShareholderName     string                        `json:"shareholder_name"`
+	ShareholderSnapshot *DividendsShareholderSnapshot `json:"shareholder_snapshot"`
+	Shares              int64                         `json:"shares"`
+	VoucherAsset        *string                       `json:"voucher_asset"`
+	WithholdingSnapshot *DividendsWithholdingSnapshot `json:"withholding_snapshot"`
+}
+
+// DividendsDocumentPayload defines model for DividendsDocumentPayload.
+type DividendsDocumentPayload struct {
+	Declaration DividendsDeclaration `json:"declaration"`
+}
+
+// DividendsHeadroomBreakdown defines model for DividendsHeadroomBreakdown.
+type DividendsHeadroomBreakdown struct {
+	AsOf          time.Time            `json:"as_of"`
+	Available     DividendsMoney       `json:"available"`
+	Distributable bool                 `json:"distributable"`
+	FinancialYear string               `json:"financial_year"`
+	Lines         []DividendsMoneyLine `json:"lines"`
+}
+
+// DividendsMoney defines model for DividendsMoney.
+type DividendsMoney struct {
+	Amount   int64  `json:"amount"`
+	Currency string `json:"currency"`
+}
+
+// DividendsMoneyLine defines model for DividendsMoneyLine.
+type DividendsMoneyLine struct {
+	Amount DividendsMoney `json:"amount"`
+	Label  string         `json:"label"`
+}
+
+// DividendsShareholderSnapshot defines model for DividendsShareholderSnapshot.
+type DividendsShareholderSnapshot struct {
+	Class  string `json:"class"`
+	Name   string `json:"name"`
+	Shares int64  `json:"shares"`
+}
+
+// DividendsWithholdingSnapshot defines model for DividendsWithholdingSnapshot.
+type DividendsWithholdingSnapshot struct {
+	Note    string `json:"note"`
+	Policy  string `json:"policy"`
+	TaxYear string `json:"tax_year"`
+}
+
 // FieldError defines model for FieldError.
 type FieldError struct {
 	Detail  string `json:"detail"`
@@ -1594,6 +1670,18 @@ type ClientInterface interface {
 	// DashboardGetSummary request
 	DashboardGetSummary(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// DividendsRenderDeclarationDocuments request
+	DividendsRenderDeclarationDocuments(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DividendsGetMinutesPDF request
+	DividendsGetMinutesPDF(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DividendsGetDeclarationDocumentPayload request
+	DividendsGetDeclarationDocumentPayload(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DividendsGetVoucherPDF request
+	DividendsGetVoucherPDF(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// DlaGetBalance request
 	DlaGetBalance(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -1732,6 +1820,54 @@ type ClientInterface interface {
 
 func (c *Client) DashboardGetSummary(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDashboardGetSummaryRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DividendsRenderDeclarationDocuments(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDividendsRenderDeclarationDocumentsRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DividendsGetMinutesPDF(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDividendsGetMinutesPDFRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DividendsGetDeclarationDocumentPayload(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDividendsGetDeclarationDocumentPayloadRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DividendsGetVoucherPDF(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDividendsGetVoucherPDFRequest(c.Server, id)
 	if err != nil {
 		return nil, err
 	}
@@ -2328,6 +2464,142 @@ func NewDashboardGetSummaryRequest(server string) (*http.Request, error) {
 	}
 
 	operationPath := fmt.Sprintf("/api/dashboard/summary")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewDividendsRenderDeclarationDocumentsRequest generates requests for DividendsRenderDeclarationDocuments
+func NewDividendsRenderDeclarationDocumentsRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/dividends/declarations/%s/documents/render", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewDividendsGetMinutesPDFRequest generates requests for DividendsGetMinutesPDF
+func NewDividendsGetMinutesPDFRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/dividends/declarations/%s/minutes", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewDividendsGetDeclarationDocumentPayloadRequest generates requests for DividendsGetDeclarationDocumentPayload
+func NewDividendsGetDeclarationDocumentPayloadRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/dividends/declarations/%s/print", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewDividendsGetVoucherPDFRequest generates requests for DividendsGetVoucherPDF
+func NewDividendsGetVoucherPDFRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/dividends/declarations/%s/voucher", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -3987,6 +4259,18 @@ type ClientWithResponsesInterface interface {
 	// DashboardGetSummaryWithResponse request
 	DashboardGetSummaryWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*DashboardGetSummaryResponse, error)
 
+	// DividendsRenderDeclarationDocumentsWithResponse request
+	DividendsRenderDeclarationDocumentsWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DividendsRenderDeclarationDocumentsResponse, error)
+
+	// DividendsGetMinutesPDFWithResponse request
+	DividendsGetMinutesPDFWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DividendsGetMinutesPDFResponse, error)
+
+	// DividendsGetDeclarationDocumentPayloadWithResponse request
+	DividendsGetDeclarationDocumentPayloadWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DividendsGetDeclarationDocumentPayloadResponse, error)
+
+	// DividendsGetVoucherPDFWithResponse request
+	DividendsGetVoucherPDFWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DividendsGetVoucherPDFResponse, error)
+
 	// DlaGetBalanceWithResponse request
 	DlaGetBalanceWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*DlaGetBalanceResponse, error)
 
@@ -4141,6 +4425,102 @@ func (r DashboardGetSummaryResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r DashboardGetSummaryResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type DividendsRenderDeclarationDocumentsResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON200                   *DividendsDeclaration
+	ApplicationproblemJSON401 *Problem
+	ApplicationproblemJSON404 *Problem
+	ApplicationproblemJSON422 *ValidationProblem
+}
+
+// Status returns HTTPResponse.Status
+func (r DividendsRenderDeclarationDocumentsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DividendsRenderDeclarationDocumentsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type DividendsGetMinutesPDFResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	ApplicationproblemJSON401 *Problem
+	ApplicationproblemJSON404 *ValidationProblem
+}
+
+// Status returns HTTPResponse.Status
+func (r DividendsGetMinutesPDFResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DividendsGetMinutesPDFResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type DividendsGetDeclarationDocumentPayloadResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON200                   *DividendsDocumentPayload
+	ApplicationproblemJSON401 *Problem
+	ApplicationproblemJSON404 *Problem
+	ApplicationproblemJSON422 *ValidationProblem
+}
+
+// Status returns HTTPResponse.Status
+func (r DividendsGetDeclarationDocumentPayloadResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DividendsGetDeclarationDocumentPayloadResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type DividendsGetVoucherPDFResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	ApplicationproblemJSON401 *Problem
+	ApplicationproblemJSON404 *ValidationProblem
+}
+
+// Status returns HTTPResponse.Status
+func (r DividendsGetVoucherPDFResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DividendsGetVoucherPDFResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -5111,6 +5491,42 @@ func (c *ClientWithResponses) DashboardGetSummaryWithResponse(ctx context.Contex
 	return ParseDashboardGetSummaryResponse(rsp)
 }
 
+// DividendsRenderDeclarationDocumentsWithResponse request returning *DividendsRenderDeclarationDocumentsResponse
+func (c *ClientWithResponses) DividendsRenderDeclarationDocumentsWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DividendsRenderDeclarationDocumentsResponse, error) {
+	rsp, err := c.DividendsRenderDeclarationDocuments(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDividendsRenderDeclarationDocumentsResponse(rsp)
+}
+
+// DividendsGetMinutesPDFWithResponse request returning *DividendsGetMinutesPDFResponse
+func (c *ClientWithResponses) DividendsGetMinutesPDFWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DividendsGetMinutesPDFResponse, error) {
+	rsp, err := c.DividendsGetMinutesPDF(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDividendsGetMinutesPDFResponse(rsp)
+}
+
+// DividendsGetDeclarationDocumentPayloadWithResponse request returning *DividendsGetDeclarationDocumentPayloadResponse
+func (c *ClientWithResponses) DividendsGetDeclarationDocumentPayloadWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DividendsGetDeclarationDocumentPayloadResponse, error) {
+	rsp, err := c.DividendsGetDeclarationDocumentPayload(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDividendsGetDeclarationDocumentPayloadResponse(rsp)
+}
+
+// DividendsGetVoucherPDFWithResponse request returning *DividendsGetVoucherPDFResponse
+func (c *ClientWithResponses) DividendsGetVoucherPDFWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DividendsGetVoucherPDFResponse, error) {
+	rsp, err := c.DividendsGetVoucherPDF(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDividendsGetVoucherPDFResponse(rsp)
+}
+
 // DlaGetBalanceWithResponse request returning *DlaGetBalanceResponse
 func (c *ClientWithResponses) DlaGetBalanceWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*DlaGetBalanceResponse, error) {
 	rsp, err := c.DlaGetBalance(ctx, reqEditors...)
@@ -5568,6 +5984,166 @@ func ParseDashboardGetSummaryResponse(rsp *http.Response) (*DashboardGetSummaryR
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDividendsRenderDeclarationDocumentsResponse parses an HTTP response from a DividendsRenderDeclarationDocumentsWithResponse call
+func ParseDividendsRenderDeclarationDocumentsResponse(rsp *http.Response) (*DividendsRenderDeclarationDocumentsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DividendsRenderDeclarationDocumentsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DividendsDeclaration
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ValidationProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDividendsGetMinutesPDFResponse parses an HTTP response from a DividendsGetMinutesPDFWithResponse call
+func ParseDividendsGetMinutesPDFResponse(rsp *http.Response) (*DividendsGetMinutesPDFResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DividendsGetMinutesPDFResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ValidationProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDividendsGetDeclarationDocumentPayloadResponse parses an HTTP response from a DividendsGetDeclarationDocumentPayloadWithResponse call
+func ParseDividendsGetDeclarationDocumentPayloadResponse(rsp *http.Response) (*DividendsGetDeclarationDocumentPayloadResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DividendsGetDeclarationDocumentPayloadResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DividendsDocumentPayload
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ValidationProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDividendsGetVoucherPDFResponse parses an HTTP response from a DividendsGetVoucherPDFWithResponse call
+func ParseDividendsGetVoucherPDFResponse(rsp *http.Response) (*DividendsGetVoucherPDFResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DividendsGetVoucherPDFResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ValidationProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
 
 	}
 

@@ -459,6 +459,136 @@
   white-space: nowrap;
 }
 
+.dividend-print {
+  display: grid;
+  width: 794px;
+  min-height: 1123px;
+  align-content: start;
+  gap: 28px;
+  margin: 0 auto;
+  padding: 58px 64px 52px;
+  background: var(--color-card);
+  box-shadow: 0 24px 60px rgb(24 39 64 / 18%);
+  color: rgb(20 33 61);
+  font-family: Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.dividend-print h1,
+.dividend-print h2,
+.dividend-print p,
+.dividend-print dl,
+.dividend-print dd {
+  margin: 0;
+}
+
+.dividend-print h1 {
+  font-size: 28px;
+  line-height: 1.15;
+}
+
+.dividend-print h2 {
+  font-size: 17px;
+  line-height: 1.25;
+}
+
+.dividend-print__header {
+  display: grid;
+  gap: 5px;
+  padding-bottom: 20px;
+  border-bottom: 4px double rgb(20 33 61);
+}
+
+.dividend-print__eyebrow {
+  color: rgb(101 117 139);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.dividend-print__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 26px;
+}
+
+.dividend-print__fact {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.dividend-print__fact dt {
+  color: rgb(101 117 139);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.dividend-print__fact dd {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: rgb(20 33 61);
+  font-weight: 800;
+}
+
+.dividend-print__note {
+  padding: 14px 18px;
+  border-left: 4px solid rgb(55 180 167);
+  background: rgb(246 250 249);
+  color: rgb(52 66 87);
+}
+
+.dividend-print__body,
+.dividend-print__resolution {
+  display: grid;
+  gap: 12px;
+  color: rgb(52 66 87);
+}
+
+.dividend-print__table {
+  width: 100%;
+  border-collapse: collapse;
+  border-top: 1px solid rgb(217 224 234);
+}
+
+.dividend-print__table th,
+.dividend-print__table td {
+  padding: 9px 0;
+  border-bottom: 1px solid rgb(217 224 234);
+  vertical-align: top;
+}
+
+.dividend-print__table th {
+  color: rgb(52 66 87);
+  font-weight: 700;
+  text-align: left;
+}
+
+.dividend-print__table td {
+  font-weight: 800;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.dividend-print__signature {
+  display: grid;
+  gap: 7px;
+  margin-top: 22px;
+}
+
+.dividend-print__signature div {
+  width: 280px;
+  border-bottom: 1px solid rgb(20 33 61);
+}
+
+.dividend-print__signature p {
+  color: rgb(52 66 87);
+}
+
 @media print {
   @page {
     size: A4;
@@ -482,7 +612,8 @@
     background: var(--color-card);
   }
 
-  .invoice-print {
+  .invoice-print,
+  .dividend-print {
     width: 794px;
     height: 1122px;
     min-height: 1122px;
@@ -492,7 +623,9 @@
   }
 
   .invoice-print,
-  .invoice-print * {
+  .invoice-print *,
+  .dividend-print,
+  .dividend-print * {
     font-family: Arial, sans-serif !important;
     text-rendering: auto;
   }

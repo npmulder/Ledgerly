@@ -5,6 +5,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"io"
+	"log/slog"
 	"math/big"
 	"strconv"
 	"strings"
@@ -31,18 +33,27 @@ const (
 	dividendSourcePrefix          = "dividends:"
 )
 
+const (
+	defaultDocumentRetryAttempts = 3
+	defaultDocumentRetryBackoff  = 250 * time.Millisecond
+)
+
 // Service composes ledger, reports, jurisdiction, identity, and declaration
 // storage into the live dividend headroom read model.
 type Service struct {
-	pool        *pgxpool.Pool
-	ledger      Ledger
-	reports     reports.Reports
-	identity    Identity
-	dla         DLA
-	bus         *bus.Bus
-	clock       clock.Clock
-	idGenerator func() (DeclarationID, error)
-	store       Store
+	pool                 *pgxpool.Pool
+	ledger               Ledger
+	reports              reports.Reports
+	identity             Identity
+	dla                  DLA
+	bus                  *bus.Bus
+	clock                clock.Clock
+	documentAssetStore   DividendDocumentAssetStore
+	documentPDFEngine    DividendDocumentPDFEngine
+	documentRetryBackoff time.Duration
+	logger               *slog.Logger
+	idGenerator          func() (DeclarationID, error)
+	store                Store
 }
 
 var _ Dividends = (*Service)(nil)
@@ -78,15 +89,66 @@ func WithIDGenerator(generator func() (DeclarationID, error)) Option {
 	}
 }
 
+// WithDocumentAssetStore installs immutable dividend document PDF asset
+// storage.
+func WithDocumentAssetStore(store DividendDocumentAssetStore) Option {
+	return func(s *Service) {
+		if store != nil {
+			s.documentAssetStore = store
+		}
+	}
+}
+
+// WithDocumentPDFEngine installs the engine used to render dividend document
+// print payloads to PDF bytes.
+func WithDocumentPDFEngine(engine DividendDocumentPDFEngine) Option {
+	return func(s *Service) {
+		if engine != nil {
+			s.documentPDFEngine = engine
+		}
+	}
+}
+
+// WithDocumentPDFBaseURL installs the production chromedp engine when a custom
+// engine was not supplied.
+func WithDocumentPDFBaseURL(baseURL string) Option {
+	return func(s *Service) {
+		if s.documentPDFEngine == nil && strings.TrimSpace(baseURL) != "" {
+			s.documentPDFEngine = NewChromeDocumentPDFEngine(baseURL)
+		}
+	}
+}
+
+// WithDocumentRetryBackoff overrides the declaration-time async retry backoff.
+func WithDocumentRetryBackoff(backoff time.Duration) Option {
+	return func(s *Service) {
+		if backoff >= 0 {
+			s.documentRetryBackoff = backoff
+		}
+	}
+}
+
+// WithLogger installs the logger used for non-blocking document render
+// failures.
+func WithLogger(logger *slog.Logger) Option {
+	return func(s *Service) {
+		if logger != nil {
+			s.logger = logger
+		}
+	}
+}
+
 // New returns the dividends read API.
 func New(pool *pgxpool.Pool, ledgerAPI Ledger, reportsAPI reports.Reports, identityAPI Identity, opts ...Option) *Service {
 	service := &Service{
-		pool:        pool,
-		ledger:      ledgerAPI,
-		reports:     reportsAPI,
-		identity:    identityAPI,
-		clock:       clock.New(),
-		idGenerator: newDeclarationID,
+		pool:                 pool,
+		ledger:               ledgerAPI,
+		reports:              reportsAPI,
+		identity:             identityAPI,
+		clock:                clock.New(),
+		documentRetryBackoff: defaultDocumentRetryBackoff,
+		logger:               slog.New(slog.NewTextHandler(io.Discard, nil)),
+		idGenerator:          newDeclarationID,
 	}
 	for _, opt := range opts {
 		opt(service)
@@ -96,6 +158,9 @@ func New(pool *pgxpool.Pool, ledgerAPI Ledger, reportsAPI reports.Reports, ident
 	}
 	if service.idGenerator == nil {
 		service.idGenerator = newDeclarationID
+	}
+	if service.logger == nil {
+		service.logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 	return service
 }
@@ -276,18 +341,36 @@ func (s *Service) Declare(ctx context.Context, amount money.Money) (declaration 
 	if err != nil {
 		return Declaration{}, err
 	}
+	companySnapshot, err := declarationCompanySnapshot(profile, shareholder)
+	if err != nil {
+		return Declaration{}, err
+	}
+	shareholderSnapshot, err := declarationShareholderSnapshot(shareholder)
+	if err != nil {
+		return Declaration{}, err
+	}
+	headroomSnapshot := validation.Headroom
+	withholdingSnapshot := WithholdingSnapshot{
+		TaxYear: validation.Withholding.TaxYear,
+		Policy:  validation.Withholding.Policy,
+		Note:    dividendWithholdingNote(validation.Withholding.Policy),
+	}
 	perShare, err := perShareAmount(validation.Amount, shareholder.Shares)
 	if err != nil {
 		return Declaration{}, err
 	}
 
 	stored, err := s.store.InsertDeclaration(ctx, tx, Declaration{
-		ID:              id,
-		DeclaredDate:    declaredDate,
-		Amount:          validation.Amount,
-		PerShare:        perShare,
-		Shares:          shareholder.Shares,
-		ShareholderName: shareholder.Name,
+		ID:                  id,
+		DeclaredDate:        declaredDate,
+		Amount:              validation.Amount,
+		PerShare:            perShare,
+		Shares:              shareholder.Shares,
+		ShareholderName:     shareholder.Name,
+		CompanySnapshot:     &companySnapshot,
+		ShareholderSnapshot: &shareholderSnapshot,
+		HeadroomSnapshot:    &headroomSnapshot,
+		WithholdingSnapshot: &withholdingSnapshot,
 	})
 	if err != nil {
 		return Declaration{}, err
@@ -312,7 +395,110 @@ func (s *Service) Declare(ctx context.Context, amount money.Money) (declaration 
 		return Declaration{}, fmt.Errorf("dividends: commit declaration transaction: %w", err)
 	}
 	committed = true
+	s.scheduleDeclarationDocumentsRender(stored.ID)
 	return stored, nil
+}
+
+// RenderDeclarationDocumentsNow renders and stores both dividend declaration
+// documents unless both immutable asset references are already present.
+func (s *Service) RenderDeclarationDocumentsNow(ctx context.Context, id DeclarationID) (Declaration, error) {
+	if err := s.renderAndStoreDeclarationDocuments(ctx, id); err != nil {
+		return Declaration{}, err
+	}
+	return s.Declaration(ctx, id)
+}
+
+// Declaration returns one declaration by id.
+func (s *Service) Declaration(ctx context.Context, id DeclarationID) (Declaration, error) {
+	if s.pool == nil {
+		return Declaration{}, fmt.Errorf("dividends: declaration lookup requires pool")
+	}
+	return s.store.Declaration(ctx, s.pool, id)
+}
+
+// DeclarationDocumentPayload returns the exact snapshot payload consumed by
+// the React dividend print routes.
+func (s *Service) DeclarationDocumentPayload(ctx context.Context, id DeclarationID) (DividendDocumentPayload, error) {
+	declaration, err := s.Declaration(ctx, id)
+	if err != nil {
+		return DividendDocumentPayload{}, err
+	}
+	if err := requireDocumentSnapshots(declaration); err != nil {
+		return DividendDocumentPayload{}, err
+	}
+	return DividendDocumentPayload{Declaration: declaration}, nil
+}
+
+func (s *Service) scheduleDeclarationDocumentsRender(id DeclarationID) {
+	if s.documentPDFEngine == nil || s.documentAssetStore == nil {
+		return
+	}
+	declarationID := DeclarationID(strings.TrimSpace(string(id)))
+	if declarationID == "" {
+		return
+	}
+	go s.renderDeclarationDocumentsWithRetry(declarationID)
+}
+
+func (s *Service) renderDeclarationDocumentsWithRetry(id DeclarationID) {
+	backoff := s.documentRetryBackoff
+	for attempt := 1; attempt <= defaultDocumentRetryAttempts; attempt++ {
+		err := s.renderAndStoreDeclarationDocuments(context.Background(), id)
+		if err == nil {
+			return
+		}
+		s.logDocumentRenderFailure(id, attempt, err)
+		if attempt == defaultDocumentRetryAttempts || backoff <= 0 {
+			continue
+		}
+		time.Sleep(backoff * time.Duration(1<<(attempt-1)))
+	}
+}
+
+func (s *Service) renderAndStoreDeclarationDocuments(ctx context.Context, id DeclarationID) error {
+	if s.documentPDFEngine == nil {
+		return fmt.Errorf("dividends: document PDF renderer is not configured")
+	}
+	if s.documentAssetStore == nil {
+		return fmt.Errorf("dividends: document PDF asset store is not configured")
+	}
+	payload, err := s.DeclarationDocumentPayload(ctx, id)
+	if err != nil {
+		return err
+	}
+	if payload.Declaration.VoucherAsset != nil && strings.TrimSpace(string(*payload.Declaration.VoucherAsset)) != "" &&
+		payload.Declaration.MinutesAsset != nil && strings.TrimSpace(string(*payload.Declaration.MinutesAsset)) != "" {
+		return nil
+	}
+
+	voucherPDF, err := s.documentPDFEngine.RenderDividendVoucherPDF(ctx, payload)
+	if err != nil {
+		return err
+	}
+	minutesPDF, err := s.documentPDFEngine.RenderBoardMinutesPDF(ctx, payload)
+	if err != nil {
+		return err
+	}
+	voucherAsset, err := s.documentAssetStore.StoreDividendDocumentPDF(ctx, voucherPDF)
+	if err != nil {
+		return err
+	}
+	minutesAsset, err := s.documentAssetStore.StoreDividendDocumentPDF(ctx, minutesPDF)
+	if err != nil {
+		return err
+	}
+	if _, err := s.store.SetDeclarationDocumentAssets(ctx, s.pool, payload.Declaration.ID, voucherAsset, minutesAsset); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *Service) logDocumentRenderFailure(id DeclarationID, attempt int, err error) {
+	logger := s.logger
+	if logger == nil {
+		return
+	}
+	logger.Error("dividend document render failed", "declaration_id", string(id), "attempt", attempt, "error", err)
 }
 
 func (s *Service) validateAt(
@@ -510,7 +696,65 @@ func declarationShareholder(profile identity.CompanyProfile) (identity.Sharehold
 	if shareholder.Shares <= 0 {
 		return identity.Shareholder{}, fmt.Errorf("dividends: shareholder shares must be positive: %w", ErrInvalidDeclaration)
 	}
+	shareholder.Class = strings.TrimSpace(shareholder.Class)
+	if shareholder.Class == "" {
+		return identity.Shareholder{}, fmt.Errorf("dividends: shareholder share class is required: %w", ErrInvalidDeclaration)
+	}
 	return shareholder, nil
+}
+
+func declarationCompanySnapshot(profile identity.CompanyProfile, shareholder identity.Shareholder) (CompanySnapshot, error) {
+	snapshot := CompanySnapshot{
+		TradingName:      strings.TrimSpace(profile.TradingName),
+		LegalName:        strings.TrimSpace(profile.LegalName),
+		CompanyNumber:    strings.TrimSpace(profile.CompanyNumber),
+		RegisteredOffice: profile.RegisteredOffice,
+		DirectorName:     strings.TrimSpace(shareholder.Name),
+	}
+	normalized, err := normalizeCompanySnapshot(&snapshot)
+	if err != nil {
+		return CompanySnapshot{}, err
+	}
+	return *normalized, nil
+}
+
+func declarationShareholderSnapshot(shareholder identity.Shareholder) (ShareholderSnapshot, error) {
+	snapshot := ShareholderSnapshot{
+		Name:   strings.TrimSpace(shareholder.Name),
+		Shares: shareholder.Shares,
+		Class:  strings.TrimSpace(shareholder.Class),
+	}
+	normalized, err := normalizeShareholderSnapshot(&snapshot)
+	if err != nil {
+		return ShareholderSnapshot{}, err
+	}
+	return *normalized, nil
+}
+
+func dividendWithholdingNote(policy string) string {
+	trimmed := strings.TrimSpace(policy)
+	if trimmed == "" {
+		return "Dividend withholding policy was not provided by the active jurisdiction pack."
+	}
+	if strings.EqualFold(trimmed, "none") {
+		return "No dividend withholding tax is deducted under the active jurisdiction pack (withholding: none)."
+	}
+	return "Dividend withholding follows the active jurisdiction pack policy: " + trimmed + "."
+}
+
+func requireDocumentSnapshots(declaration Declaration) error {
+	switch {
+	case declaration.CompanySnapshot == nil:
+		return fmt.Errorf("dividends: declaration %s missing company snapshot: %w", declaration.ID, ErrInvalidDeclaration)
+	case declaration.ShareholderSnapshot == nil:
+		return fmt.Errorf("dividends: declaration %s missing shareholder snapshot: %w", declaration.ID, ErrInvalidDeclaration)
+	case declaration.HeadroomSnapshot == nil:
+		return fmt.Errorf("dividends: declaration %s missing headroom snapshot: %w", declaration.ID, ErrInvalidDeclaration)
+	case declaration.WithholdingSnapshot == nil:
+		return fmt.Errorf("dividends: declaration %s missing withholding snapshot: %w", declaration.ID, ErrInvalidDeclaration)
+	default:
+		return nil
+	}
 }
 
 func perShareAmount(amount money.Money, shares int64) (money.Money, error) {

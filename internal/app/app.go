@@ -129,6 +129,10 @@ type Dependencies struct {
 	InvoicingPDFBaseURL    string
 	InvoicingMailSender    mail.Sender
 
+	DividendsPDFAssetStore dividends.DividendDocumentAssetStore
+	DividendsPDFEngine     dividends.DividendDocumentPDFEngine
+	DividendsPDFBaseURL    string
+
 	JurisdictionLoader func(string) error
 
 	ModuleBuilders map[string]ModuleBuilder
@@ -284,16 +288,28 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 	identityHTTPOptions := []identity.HTTPOption{identity.WithProfileAPI(identityProfile)}
 	identityHTTPOptions = append(identityHTTPOptions, deps.IdentityHTTPOptions...)
 	identityHandler := identity.NewHTTPHandler(identityService, identityHTTPOptions...)
-	pdfAssetStore := deps.InvoicingPDFAssetStore
-	if pdfAssetStore == nil && strings.TrimSpace(cfg.Runtime.DataDir) != "" {
-		pdfAssetStore = identityInvoicePDFAssetStore{
+	pdfAssetWriter := identityInvoicePDFAssetStore{}
+	if strings.TrimSpace(cfg.Runtime.DataDir) != "" {
+		pdfAssetWriter = identityInvoicePDFAssetStore{
 			writer:  identity.NewAssetWriter(identityPool, cfg.Runtime.DataDir),
 			profile: identityProfile,
 		}
 	}
+	pdfAssetStore := deps.InvoicingPDFAssetStore
+	if pdfAssetStore == nil && pdfAssetWriter.writer != nil {
+		pdfAssetStore = pdfAssetWriter
+	}
+	dividendDocumentAssetStore := deps.DividendsPDFAssetStore
+	if dividendDocumentAssetStore == nil && pdfAssetWriter.writer != nil {
+		dividendDocumentAssetStore = pdfAssetWriter
+	}
 	pdfBaseURL := strings.TrimSpace(deps.InvoicingPDFBaseURL)
 	if pdfBaseURL == "" {
 		pdfBaseURL = localHTTPBaseURL(cfg.Runtime.HTTPAddr)
+	}
+	dividendPDFBaseURL := strings.TrimSpace(deps.DividendsPDFBaseURL)
+	if dividendPDFBaseURL == "" {
+		dividendPDFBaseURL = pdfBaseURL
 	}
 	mailSender := deps.InvoicingMailSender
 	if mailSender == nil {
@@ -350,13 +366,6 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		identityProfile,
 		dashboardInvoicingService,
 		reports.WithClock(clk),
-	)
-	dividendsService := dividends.New(
-		dividendsPool,
-		ledgerService,
-		reportsService,
-		identityProfile,
-		dividends.WithClock(clk),
 	)
 	bankingService := banking.NewService(
 		bankingPool,
@@ -440,6 +449,26 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 	}
 	modules = append(modules, invoicingModule.HTTPModule)
 	fragments = append(fragments, invoicingModule.OpenAPIFragment)
+
+	dividendsModule, err := dividends.NewModule(dividends.Config{
+		Pool:               dividendsPool,
+		Clock:              clk,
+		Ledger:             ledgerService,
+		Reports:            reportsService,
+		Identity:           identityProfile,
+		DLA:                dlaService,
+		Bus:                eventBus,
+		DocumentAssetStore: dividendDocumentAssetStore,
+		DocumentPDFEngine:  deps.DividendsPDFEngine,
+		DocumentPDFBaseURL: dividendPDFBaseURL,
+		Logger:             logger,
+	})
+	if err != nil {
+		return nil, err
+	}
+	dividendsService := dividendsModule.Service()
+	modules = append(modules, dividendsModule.HTTPModule())
+	fragments = append(fragments, dividendsModule.OpenAPIFragment())
 
 	factProviders := []advisor.RegisteredFactProvider{}
 	if invoicingRead, ok := invoicingModule.ReadAPI.(advisor.InvoicingReadAPI); ok {
@@ -552,6 +581,7 @@ func OpenAPIDocument(version string) map[string]any {
 		ledger.OpenAPIFragment(),
 		dla.OpenAPIFragment(),
 		invoicing.OpenAPIFragment(),
+		dividends.OpenAPIFragment(),
 		dashboardOpenAPIFragment(),
 	)
 }
@@ -711,6 +741,16 @@ func (s identityInvoicePDFAssetStore) StoreInvoicePDF(ctx context.Context, pdf [
 		return "", err
 	}
 	return "/api/identity/assets/" + string(id), nil
+}
+
+func (s identityInvoicePDFAssetStore) StoreDividendDocumentPDF(ctx context.Context, pdf []byte) (identity.AssetID, error) {
+	if s.writer == nil {
+		return "", fmt.Errorf("app: identity asset writer is required for dividend document PDFs")
+	}
+	return s.writer.StoreAsset(ctx, identity.AssetUpload{
+		MIME:  "application/pdf",
+		Bytes: pdf,
+	})
 }
 
 func (s identityInvoicePDFAssetStore) LoadInvoicePDF(ctx context.Context, assetURL string) ([]byte, error) {

@@ -6,30 +6,35 @@ import {
   getInvoicePrintPayload,
   type InvoicingInvoicePrintPayload,
 } from "@/api/invoicing";
+import {
+  getDividendDocumentPayload,
+  type DividendsDocumentPayload,
+} from "@/api/dividends";
 
-const printStoragePrefix = "ledgerly.print.invoice.";
+const invoicePrintStoragePrefix = "ledgerly.print.invoice.";
+const dividendPrintStoragePrefix = "ledgerly.print.dividend.";
 
 export function PrintRouteScreen() {
   const location = useLocation();
-  const route = useMemo(() => invoicePrintRoute(location.pathname), [location]);
+  const route = useMemo(() => printRoute(location.pathname), [location]);
   const draft = useMemo(
     () => new URLSearchParams(location.search).get("draft") === "1",
     [location.search],
   );
   const [storedPayload] = useState(() =>
-    route.invoiceID ? readStoredPayload(route.invoiceID) : null,
+    route.id ? readStoredPayload(route) : null,
   );
 
-  const payloadQuery = useQuery({
-    enabled: Boolean(route.invoiceID && !storedPayload),
-    queryFn: () => getInvoicePrintPayload(route.invoiceID, draft),
-    queryKey: ["invoice-print", route.invoiceID, draft],
+  const payloadQuery = useQuery<PrintPayload>({
+    enabled: Boolean(route.id && !storedPayload),
+    queryFn: () => fetchPrintPayload(route, draft),
+    queryKey: ["print", route.kind, route.id, draft],
     retry: false,
   });
 
   const payload = storedPayload ?? payloadQuery.data ?? null;
 
-  if (!route.invoiceID) {
+  if (!route.id) {
     return (
       <main className="print-route print-route--state">
         <p>Print route not found</p>
@@ -40,19 +45,53 @@ export function PrintRouteScreen() {
   if (!payload) {
     return (
       <main className="print-route print-route--state">
-        <p>{payloadQuery.isError ? "Unable to load invoice" : "Loading"}</p>
+        <p>
+          {payloadQuery.isError ? "Unable to load print document" : "Loading"}
+        </p>
       </main>
     );
   }
 
   return (
     <main className="print-route">
-      <InvoiceDocument payload={payload} />
+      <PrintDocument payload={payload} route={route} />
     </main>
   );
 }
 
-function InvoiceDocument({ payload }: { payload: InvoicingInvoicePrintPayload }) {
+type PrintRoute =
+  | { kind: "invoice"; id: string }
+  | { kind: "dividend-voucher"; id: string }
+  | { kind: "board-minutes"; id: string }
+  | { kind: "unknown"; id: "" };
+
+type PrintPayload = InvoicingInvoicePrintPayload | DividendsDocumentPayload;
+
+function PrintDocument({
+  payload,
+  route,
+}: {
+  payload: PrintPayload;
+  route: PrintRoute;
+}) {
+  if (route.kind === "dividend-voucher") {
+    return (
+      <DividendVoucherDocument payload={payload as DividendsDocumentPayload} />
+    );
+  }
+  if (route.kind === "board-minutes") {
+    return (
+      <BoardMinutesDocument payload={payload as DividendsDocumentPayload} />
+    );
+  }
+  return <InvoiceDocument payload={payload as InvoicingInvoicePrintPayload} />;
+}
+
+function InvoiceDocument({
+  payload,
+}: {
+  payload: InvoicingInvoicePrintPayload;
+}) {
   const { client, identity, invoice } = payload;
   const invoiceNumber = invoice.number ?? "Draft invoice";
   const logoSrc = identity.logo_data_uri ?? identity.logo_asset_url ?? null;
@@ -170,6 +209,159 @@ function InvoiceDocument({ payload }: { payload: InvoicingInvoicePrintPayload })
   );
 }
 
+function DividendVoucherDocument({
+  payload,
+}: {
+  payload: DividendsDocumentPayload;
+}) {
+  const { declaration } = payload;
+  const company = requireValue(declaration.company_snapshot);
+  const shareholder = requireValue(declaration.shareholder_snapshot);
+  const withholding = requireValue(declaration.withholding_snapshot);
+
+  return (
+    <article
+      aria-label={`Dividend voucher ${declaration.id}`}
+      className="dividend-print dividend-print--voucher"
+      data-ledgerly-print-ready="true"
+    >
+      <header className="dividend-print__header">
+        <p className="dividend-print__eyebrow">Dividend voucher</p>
+        <h1>{company.legal_name}</h1>
+        <p>Company no. {company.company_number}</p>
+        <p>
+          Registered office:{" "}
+          {addressLines(company.registered_office).join(", ")}
+        </p>
+      </header>
+
+      <dl className="dividend-print__grid" aria-label="Dividend details">
+        <DocumentFact
+          label="Declaration date"
+          value={formatDate(declaration.declared_date)}
+        />
+        <DocumentFact label="Shareholder" value={shareholder.name} />
+        <DocumentFact
+          label="Shareholding"
+          value={formatShareholding(shareholder)}
+        />
+        <DocumentFact
+          label="Dividend per share"
+          value={formatMoney(declaration.per_share)}
+        />
+        <DocumentFact
+          label="Total dividend"
+          value={formatMoney(declaration.amount)}
+        />
+      </dl>
+
+      <p className="dividend-print__note">{withholding.note}</p>
+
+      <section className="dividend-print__body">
+        <p>
+          This voucher records the dividend declared by {company.legal_name} on{" "}
+          {formatDate(declaration.declared_date)} to {shareholder.name}, holder
+          of {formatShareholding(shareholder)}.
+        </p>
+      </section>
+
+      <SignatureBlock
+        label="Signed for and on behalf of the company"
+        name={company.director_name}
+      />
+    </article>
+  );
+}
+
+function BoardMinutesDocument({
+  payload,
+}: {
+  payload: DividendsDocumentPayload;
+}) {
+  const { declaration } = payload;
+  const company = requireValue(declaration.company_snapshot);
+  const shareholder = requireValue(declaration.shareholder_snapshot);
+  const headroom = requireValue(declaration.headroom_snapshot);
+
+  return (
+    <article
+      aria-label={`Board minutes ${declaration.id}`}
+      className="dividend-print dividend-print--minutes"
+      data-ledgerly-print-ready="true"
+    >
+      <header className="dividend-print__header">
+        <p className="dividend-print__eyebrow">Board minutes</p>
+        <h1>{company.legal_name}</h1>
+        <p>Company no. {company.company_number}</p>
+      </header>
+
+      <dl className="dividend-print__grid" aria-label="Meeting details">
+        <DocumentFact
+          label="Meeting date"
+          value={formatDate(declaration.declared_date)}
+        />
+        <DocumentFact
+          label="Present"
+          value={`${company.director_name} (Director)`}
+        />
+        <DocumentFact label="Share class" value={shareholder.class} />
+        <DocumentFact label="Shareholder" value={shareholder.name} />
+      </dl>
+
+      <section className="dividend-print__body">
+        <h2>Distributable reserves</h2>
+        <p>
+          The director reviewed the management accounts and confirmed the
+          company had sufficient distributable reserves at declaration time.
+        </p>
+        <table className="dividend-print__table">
+          <tbody>
+            {headroom.lines.map((line) => (
+              <tr key={line.label}>
+                <th scope="row">{line.label}</th>
+                <td>{formatMoney(line.amount)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </section>
+
+      <section className="dividend-print__resolution">
+        <h2>Resolution</h2>
+        <p>
+          It was resolved that an interim dividend of{" "}
+          {formatMoney(declaration.per_share)} per {shareholder.class} share,
+          totaling {formatMoney(declaration.amount)}, be declared on{" "}
+          {formatDate(declaration.declared_date)} and paid by credit to the
+          director&apos;s loan account.
+        </p>
+      </section>
+
+      <SignatureBlock label="Chair" name={company.director_name} />
+      <SignatureBlock label="Director" name={company.director_name} />
+    </article>
+  );
+}
+
+function DocumentFact({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="dividend-print__fact">
+      <dt>{label}</dt>
+      <dd>{value}</dd>
+    </div>
+  );
+}
+
+function SignatureBlock({ label, name }: { label: string; name: string }) {
+  return (
+    <section className="dividend-print__signature">
+      <div aria-hidden="true" />
+      <p>{label}</p>
+      <p>{name}</p>
+    </section>
+  );
+}
+
 function AddressBlock({
   lines,
   name,
@@ -199,28 +391,75 @@ function Term({ label, value }: { label: string; value: string }) {
   );
 }
 
-function invoicePrintRoute(pathname: string) {
-  const match = pathname.match(/^\/print\/invoice\/([^/]+)$/);
-  return { invoiceID: match ? decodeURIComponent(match[1]) : "" };
+function printRoute(pathname: string): PrintRoute {
+  const invoiceMatch = pathname.match(/^\/print\/invoice\/([^/]+)$/);
+  if (invoiceMatch) {
+    return { id: decodeURIComponent(invoiceMatch[1]), kind: "invoice" };
+  }
+  const voucherMatch = pathname.match(/^\/print\/dividend-voucher\/([^/]+)$/);
+  if (voucherMatch) {
+    return {
+      id: decodeURIComponent(voucherMatch[1]),
+      kind: "dividend-voucher",
+    };
+  }
+  const minutesMatch = pathname.match(/^\/print\/board-minutes\/([^/]+)$/);
+  if (minutesMatch) {
+    return { id: decodeURIComponent(minutesMatch[1]), kind: "board-minutes" };
+  }
+  return { id: "", kind: "unknown" };
 }
 
-function readStoredPayload(id: string) {
+function fetchPrintPayload(
+  route: PrintRoute,
+  draft: boolean,
+): Promise<PrintPayload> {
+  if (route.kind === "invoice") {
+    return getInvoicePrintPayload(route.id, draft) as Promise<PrintPayload>;
+  }
+  if (route.kind === "dividend-voucher" || route.kind === "board-minutes") {
+    return getDividendDocumentPayload(route.id) as Promise<PrintPayload>;
+  }
+  return Promise.reject(new Error("unknown print route"));
+}
+
+function readStoredPayload(route: PrintRoute) {
   if (typeof window === "undefined") {
     return null;
   }
-  const key = `${printStoragePrefix}${id}`;
+  const key = printStorageKey(route);
+  if (!key) {
+    return null;
+  }
   const raw = window.localStorage.getItem(key);
   if (!raw) {
     return null;
   }
   try {
-    return JSON.parse(raw) as InvoicingInvoicePrintPayload;
+    return JSON.parse(raw) as PrintPayload;
   } catch {
     return null;
   }
 }
 
-function addressLines(address: InvoicingInvoicePrintPayload["identity"]["address"]) {
+function printStorageKey(route: PrintRoute) {
+  if (route.kind === "invoice") {
+    return `${invoicePrintStoragePrefix}${route.id}`;
+  }
+  if (route.kind === "dividend-voucher" || route.kind === "board-minutes") {
+    return `${dividendPrintStoragePrefix}${route.kind}.${route.id}`;
+  }
+  return "";
+}
+
+function addressLines(address: {
+  country: string;
+  line1: string;
+  line2: string;
+  locality: string;
+  postal_code: string;
+  region: string;
+}) {
   return [
     address.line1,
     address.line2,
@@ -240,7 +479,7 @@ function formatDate(value: string) {
   }).format(new Date(value));
 }
 
-function formatMoney(value: { amount: number; currency: "EUR" | "GBP" }) {
+function formatMoney(value: { amount: number; currency: string }) {
   return new Intl.NumberFormat("en-IE", {
     currency: value.currency,
     style: "currency",
@@ -265,4 +504,15 @@ function initials(value: string) {
     .slice(0, 2)
     .map((part) => part[0]?.toUpperCase() ?? "")
     .join("");
+}
+
+function formatShareholding(shareholder: { class: string; shares: number }) {
+  return `${shareholder.shares} ${shareholder.class}`;
+}
+
+function requireValue<T>(value: T | null | undefined): T {
+  if (value === null || value === undefined) {
+    throw new Error("Missing dividend document snapshot");
+  }
+  return value;
 }
