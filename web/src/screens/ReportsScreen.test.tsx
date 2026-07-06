@@ -20,6 +20,7 @@ import { ReportsScreen } from "@/screens/ReportsScreen";
 
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
@@ -157,6 +158,66 @@ describe("ReportsScreen", () => {
     });
   });
 
+  it("starts an export download for the selected period", async () => {
+    const user = userEvent.setup();
+    const clickSpy = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(() => undefined);
+    vi.stubGlobal("fetch", reportsFetch());
+    const reportYear = currentReportYear();
+
+    renderReportsScreen();
+
+    await screen.findByText(`Profit & loss · Apr-Jun ${reportYear}`);
+    const exportButton = screen.getByRole("button", { name: "Export pack" });
+    expect(exportButton).toBeEnabled();
+
+    await user.click(exportButton);
+
+    expect(clickSpy).toHaveBeenCalled();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Export pack is being prepared.",
+    );
+  });
+
+  it("shares an export pack with an accountant email", async () => {
+    const user = userEvent.setup();
+    const fetchImpl = vi.fn(reportsFetchHandler());
+    vi.stubGlobal("fetch", fetchImpl);
+    const reportYear = currentReportYear();
+
+    renderReportsScreen();
+
+    await screen.findByText(`Profit & loss · Apr-Jun ${reportYear}`);
+    await user.click(
+      screen.getByRole("button", { name: "Share with accountant" }),
+    );
+    await user.type(
+      screen.getByLabelText("Accountant email"),
+      "accountant@example.test",
+    );
+    await user.click(screen.getByRole("button", { name: "Share" }));
+
+    await waitFor(() => {
+      expect(fetchImpl).toHaveBeenCalledWith(
+        "/api/reports/share",
+        expect.objectContaining({
+          body: JSON.stringify({
+            email: "accountant@example.test",
+            period: {
+              from: `${reportYear}-04-01`,
+              to: `${reportYear}-06-30`,
+            },
+          }),
+          method: "POST",
+        }),
+      );
+    });
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Export pack sent to accountant.",
+    );
+  });
+
   it("does not apply custom ranges while either date is empty", async () => {
     const user = userEvent.setup();
     const fetchImpl = vi.fn(reportsFetchHandler());
@@ -255,7 +316,7 @@ function reportsFetchHandler(overrides: Partial<ReportsFixtures> = {}) {
     ...overrides,
   };
 
-  return async (input: RequestInfo | URL) => {
+  return async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = urlFromRequest(input);
     if (url.pathname === "/api/reports/pl") {
       return jsonResponse({
@@ -271,6 +332,19 @@ function reportsFetchHandler(overrides: Partial<ReportsFixtures> = {}) {
     }
     if (url.pathname === "/api/reports/calendar") {
       return jsonResponse(fixtures.calendar);
+    }
+    if (url.pathname === "/api/reports/share" && init?.method === "POST") {
+      return jsonResponse({
+        archive: {
+          data_version: "test-version",
+          generated_at: "2026-07-06T09:00:00Z",
+          sha256: "abc123",
+          size_bytes: 1024,
+          url: "/api/identity/assets/export",
+        },
+        message: "Export pack sent to accountant.",
+        status: "sent",
+      });
     }
     return jsonResponse(
       { status: 404, title: "Not Found", type: "about:blank" },

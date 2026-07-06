@@ -190,6 +190,10 @@ func (reportsHTTPInvoicing) InvoiceByNumber(_ context.Context, number string) (i
 	return reportsHTTPInvoice(), nil
 }
 
+func (reportsHTTPInvoicing) InvoicesIssuedBetween(context.Context, time.Time, time.Time) ([]invoicing.Invoice, error) {
+	return nil, nil
+}
+
 func (reportsHTTPInvoicing) InvoiceVATContextBySendEntryID(_ context.Context, entryID ledger.EntryID) (invoicing.InvoiceVATContext, error) {
 	if entryID != 4 {
 		return invoicing.InvoiceVATContext{}, invoicing.ErrInvoiceNotFound

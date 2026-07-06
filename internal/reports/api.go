@@ -4,11 +4,13 @@ import (
 	"context"
 	"time"
 
+	"github.com/npmulder/ledgerly/internal/dla"
 	"github.com/npmulder/ledgerly/internal/identity"
 	"github.com/npmulder/ledgerly/internal/invoicing"
 	"github.com/npmulder/ledgerly/internal/jurisdiction"
 	"github.com/npmulder/ledgerly/internal/ledger"
 	"github.com/npmulder/ledgerly/internal/moneyfx/money"
+	"github.com/npmulder/ledgerly/internal/platform/mail"
 )
 
 // ModuleName is the database schema and event namespace for reports.
@@ -103,12 +105,86 @@ type VATPosition struct {
 	DueDate *time.Time
 }
 
+// ArchiveRef identifies an immutable export-pack archive asset.
+type ArchiveRef struct {
+	URL         string
+	SHA256      string
+	Size        int64
+	DataVersion string
+	GeneratedAt time.Time
+}
+
+// ShareStatus reports whether the export pack was attached or needs manual
+// handling because it is too large for platform mail.
+type ShareStatus string
+
+const (
+	ShareStatusSent       ShareStatus = "sent"
+	ShareStatusManualSend ShareStatus = "manual-send"
+)
+
+// ShareResult is returned by POST /api/reports/share.
+type ShareResult struct {
+	Status  ShareStatus
+	Archive ArchiveRef
+	Message string
+}
+
+// ShareRequest describes one accountant export-pack email attempt.
+type ShareRequest struct {
+	Email  string
+	Period Period
+}
+
+// StoredAsset is an immutable asset loaded for inclusion in the export pack.
+type StoredAsset struct {
+	Filename    string
+	ContentType string
+	Bytes       []byte
+}
+
+// StoredDocument is a named document already loaded as bytes.
+type StoredDocument struct {
+	Path        string
+	ContentType string
+	Bytes       []byte
+}
+
+// ExportArchiveStore persists export ZIP bytes and reloads existing immutable
+// assets referenced by invoices/dividends.
+type ExportArchiveStore interface {
+	ExistingExportArchive(context.Context, string) (ArchiveRef, bool, error)
+	StoreExportArchive(context.Context, string, []byte) (ArchiveRef, error)
+	LoadAsset(context.Context, string) (StoredAsset, error)
+}
+
+// PLPDFEngine renders the reports print route into a PDF.
+type PLPDFEngine interface {
+	RenderPLPDF(context.Context, PLPrintPayload) ([]byte, error)
+}
+
+// PLPrintPayload is the stable payload consumed by the React P&L print route.
+type PLPrintPayload struct {
+	Report      plResponse `json:"pl"`
+	CompanyName string     `json:"company_name"`
+	GeneratedAt string     `json:"generated_at"`
+	AppVersion  string     `json:"app_version"`
+}
+
+// DividendDocumentProvider supplies optional dividend documents without making
+// reports import the dividends package, which would create a package cycle.
+type DividendDocumentProvider interface {
+	DividendDocuments(context.Context, Period) ([]StoredDocument, error)
+}
+
 // Reports is the v1 reports read API.
 type Reports interface {
 	ProfitAndLoss(context.Context, Period) (PL, error)
 	ProfitYTD(context.Context, string) (money.Money, error)
 	VATPosition(context.Context) (VATPosition, error)
 	FilingCalendarContext(context.Context) ([]Filing, error)
+	ExportPack(context.Context, Period) (ArchiveRef, error)
+	ShareExportPack(context.Context, ShareRequest) (ShareResult, error)
 }
 
 type Ledger interface {
@@ -118,16 +194,31 @@ type Ledger interface {
 }
 
 type Identity interface {
+	Profile(context.Context) (identity.CompanyProfile, error)
 	CompanyFacts(context.Context) (identity.CompanyFacts, error)
 }
 
 // CompanyFactsProvider is the identity fact surface reports needs to compose
 // the filing calendar. Implementations must return fresh facts on each call.
-type CompanyFactsProvider = Identity
+type CompanyFactsProvider interface {
+	CompanyFacts(context.Context) (identity.CompanyFacts, error)
+}
 
 type Invoicing interface {
 	Invoice(context.Context, string) (invoicing.Invoice, error)
 	InvoiceByNumber(context.Context, string) (invoicing.Invoice, error)
+	InvoicesIssuedBetween(context.Context, time.Time, time.Time) ([]invoicing.Invoice, error)
 	InvoiceVATContextBySendEntryID(context.Context, ledger.EntryID) (invoicing.InvoiceVATContext, error)
 	Client(context.Context, string) (invoicing.Client, error)
+}
+
+// DLA is the director's loan presentation-ledger read surface used by export
+// packs.
+type DLA interface {
+	Ledger(context.Context, dla.LedgerFilter) ([]dla.Entry, error)
+}
+
+// Mailer is the platform mail sender used for accountant sharing.
+type Mailer interface {
+	Send(context.Context, mail.Message) error
 }

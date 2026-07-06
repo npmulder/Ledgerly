@@ -228,12 +228,18 @@ const (
 	ReportsFilingStatusUpcoming ReportsFilingStatus = "upcoming"
 )
 
+// Defines values for ReportsShareResponseStatus.
+const (
+	ReportsShareResponseStatusManualSend ReportsShareResponseStatus = "manual-send"
+	ReportsShareResponseStatusSent       ReportsShareResponseStatus = "sent"
+)
+
 // Defines values for InvoicingListInvoicesParamsStatus.
 const (
-	Draft   InvoicingListInvoicesParamsStatus = "draft"
-	Overdue InvoicingListInvoicesParamsStatus = "overdue"
-	Paid    InvoicingListInvoicesParamsStatus = "paid"
-	Sent    InvoicingListInvoicesParamsStatus = "sent"
+	InvoicingListInvoicesParamsStatusDraft   InvoicingListInvoicesParamsStatus = "draft"
+	InvoicingListInvoicesParamsStatusOverdue InvoicingListInvoicesParamsStatus = "overdue"
+	InvoicingListInvoicesParamsStatusPaid    InvoicingListInvoicesParamsStatus = "paid"
+	InvoicingListInvoicesParamsStatusSent    InvoicingListInvoicesParamsStatus = "sent"
 )
 
 // BankDetails defines model for BankDetails.
@@ -1081,6 +1087,15 @@ type RegisteredOffice struct {
 	Region     string `json:"region"`
 }
 
+// ReportsArchiveRef defines model for ReportsArchiveRef.
+type ReportsArchiveRef struct {
+	DataVersion string    `json:"data_version"`
+	GeneratedAt time.Time `json:"generated_at"`
+	Sha256      string    `json:"sha256"`
+	SizeBytes   int64     `json:"size_bytes"`
+	Url         string    `json:"url"`
+}
+
 // ReportsExpenseLine defines model for ReportsExpenseLine.
 type ReportsExpenseLine struct {
 	AccountCode string       `json:"account_code"`
@@ -1152,6 +1167,22 @@ type ReportsProfitYTDResponse struct {
 	Profit  ReportsMoney `json:"profit"`
 	TaxYear string       `json:"tax_year"`
 }
+
+// ReportsShareRequest defines model for ReportsShareRequest.
+type ReportsShareRequest struct {
+	Email  openapi_types.Email `json:"email"`
+	Period ReportsPeriod       `json:"period"`
+}
+
+// ReportsShareResponse defines model for ReportsShareResponse.
+type ReportsShareResponse struct {
+	Archive ReportsArchiveRef          `json:"archive"`
+	Message string                     `json:"message"`
+	Status  ReportsShareResponseStatus `json:"status"`
+}
+
+// ReportsShareResponseStatus defines model for ReportsShareResponse.Status.
+type ReportsShareResponseStatus string
 
 // ReportsTaxLine defines model for ReportsTaxLine.
 type ReportsTaxLine struct {
@@ -1268,6 +1299,15 @@ type MoneyfxTodayRateParams struct {
 	To   string `form:"to" json:"to"`
 }
 
+// ReportsExportPackParams defines parameters for ReportsExportPack.
+type ReportsExportPackParams struct {
+	// From Inclusive posting date lower bound.
+	From openapi_types.Date `form:"from" json:"from"`
+
+	// To Inclusive posting date upper bound.
+	To openapi_types.Date `form:"to" json:"to"`
+}
+
 // ReportsGetProfitAndLossParams defines parameters for ReportsGetProfitAndLoss.
 type ReportsGetProfitAndLossParams struct {
 	// From Inclusive posting date lower bound.
@@ -1318,6 +1358,9 @@ type InvoicingCreateDraftInvoiceJSONRequestBody = InvoicingCreateDraftInvoiceReq
 
 // InvoicingPatchInvoiceJSONRequestBody defines body for InvoicingPatchInvoice for application/json ContentType.
 type InvoicingPatchInvoiceJSONRequestBody = InvoicingInvoicePatch
+
+// ReportsShareExportPackJSONRequestBody defines body for ReportsShareExportPack for application/json ContentType.
+type ReportsShareExportPackJSONRequestBody = ReportsShareRequest
 
 // Getter for additional properties for DLAValidationProblem. Returns the specified
 // element and whether it was found
@@ -1931,11 +1974,19 @@ type ClientInterface interface {
 	// ReportsGetFilingCalendar request
 	ReportsGetFilingCalendar(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ReportsExportPack request
+	ReportsExportPack(ctx context.Context, params *ReportsExportPackParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ReportsGetProfitAndLoss request
 	ReportsGetProfitAndLoss(ctx context.Context, params *ReportsGetProfitAndLossParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ReportsGetProfitYTD request
 	ReportsGetProfitYTD(ctx context.Context, params *ReportsGetProfitYTDParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReportsShareExportPackWithBody request with any body
+	ReportsShareExportPackWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	ReportsShareExportPack(ctx context.Context, body ReportsShareExportPackJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ReportsGetVATReturn request
 	ReportsGetVATReturn(ctx context.Context, params *ReportsGetVATReturnParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2571,6 +2622,18 @@ func (c *Client) ReportsGetFilingCalendar(ctx context.Context, reqEditors ...Req
 	return c.Client.Do(req)
 }
 
+func (c *Client) ReportsExportPack(ctx context.Context, params *ReportsExportPackParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReportsExportPackRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) ReportsGetProfitAndLoss(ctx context.Context, params *ReportsGetProfitAndLossParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewReportsGetProfitAndLossRequest(c.Server, params)
 	if err != nil {
@@ -2585,6 +2648,30 @@ func (c *Client) ReportsGetProfitAndLoss(ctx context.Context, params *ReportsGet
 
 func (c *Client) ReportsGetProfitYTD(ctx context.Context, params *ReportsGetProfitYTDParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewReportsGetProfitYTDRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ReportsShareExportPackWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReportsShareExportPackRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ReportsShareExportPack(ctx context.Context, body ReportsShareExportPackJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReportsShareExportPackRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -4363,6 +4450,63 @@ func NewReportsGetFilingCalendarRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewReportsExportPackRequest generates requests for ReportsExportPack
+func NewReportsExportPackRequest(server string, params *ReportsExportPackParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/reports/export")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "from", runtime.ParamLocationQuery, params.From); err != nil {
+			return nil, err
+		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+			return nil, err
+		} else {
+			for k, v := range parsed {
+				for _, v2 := range v {
+					queryValues.Add(k, v2)
+				}
+			}
+		}
+
+		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "to", runtime.ParamLocationQuery, params.To); err != nil {
+			return nil, err
+		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+			return nil, err
+		} else {
+			for k, v := range parsed {
+				for _, v2 := range v {
+					queryValues.Add(k, v2)
+				}
+			}
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewReportsGetProfitAndLossRequest generates requests for ReportsGetProfitAndLoss
 func NewReportsGetProfitAndLossRequest(server string, params *ReportsGetProfitAndLossParams) (*http.Request, error) {
 	var err error
@@ -4461,6 +4605,46 @@ func NewReportsGetProfitYTDRequest(server string, params *ReportsGetProfitYTDPar
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewReportsShareExportPackRequest calls the generic ReportsShareExportPack builder with application/json body
+func NewReportsShareExportPackRequest(server string, body ReportsShareExportPackJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewReportsShareExportPackRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewReportsShareExportPackRequestWithBody generates requests for ReportsShareExportPack with any type of body
+func NewReportsShareExportPackRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/reports/share")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -4754,11 +4938,19 @@ type ClientWithResponsesInterface interface {
 	// ReportsGetFilingCalendarWithResponse request
 	ReportsGetFilingCalendarWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ReportsGetFilingCalendarResponse, error)
 
+	// ReportsExportPackWithResponse request
+	ReportsExportPackWithResponse(ctx context.Context, params *ReportsExportPackParams, reqEditors ...RequestEditorFn) (*ReportsExportPackResponse, error)
+
 	// ReportsGetProfitAndLossWithResponse request
 	ReportsGetProfitAndLossWithResponse(ctx context.Context, params *ReportsGetProfitAndLossParams, reqEditors ...RequestEditorFn) (*ReportsGetProfitAndLossResponse, error)
 
 	// ReportsGetProfitYTDWithResponse request
 	ReportsGetProfitYTDWithResponse(ctx context.Context, params *ReportsGetProfitYTDParams, reqEditors ...RequestEditorFn) (*ReportsGetProfitYTDResponse, error)
+
+	// ReportsShareExportPackWithBodyWithResponse request with any body
+	ReportsShareExportPackWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReportsShareExportPackResponse, error)
+
+	ReportsShareExportPackWithResponse(ctx context.Context, body ReportsShareExportPackJSONRequestBody, reqEditors ...RequestEditorFn) (*ReportsShareExportPackResponse, error)
 
 	// ReportsGetVATReturnWithResponse request
 	ReportsGetVATReturnWithResponse(ctx context.Context, params *ReportsGetVATReturnParams, reqEditors ...RequestEditorFn) (*ReportsGetVATReturnResponse, error)
@@ -5823,6 +6015,30 @@ func (r ReportsGetFilingCalendarResponse) StatusCode() int {
 	return 0
 }
 
+type ReportsExportPackResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	ApplicationproblemJSON400 *Problem
+	ApplicationproblemJSON401 *Problem
+	ApplicationproblemJSON404 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r ReportsExportPackResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReportsExportPackResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type ReportsGetProfitAndLossResponse struct {
 	Body                      []byte
 	HTTPResponse              *http.Response
@@ -5866,6 +6082,31 @@ func (r ReportsGetProfitYTDResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r ReportsGetProfitYTDResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ReportsShareExportPackResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON200                   *ReportsShareResponse
+	ApplicationproblemJSON400 *Problem
+	ApplicationproblemJSON401 *Problem
+	ApplicationproblemJSON404 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r ReportsShareExportPackResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReportsShareExportPackResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -6401,6 +6642,15 @@ func (c *ClientWithResponses) ReportsGetFilingCalendarWithResponse(ctx context.C
 	return ParseReportsGetFilingCalendarResponse(rsp)
 }
 
+// ReportsExportPackWithResponse request returning *ReportsExportPackResponse
+func (c *ClientWithResponses) ReportsExportPackWithResponse(ctx context.Context, params *ReportsExportPackParams, reqEditors ...RequestEditorFn) (*ReportsExportPackResponse, error) {
+	rsp, err := c.ReportsExportPack(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReportsExportPackResponse(rsp)
+}
+
 // ReportsGetProfitAndLossWithResponse request returning *ReportsGetProfitAndLossResponse
 func (c *ClientWithResponses) ReportsGetProfitAndLossWithResponse(ctx context.Context, params *ReportsGetProfitAndLossParams, reqEditors ...RequestEditorFn) (*ReportsGetProfitAndLossResponse, error) {
 	rsp, err := c.ReportsGetProfitAndLoss(ctx, params, reqEditors...)
@@ -6417,6 +6667,23 @@ func (c *ClientWithResponses) ReportsGetProfitYTDWithResponse(ctx context.Contex
 		return nil, err
 	}
 	return ParseReportsGetProfitYTDResponse(rsp)
+}
+
+// ReportsShareExportPackWithBodyWithResponse request with arbitrary body returning *ReportsShareExportPackResponse
+func (c *ClientWithResponses) ReportsShareExportPackWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReportsShareExportPackResponse, error) {
+	rsp, err := c.ReportsShareExportPackWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReportsShareExportPackResponse(rsp)
+}
+
+func (c *ClientWithResponses) ReportsShareExportPackWithResponse(ctx context.Context, body ReportsShareExportPackJSONRequestBody, reqEditors ...RequestEditorFn) (*ReportsShareExportPackResponse, error) {
+	rsp, err := c.ReportsShareExportPack(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReportsShareExportPackResponse(rsp)
 }
 
 // ReportsGetVATReturnWithResponse request returning *ReportsGetVATReturnResponse
@@ -8313,6 +8580,46 @@ func ParseReportsGetFilingCalendarResponse(rsp *http.Response) (*ReportsGetFilin
 	return response, nil
 }
 
+// ParseReportsExportPackResponse parses an HTTP response from a ReportsExportPackWithResponse call
+func ParseReportsExportPackResponse(rsp *http.Response) (*ReportsExportPackResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReportsExportPackResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseReportsGetProfitAndLossResponse parses an HTTP response from a ReportsGetProfitAndLossWithResponse call
 func ParseReportsGetProfitAndLossResponse(rsp *http.Response) (*ReportsGetProfitAndLossResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -8369,6 +8676,53 @@ func ParseReportsGetProfitYTDResponse(rsp *http.Response) (*ReportsGetProfitYTDR
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest ReportsProfitYTDResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseReportsShareExportPackResponse parses an HTTP response from a ReportsShareExportPackWithResponse call
+func ParseReportsShareExportPackResponse(rsp *http.Response) (*ReportsShareExportPackResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReportsShareExportPackResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ReportsShareResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
