@@ -4,6 +4,13 @@ export type ApiQueryKey = readonly [
   params: Record<string, unknown>,
 ];
 
+export type InvoicesQueryParams = {
+  readonly limit?: number;
+  readonly offset?: number;
+  readonly search?: string;
+  readonly status?: string;
+};
+
 export const queryKeys = {
   dla: {
     balance: (): ApiQueryKey => ["dla", "balance", {}],
@@ -24,6 +31,16 @@ export const queryKeys = {
       "invoicing",
       "clients",
       { includeArchived },
+    ],
+    invoices: ({
+      limit = 50,
+      offset = 0,
+      search = "",
+      status = "all",
+    }: InvoicesQueryParams = {}): ApiQueryKey => [
+      "invoicing",
+      "invoices",
+      { limit, offset, search, status },
     ],
   },
   jurisdiction: {
