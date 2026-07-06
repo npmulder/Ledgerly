@@ -9,6 +9,9 @@ export type InvoicingClientRequest =
 export type InvoicingCreateDraftInvoiceRequest =
   components["schemas"]["InvoicingCreateDraftInvoiceRequest"];
 export type InvoicingInvoice = components["schemas"]["InvoicingInvoice"];
+export type InvoicingInvoiceListItem =
+  components["schemas"]["InvoicingInvoiceListItem"];
+export type InvoicingInvoiceStatus = InvoicingInvoiceListItem["status"];
 export type InvoicingInvoiceLine =
   components["schemas"]["InvoicingInvoiceLine"];
 export type InvoicingInvoiceLineInput =
@@ -26,6 +29,13 @@ export type InvoicingSendInvoiceResult =
   components["schemas"]["InvoicingSendInvoiceResult"];
 export type InvoicingReminderResult =
   components["schemas"]["InvoicingReminderResult"];
+
+export type InvoicesListParams = {
+  readonly limit?: number;
+  readonly offset?: number;
+  readonly search?: string;
+  readonly status?: InvoicingInvoiceStatus | "all";
+};
 
 export function getInvoicingClients(includeArchived = false) {
   return apiClient.get("/api/invoicing/clients", {
@@ -48,16 +58,29 @@ export function archiveInvoicingClient(id: string) {
   return apiClient.post(clientArchivePath(id));
 }
 
-export function listInvoices() {
+export function getInvoices({
+  limit = 50,
+  offset = 0,
+  search,
+  status = "all",
+}: InvoicesListParams = {}) {
+  const trimmedSearch = search?.trim();
   return apiClient.get("/api/invoicing/invoices", {
-    query: { limit: 20, offset: 0 },
+    query: {
+      limit,
+      offset,
+      search: trimmedSearch || undefined,
+      status: status === "all" ? undefined : [status],
+    },
   });
 }
 
-export function createDraftInvoice(
-  input: InvoicingCreateDraftInvoiceRequest,
-) {
+export function createDraftInvoice(input: InvoicingCreateDraftInvoiceRequest) {
   return apiClient.post("/api/invoicing/invoices", input);
+}
+
+export function listInvoices() {
+  return getInvoices({ limit: 20, offset: 0 });
 }
 
 export function getInvoice(id: string) {
