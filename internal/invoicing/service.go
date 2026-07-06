@@ -25,6 +25,11 @@ const (
 	problemTypeClientNotFound       = "https://ledgerly.local/problems/invoicing/client-not-found"
 	problemTypeClientValidation     = "https://ledgerly.local/problems/invoicing/client-validation"
 	problemTypeClientCurrencyLocked = "https://ledgerly.local/problems/invoicing/client-currency-locked"
+	problemTypeInvoiceNotFound      = "https://ledgerly.local/problems/invoicing/invoice-not-found"
+	problemTypeInvoiceValidation    = "https://ledgerly.local/problems/invoicing/invoice-validation"
+	problemTypeInvoiceImmutable     = "https://ledgerly.local/problems/invoicing/invoice-immutable"
+	problemTypeInvoiceWrongAmount   = "https://ledgerly.local/problems/invoicing/wrong-amount"
+	problemTypeInvoiceRate          = "https://ledgerly.local/problems/invoicing/rate-unavailable"
 )
 
 // Service orchestrates invoicing client commands and queries.
@@ -813,8 +818,22 @@ func (s *Service) now() time.Time {
 func (s *Service) normalizeLineInputs(invoiceID string, currency Currency, inputs []InvoiceLineInput) ([]InvoiceLine, error) {
 	lines := make([]InvoiceLine, 0, len(inputs))
 	var fields []FieldError
+	seenIDs := make(map[string]bool, len(inputs))
 	for i, input := range inputs {
 		prefix := fmt.Sprintf("/lines/%d", i)
+		lineID := strings.TrimSpace(input.ID)
+		if lineID == "" {
+			var err error
+			lineID, err = s.lineIDGenerator()
+			if err != nil {
+				return nil, err
+			}
+		}
+		if seenIDs[lineID] {
+			fields = append(fields, FieldError{Pointer: prefix + "/id", Detail: "must be unique"})
+		}
+		seenIDs[lineID] = true
+
 		description := strings.TrimSpace(input.Description)
 		if description == "" {
 			fields = append(fields, FieldError{Pointer: prefix + "/description", Detail: "is required"})
@@ -829,10 +848,6 @@ func (s *Service) normalizeLineInputs(invoiceID string, currency Currency, input
 		}
 		fields = append(fields, validateInvoiceMoney(prefix+"/unit_price", currency, unitPrice)...)
 
-		lineID, err := s.lineIDGenerator()
-		if err != nil {
-			return nil, err
-		}
 		lines = append(lines, InvoiceLine{
 			ID:          lineID,
 			InvoiceID:   invoiceID,
@@ -1051,6 +1066,7 @@ func (c storeInvoiceUsageChecker) ClientHasInvoices(ctx context.Context, clientI
 
 func problemForError(err error) (httpserver.Problem, bool) {
 	var validation ValidationError
+	var invoiceValidation InvoiceValidationError
 	switch {
 	case errors.As(err, &validation):
 		return httpserver.Problem{
@@ -1060,6 +1076,16 @@ func problemForError(err error) (httpserver.Problem, bool) {
 			Detail: "client validation failed",
 			Extensions: map[string]any{
 				"errors": validation.Fields,
+			},
+		}, true
+	case errors.As(err, &invoiceValidation):
+		return httpserver.Problem{
+			Type:   problemTypeInvoiceValidation,
+			Title:  "Invoice validation failed",
+			Status: 422,
+			Detail: "invoice validation failed",
+			Extensions: map[string]any{
+				"errors": invoiceValidation.Fields,
 			},
 		}, true
 	case errors.Is(err, ErrClientNotFound):
@@ -1076,7 +1102,60 @@ func problemForError(err error) (httpserver.Problem, bool) {
 			Status: 409,
 			Detail: "default currency cannot be changed after a client has invoices",
 		}, true
+	case errors.Is(err, ErrInvoiceNotFound):
+		return httpserver.Problem{
+			Type:   problemTypeInvoiceNotFound,
+			Title:  "Invoice not found",
+			Status: 404,
+			Detail: "invoice was not found",
+		}, true
+	case errors.Is(err, ErrInvoiceImmutable):
+		return httpserver.Problem{
+			Type:   problemTypeInvoiceImmutable,
+			Title:  "Invoice is immutable",
+			Status: 409,
+			Detail: "invoice cannot be changed by this command",
+			Extensions: map[string]any{
+				"errors": []FieldError{{Pointer: "/status", Detail: "must allow this invoice command"}},
+			},
+		}, true
+	case errors.Is(err, ErrInvoicePartialPayment):
+		return invoiceWrongAmountProblem("partial invoice payments are not supported"), true
+	case errors.Is(err, ErrInvoiceSettlementAmountMismatch):
+		return invoiceWrongAmountProblem("settlement amount must match invoice total"), true
+	case errors.Is(err, ErrRateUnavailable):
+		return httpserver.Problem{
+			Type:   problemTypeInvoiceRate,
+			Title:  "Invoice rate unavailable",
+			Status: 409,
+			Detail: "required invoice exchange rate is unavailable",
+			Extensions: map[string]any{
+				"errors": []FieldError{{Pointer: "/issue_date", Detail: "rate is unavailable for invoice date"}},
+			},
+		}, true
+	case errors.Is(err, ErrInvoicePostingNotFound):
+		return httpserver.Problem{
+			Type:   problemTypeInvoiceImmutable,
+			Title:  "Invoice posting not found",
+			Status: 409,
+			Detail: "invoice send posting was not found",
+			Extensions: map[string]any{
+				"errors": []FieldError{{Pointer: "/send_ledger_entry_id", Detail: "is required to revert invoice"}},
+			},
+		}, true
 	default:
 		return httpserver.Problem{}, false
+	}
+}
+
+func invoiceWrongAmountProblem(detail string) httpserver.Problem {
+	return httpserver.Problem{
+		Type:   problemTypeInvoiceWrongAmount,
+		Title:  "Invoice amount mismatch",
+		Status: 422,
+		Detail: detail,
+		Extensions: map[string]any{
+			"errors": []FieldError{{Pointer: "/settled_amount", Detail: detail}},
+		},
 	}
 }

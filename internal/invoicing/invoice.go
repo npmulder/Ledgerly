@@ -108,6 +108,7 @@ type InvoiceLine struct {
 
 // InvoiceLineInput is the caller-supplied shape for replacing draft lines.
 type InvoiceLineInput struct {
+	ID          string   `json:"id"`
 	Description string   `json:"description"`
 	Qty         Quantity `json:"qty"`
 	UnitPrice   Money    `json:"unit_price"`

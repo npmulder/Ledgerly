@@ -72,6 +72,15 @@ func (m *Module) RegisterRoutes(r chi.Router) {
 	r.Get("/clients/{id}", h.getClient)
 	r.Patch("/clients/{id}", h.patchClient)
 	r.Post("/clients/{id}/archive", h.archiveClient)
+
+	invoices := invoiceHandler{service: m.service}
+	r.Get("/invoices", invoices.listInvoices)
+	r.Post("/invoices", invoices.createDraftInvoice)
+	r.Get("/invoices/{id}", invoices.getInvoice)
+	r.Patch("/invoices/{id}", invoices.patchInvoice)
+	r.Post("/invoices/{id}/send", invoices.sendInvoice)
+	r.Post("/invoices/{id}/revert", invoices.revertInvoice)
+	r.Get("/invoices/{id}/pdf", invoices.getInvoicePDF)
 }
 
 func (h clientHandler) listClients(w nethttp.ResponseWriter, r *nethttp.Request) {
