@@ -700,11 +700,13 @@ func subscribeAdvisorTriggers(eventBus *bus.Bus, service *advisor.Service) {
 	}
 	for _, eventName := range []string{
 		invoicing.InvoiceOverdueName,
+		invoicing.InvoiceSettledName,
 		dla.WentOverdrawnName,
 		dla.BackInCreditName,
 		dividends.DeclaredName,
 		ledger.EntryPostedName,
 		moneyfx.RatesStaleName,
+		moneyfx.RatesUpdatedName,
 		identity.ProfileUpdatedEventName,
 	} {
 		eventName := eventName

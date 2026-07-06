@@ -31,6 +31,7 @@ const (
 
 	postCommitNotifyChannel = "advisor_evaluate"
 	defaultDebounce         = 25 * time.Millisecond
+	listenerReconnectDelay  = time.Second
 )
 
 // ServiceConfig supplies the dependencies needed for whole-set evaluations.
@@ -196,30 +197,35 @@ func (s *Service) StartPostCommitListener(ctx context.Context) (func() error, er
 	if s == nil {
 		return nil, fmt.Errorf("advisor: nil service")
 	}
-	conn, err := s.pool.Acquire(ctx)
+	conn, err := s.openPostCommitListener(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("advisor: acquire post-commit listener: %w", err)
-	}
-	if _, err := conn.Exec(ctx, "LISTEN "+pgx.Identifier{postCommitNotifyChannel}.Sanitize()); err != nil {
-		conn.Release()
-		return nil, fmt.Errorf("advisor: listen for post-commit triggers: %w", err)
+		return nil, err
 	}
 
 	listenCtx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		defer conn.Release()
 		for {
-			notification, err := conn.Conn().WaitForNotification(listenCtx)
-			if err != nil {
+			err := s.consumePostCommitNotifications(listenCtx, conn)
+			conn.Release()
+			if errors.Is(err, context.Canceled) || listenCtx.Err() != nil {
+				return
+			}
+			s.logger.ErrorContext(listenCtx, "advisor post-commit listener stopped", "error", err)
+			for {
+				if err := sleepContext(listenCtx, listenerReconnectDelay); err != nil {
+					return
+				}
+				conn, err = s.openPostCommitListener(listenCtx)
+				if err == nil {
+					break
+				}
 				if errors.Is(err, context.Canceled) || listenCtx.Err() != nil {
 					return
 				}
-				s.logger.ErrorContext(listenCtx, "advisor post-commit listener stopped", "error", err)
-				return
+				s.logger.ErrorContext(listenCtx, "advisor post-commit listener reconnect failed", "error", err)
 			}
-			s.RequestEvaluation(notification.Payload)
 		}
 	}()
 
@@ -228,6 +234,28 @@ func (s *Service) StartPostCommitListener(ctx context.Context) (func() error, er
 		<-done
 		return nil
 	}, nil
+}
+
+func (s *Service) openPostCommitListener(ctx context.Context) (*pgxpool.Conn, error) {
+	conn, err := s.pool.Acquire(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("advisor: acquire post-commit listener: %w", err)
+	}
+	if _, err := conn.Exec(ctx, "LISTEN "+pgx.Identifier{postCommitNotifyChannel}.Sanitize()); err != nil {
+		conn.Release()
+		return nil, fmt.Errorf("advisor: listen for post-commit triggers: %w", err)
+	}
+	return conn, nil
+}
+
+func (s *Service) consumePostCommitNotifications(ctx context.Context, conn *pgxpool.Conn) error {
+	for {
+		notification, err := conn.Conn().WaitForNotification(ctx)
+		if err != nil {
+			return err
+		}
+		s.RequestEvaluation(notification.Payload)
+	}
 }
 
 // WaitIdle blocks until no debounced or running evaluation remains. It is a
@@ -395,6 +423,21 @@ func normalizeTrigger(trigger string) string {
 		return "unknown"
 	}
 	return trigger
+}
+
+func sleepContext(ctx context.Context, duration time.Duration) error {
+	if duration <= 0 {
+		return ctx.Err()
+	}
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func coalesceTrigger(existing string, next string) string {
