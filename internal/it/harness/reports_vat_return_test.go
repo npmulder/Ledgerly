@@ -11,6 +11,7 @@ import (
 	"github.com/npmulder/ledgerly/internal/invoicing"
 	"github.com/npmulder/ledgerly/internal/it/fixtures"
 	"github.com/npmulder/ledgerly/internal/it/harness"
+	"github.com/npmulder/ledgerly/internal/it/testdb"
 	"github.com/npmulder/ledgerly/internal/jurisdiction"
 	"github.com/npmulder/ledgerly/internal/ledger"
 	"github.com/npmulder/ledgerly/internal/moneyfx/money"
@@ -156,6 +157,12 @@ func TestReportsVATReturnNetsRevertedInvoiceSend(t *testing.T) {
 	}
 	if _, err := invoiceService.RevertToDraft(ctx, invoice.ID); err != nil {
 		t.Fatalf("RevertToDraft() error = %v", err)
+	}
+	invoicePool := testdb.AsModule(t, invoicing.ModuleName)
+	if _, err := invoicePool.Exec(ctx, `
+DELETE FROM invoicing.invoice_send_vat_context
+WHERE send_ledger_entry_id = $1`, *sent.SendLedgerEntryID); err != nil {
+		t.Fatalf("delete send VAT context to simulate legacy revert: %v", err)
 	}
 
 	figures, err := reportService.VATReturn(ctx, reports.VATQuarterForDate(time.Date(2025, 6, 20, 0, 0, 0, 0, time.UTC)))

@@ -214,6 +214,14 @@ func (c *vatClassifier) semanticsForEntry(ctx context.Context, entry ledger.Jour
 	invoiceContext, err := c.reader.InvoiceVATContextBySendEntryID(ctx, lookupID)
 	if err != nil {
 		if errors.Is(err, invoicing.ErrInvoiceNotFound) {
+			semantics, ok, inferErr := inferLegacyInvoiceVATSemantics(entry)
+			if inferErr != nil {
+				return jurisdiction.VATTreatmentSemantics{}, inferErr
+			}
+			if ok {
+				c.cache[lookupID] = semantics
+				return semantics, nil
+			}
 			return jurisdiction.VATTreatmentSemantics{}, fmt.Errorf("reports: invoicing VAT context for ledger entry %d: %w", lookupID, err)
 		}
 		return jurisdiction.VATTreatmentSemantics{}, err
@@ -224,6 +232,36 @@ func (c *vatClassifier) semanticsForEntry(ctx context.Context, entry ledger.Jour
 	}
 	c.cache[lookupID] = semantics
 	return semantics, nil
+}
+
+func inferLegacyInvoiceVATSemantics(entry ledger.JournalEntry) (jurisdiction.VATTreatmentSemantics, bool, error) {
+	hasSalesPosting := false
+	hasVATPosting := false
+	for _, posting := range entry.Postings {
+		switch posting.AccountCode {
+		case salesAccount:
+			if !posting.AmountGBP.IsZero() {
+				hasSalesPosting = true
+			}
+		case vatControlAccount:
+			if !posting.AmountGBP.IsZero() {
+				hasVATPosting = true
+			}
+		}
+	}
+	if !hasSalesPosting {
+		return jurisdiction.VATTreatmentSemantics{}, false, nil
+	}
+
+	treatment := invoicing.VATTreatmentReverseChargeEUB2B
+	if hasVATPosting {
+		treatment = invoicing.VATTreatmentDomestic
+	}
+	semantics, err := jurisdiction.VATSemanticsForTreatment(string(treatment))
+	if err != nil {
+		return jurisdiction.VATTreatmentSemantics{}, false, fmt.Errorf("reports: infer legacy VAT semantics for ledger entry %d: %w", entry.ID, err)
+	}
+	return semantics, true, nil
 }
 
 func entryTouchesVATReturnAccounts(entry ledger.JournalEntry) bool {
