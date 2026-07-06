@@ -6,15 +6,22 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"sort"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/npmulder/ledgerly/internal/banking"
 	"github.com/npmulder/ledgerly/internal/invoicing"
+	it "github.com/npmulder/ledgerly/internal/it"
 	"github.com/npmulder/ledgerly/internal/it/fixtures"
 	"github.com/npmulder/ledgerly/internal/it/harness"
 	"github.com/npmulder/ledgerly/internal/it/testdb"
+	"github.com/npmulder/ledgerly/internal/ledger"
+	"github.com/npmulder/ledgerly/internal/moneyfx"
+	"github.com/npmulder/ledgerly/internal/platform/bus"
+	"github.com/npmulder/ledgerly/internal/platform/db"
 )
 
 func TestInvoicingInvoicesDraftLifecycleAndTotals(t *testing.T) {
@@ -150,6 +157,348 @@ func TestInvoicingInvoicesDraftLifecycleAndTotals(t *testing.T) {
 	assertMoney(t, *settled.SettledAmount, 1812, "GBP")
 }
 
+func TestInvoicingSendHappyPathLocksPostsAndPublishes(t *testing.T) {
+	h := harness.New(t, harness.Options{ClockStart: time.Date(2025, 5, 1, 9, 0, 0, 0, time.UTC)})
+	fixtures.Rates(t, h)
+	service := newInvoiceService(t, h)
+	ctx := context.Background()
+
+	var sentEvents []invoicing.InvoiceSent
+	h.Bus.Subscribe(invoicing.InvoiceSentName, func(_ context.Context, _ db.Tx, evt bus.Event) error {
+		sent, ok := evt.(invoicing.InvoiceSent)
+		if !ok {
+			t.Fatalf("InvoiceSent event = %T, want invoicing.InvoiceSent", evt)
+		}
+		sentEvents = append(sentEvents, sent)
+		return nil
+	})
+
+	draft := createEURInvoiceDraft(t, h, service, 450_000)
+	sent, err := service.Send(ctx, draft.ID)
+	if err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	if sent.Status != invoicing.InvoiceStatusSent {
+		t.Fatalf("sent Status = %q, want sent", sent.Status)
+	}
+	if sent.Number == nil || *sent.Number != "INV-2025-01" {
+		t.Fatalf("sent Number = %v, want INV-2025-01", sent.Number)
+	}
+	if sent.LockID == nil {
+		t.Fatal("sent LockID = nil, want lock id")
+	}
+	assertMoney(t, sent.Totals.Total, 450_000, "EUR")
+	assertInvoiceRateLock(t, h, *sent.LockID, "invoicing:INV-2025-01", "EUR", "GBP", "0.850000000000000000")
+	assertInvoicingLedgerPostings(t, h, invoiceSendSourceRefForTest("INV-2025-01"), []wantInvoicePosting{
+		{account: "1100-debtors-eur", amount: 450_000, currency: "EUR", amountGBP: 382_500},
+		{account: "4000-sales", amount: -450_000, currency: "EUR", amountGBP: -382_500},
+	})
+
+	wantEvents := []invoicing.InvoiceSent{{
+		InvoiceID: sent.ID,
+		Number:    "INV-2025-01",
+		ClientID:  sent.ClientID,
+		Amount:    invoicing.Money{Amount: 450_000, Currency: "EUR"},
+		DueDate:   sent.DueDate,
+	}}
+	if !reflect.DeepEqual(sentEvents, wantEvents) {
+		t.Fatalf("InvoiceSent events = %#v, want %#v", sentEvents, wantEvents)
+	}
+	it.AssertLedgerBalanced(t, h)
+}
+
+func TestInvoicingSendGBPUsesIdentityLockAndPosting(t *testing.T) {
+	h := harness.New(t, harness.Options{ClockStart: time.Date(2025, 5, 1, 9, 0, 0, 0, time.UTC)})
+	service := newInvoiceService(t, h)
+
+	fabrikam := fixtures.Fabrikam(t, h)
+	draft, err := service.CreateDraft(context.Background(), fabrikam.ID)
+	if err != nil {
+		t.Fatalf("CreateDraft() error = %v", err)
+	}
+	lines := []invoicing.InvoiceLineInput{{
+		Description: "GBP delivery",
+		Qty:         invoicing.MustQuantity("1"),
+		UnitPrice:   invoicing.Money{Amount: 10_000, Currency: string(invoicing.CurrencyGBP)},
+	}}
+	updated, err := service.UpdateDraft(context.Background(), draft.ID, invoicing.DraftPatch{Lines: &lines})
+	if err != nil {
+		t.Fatalf("UpdateDraft(lines) error = %v", err)
+	}
+	assertMoney(t, updated.Totals.Total, 12_000, "GBP")
+
+	sent, err := service.Send(context.Background(), updated.ID)
+	if err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	if sent.Number == nil || *sent.Number != "INV-2025-01" {
+		t.Fatalf("sent Number = %v, want INV-2025-01", sent.Number)
+	}
+	if sent.LockID == nil {
+		t.Fatal("sent LockID = nil, want lock id")
+	}
+	assertInvoiceRateLock(t, h, *sent.LockID, "invoicing:INV-2025-01", "GBP", "GBP", "1.000000000000000000")
+	assertInvoicingLedgerPostings(t, h, invoiceSendSourceRefForTest("INV-2025-01"), []wantInvoicePosting{
+		{account: "1101-debtors-gbp", amount: 12_000, currency: "GBP", amountGBP: 12_000},
+		{account: "4000-sales", amount: -10_000, currency: "GBP", amountGBP: -10_000},
+		{account: "2200-vat-control", amount: -2_000, currency: "GBP", amountGBP: -2_000},
+	})
+	it.AssertLedgerBalanced(t, h)
+}
+
+func TestInvoicingSendDomesticEURSplitsVATAtLockedRate(t *testing.T) {
+	h := harness.New(t, harness.Options{ClockStart: time.Date(2025, 5, 1, 9, 0, 0, 0, time.UTC)})
+	fixtures.Rates(t, h)
+	service := newInvoiceService(t, h)
+
+	client, err := service.SaveClient(context.Background(), invoicing.Client{
+		Name: "Euro Domestic Ltd",
+		Address: invoicing.Address{
+			Line1:      "1 Market Street",
+			Locality:   "Douglas",
+			PostalCode: "IM1 1AA",
+			Country:    "IM",
+		},
+		DefaultCurrency: invoicing.CurrencyEUR,
+		TermsDays:       14,
+		VATTreatment:    invoicing.VATTreatmentDomestic,
+	})
+	if err != nil {
+		t.Fatalf("SaveClient(domestic EUR) error = %v", err)
+	}
+	draft, err := service.CreateDraft(context.Background(), client.ID)
+	if err != nil {
+		t.Fatalf("CreateDraft(domestic EUR) error = %v", err)
+	}
+	lines := []invoicing.InvoiceLineInput{{
+		Description: "EUR domestic delivery",
+		Qty:         invoicing.MustQuantity("1"),
+		UnitPrice:   invoicing.Money{Amount: 10_000, Currency: string(invoicing.CurrencyEUR)},
+	}}
+	updated, err := service.UpdateDraft(context.Background(), draft.ID, invoicing.DraftPatch{Lines: &lines})
+	if err != nil {
+		t.Fatalf("UpdateDraft(lines) error = %v", err)
+	}
+	assertMoney(t, updated.Totals.Total, 12_000, "EUR")
+
+	sent, err := service.Send(context.Background(), updated.ID)
+	if err != nil {
+		t.Fatalf("Send(domestic EUR) error = %v", err)
+	}
+	if sent.Number == nil || *sent.Number != "INV-2025-01" {
+		t.Fatalf("sent Number = %v, want INV-2025-01", sent.Number)
+	}
+	assertInvoicingLedgerPostings(t, h, invoiceSendSourceRefForTest("INV-2025-01"), []wantInvoicePosting{
+		{account: "1100-debtors-eur", amount: 12_000, currency: "EUR", amountGBP: 10_200},
+		{account: "4000-sales", amount: -10_000, currency: "EUR", amountGBP: -8_500},
+		{account: "2200-vat-control", amount: -2_000, currency: "EUR", amountGBP: -1_700},
+	})
+	it.AssertLedgerBalanced(t, h)
+}
+
+func TestInvoicingSendRollsBackOnBusFailureAndPreservesNumberGap(t *testing.T) {
+	h := harness.New(t, harness.Options{ClockStart: time.Date(2025, 5, 1, 9, 0, 0, 0, time.UTC)})
+	fixtures.Rates(t, h)
+	service := newInvoiceService(t, h)
+	forced := errors.New("forced invoice sent subscriber failure")
+	h.Bus.Subscribe(invoicing.InvoiceSentName, func(context.Context, db.Tx, bus.Event) error {
+		return nil
+	})
+	h.FailNextBusSubscriber(invoicing.InvoiceSentName, forced)
+
+	draft := createEURInvoiceDraft(t, h, service, 450_000)
+	_, err := service.Send(context.Background(), draft.ID)
+	if !errors.Is(err, forced) {
+		t.Fatalf("Send() error = %v, want forced subscriber failure", err)
+	}
+	fetched, err := service.Invoice(context.Background(), draft.ID)
+	if err != nil {
+		t.Fatalf("Invoice() after failed send error = %v", err)
+	}
+	if fetched.Status != invoicing.InvoiceStatusDraft || fetched.Number != nil || fetched.LockID != nil {
+		t.Fatalf("invoice after failed send = status %q number %v lock %v, want draft without number/lock", fetched.Status, fetched.Number, fetched.LockID)
+	}
+	assertRateLockCount(t, h, "invoicing:INV-2025-%", 0)
+	assertLedgerEntryCountForSource(t, h, invoicing.ModuleName, "", 0)
+
+	sent, err := service.Send(context.Background(), draft.ID)
+	if err != nil {
+		t.Fatalf("Send() retry error = %v", err)
+	}
+	if sent.Number == nil || *sent.Number != "INV-2025-01" {
+		t.Fatalf("retry Number = %v, want no gap at INV-2025-01", sent.Number)
+	}
+	if sent.LockID == nil {
+		t.Fatal("retry LockID = nil, want new lock")
+	}
+	assertRateLockCount(t, h, "invoicing:INV-2025-%", 1)
+	it.AssertLedgerBalanced(t, h)
+}
+
+func TestInvoicingMarkSettledPublishesRealisedFX(t *testing.T) {
+	tests := []struct {
+		name          string
+		rates         fixtures.RateTable
+		wantRealised  int64
+		wantFXPosting []wantInvoicePosting
+	}{
+		{
+			name:         "flat zero delta",
+			rates:        fixtures.RatesFlat085,
+			wantRealised: 0,
+		},
+		{
+			name: "step gain",
+			rates: fixtures.RatesStep(map[time.Time]string{
+				time.Date(2025, 5, 1, 0, 0, 0, 0, time.UTC): "0.8500",
+				time.Date(2025, 5, 2, 0, 0, 0, 0, time.UTC): "0.8600",
+			}),
+			wantRealised: 4_500,
+			wantFXPosting: []wantInvoicePosting{
+				{account: "1101-debtors-gbp", amount: 4_500, currency: "GBP", amountGBP: 4_500},
+				{account: "4900-fx-gain-loss", amount: -4_500, currency: "GBP", amountGBP: -4_500},
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			h := harness.New(t, harness.Options{ClockStart: time.Date(2025, 5, 1, 9, 0, 0, 0, time.UTC)})
+			fixtures.Rates(t, h, test.rates)
+			service := newInvoiceService(t, h)
+			sent, err := service.Send(context.Background(), createEURInvoiceDraft(t, h, service, 450_000).ID)
+			if err != nil {
+				t.Fatalf("Send() error = %v", err)
+			}
+			lockID := mustInvoiceLockID(t, sent)
+
+			var realisedEvents []moneyfx.RealisedFX
+			h.Bus.Subscribe(moneyfx.RealisedFXName, func(_ context.Context, _ db.Tx, evt bus.Event) error {
+				realised, ok := evt.(moneyfx.RealisedFX)
+				if !ok {
+					t.Fatalf("RealisedFX event = %T, want moneyfx.RealisedFX", evt)
+				}
+				realisedEvents = append(realisedEvents, realised)
+				return nil
+			})
+
+			settled, err := markSettledFromBankingTx(t, h, service, sent.ID, "bank-txn-123", time.Date(2025, 5, 2, 0, 0, 0, 0, time.UTC), invoicing.Money{Amount: 450_000, Currency: "EUR"})
+			if err != nil {
+				t.Fatalf("MarkSettled() error = %v", err)
+			}
+			if settled.Status != invoicing.InvoiceStatusPaid {
+				t.Fatalf("settled Status = %q, want paid", settled.Status)
+			}
+			assertRealisedFXRow(t, h, sent.ID, lockID, 1, test.wantRealised)
+			if test.wantRealised == 0 {
+				if len(realisedEvents) != 0 {
+					t.Fatalf("RealisedFX events = %#v, want none", realisedEvents)
+				}
+				assertLedgerEntryCountForSource(t, h, moneyfx.ModuleName, invoiceSettlementSourceRefForTest(sent.ID), 0)
+			} else {
+				wantEvents := []moneyfx.RealisedFX{{
+					InvoiceID: sent.ID,
+					AmountGBP: invoicing.Money{Amount: test.wantRealised, Currency: "GBP"},
+				}}
+				if !reflect.DeepEqual(realisedEvents, wantEvents) {
+					t.Fatalf("RealisedFX events = %#v, want %#v", realisedEvents, wantEvents)
+				}
+				assertModuleLedgerPostings(t, h, moneyfx.ModuleName, invoiceSettlementSourceRefForTest(sent.ID), test.wantFXPosting)
+			}
+			it.AssertLedgerBalanced(t, h)
+		})
+	}
+}
+
+func TestInvoicingMarkSettledWrongAmountDoesNotChangeInvoice(t *testing.T) {
+	h := harness.New(t, harness.Options{ClockStart: time.Date(2025, 5, 1, 9, 0, 0, 0, time.UTC)})
+	fixtures.Rates(t, h)
+	service := newInvoiceService(t, h)
+	sent, err := service.Send(context.Background(), createEURInvoiceDraft(t, h, service, 450_000).ID)
+	if err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	lockID := mustInvoiceLockID(t, sent)
+
+	_, err = markSettledFromBankingTx(t, h, service, sent.ID, "bank-txn-wrong", time.Date(2025, 5, 2, 0, 0, 0, 0, time.UTC), invoicing.Money{Amount: 449_999, Currency: "EUR"})
+	if !errors.Is(err, invoicing.ErrInvoicePartialPayment) {
+		t.Fatalf("MarkSettled(wrong amount) error = %v, want ErrInvoicePartialPayment", err)
+	}
+	fetched, err := service.Invoice(context.Background(), sent.ID)
+	if err != nil {
+		t.Fatalf("Invoice() after wrong settlement error = %v", err)
+	}
+	if fetched.Status != invoicing.InvoiceStatusSent || fetched.SettlementTxnRef != nil || fetched.SettledDate != nil || fetched.SettledAmount != nil {
+		t.Fatalf("invoice after wrong settlement = status %q txn %v date %v amount %v, want unchanged sent", fetched.Status, fetched.SettlementTxnRef, fetched.SettledDate, fetched.SettledAmount)
+	}
+	assertRealisedFXRow(t, h, sent.ID, lockID, 0, 0)
+	assertLedgerEntryCountForSource(t, h, moneyfx.ModuleName, invoiceSettlementSourceRefForTest(sent.ID), 0)
+	it.AssertLedgerBalanced(t, h)
+}
+
+func TestInvoicingRevertToDraftReversesSendAndResendConsumesNewNumber(t *testing.T) {
+	h := harness.New(t, harness.Options{ClockStart: time.Date(2025, 5, 1, 9, 0, 0, 0, time.UTC)})
+	fixtures.Rates(t, h)
+	service := newInvoiceService(t, h)
+	sent, err := service.Send(context.Background(), createEURInvoiceDraft(t, h, service, 450_000).ID)
+	if err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	firstLockID := mustInvoiceLockID(t, sent)
+
+	reverted, err := service.RevertToDraft(context.Background(), sent.ID)
+	if err != nil {
+		t.Fatalf("RevertToDraft() error = %v", err)
+	}
+	if reverted.Status != invoicing.InvoiceStatusDraft || reverted.Number != nil || reverted.LockID != nil {
+		t.Fatalf("reverted invoice = status %q number %v lock %v, want draft without number/lock", reverted.Status, reverted.Number, reverted.LockID)
+	}
+	assertSourceRefNetsZero(t, h, invoicing.ModuleName, invoiceSendSourceRefForTest("INV-2025-01"))
+
+	resent, err := service.Send(context.Background(), reverted.ID)
+	if err != nil {
+		t.Fatalf("Send() after revert error = %v", err)
+	}
+	if resent.Number == nil || *resent.Number != "INV-2025-02" {
+		t.Fatalf("resent Number = %v, want INV-2025-02", resent.Number)
+	}
+	secondLockID := mustInvoiceLockID(t, resent)
+	if secondLockID == firstLockID {
+		t.Fatalf("resent lock id = %d, want different from first lock %d", secondLockID, firstLockID)
+	}
+	assertInvoiceRateLock(t, h, *resent.LockID, "invoicing:INV-2025-02", "EUR", "GBP", "0.850000000000000000")
+	it.AssertLedgerBalanced(t, h)
+}
+
+func TestInvoicingRevertToDraftAllowsBackdatedInvoiceSentToday(t *testing.T) {
+	h := harness.New(t, harness.Options{ClockStart: time.Date(2025, 5, 2, 9, 0, 0, 0, time.UTC)})
+	fixtures.Rates(t, h)
+	service := newInvoiceService(t, h)
+	draft := createEURInvoiceDraft(t, h, service, 450_000)
+	issueDate := time.Date(2025, 5, 1, 0, 0, 0, 0, time.UTC)
+	backdated, err := service.UpdateDraft(context.Background(), draft.ID, invoicing.DraftPatch{IssueDate: &issueDate})
+	if err != nil {
+		t.Fatalf("UpdateDraft(issue date) error = %v", err)
+	}
+	sent, err := service.Send(context.Background(), backdated.ID)
+	if err != nil {
+		t.Fatalf("Send() backdated error = %v", err)
+	}
+	if !sent.IssueDate.Equal(issueDate) {
+		t.Fatalf("sent IssueDate = %s, want %s", sent.IssueDate, issueDate)
+	}
+
+	reverted, err := service.RevertToDraft(context.Background(), sent.ID)
+	if err != nil {
+		t.Fatalf("RevertToDraft(backdated sent today) error = %v", err)
+	}
+	if reverted.Status != invoicing.InvoiceStatusDraft {
+		t.Fatalf("reverted Status = %q, want draft", reverted.Status)
+	}
+	assertSourceRefNetsZero(t, h, invoicing.ModuleName, invoiceSendSourceRefForTest("INV-2025-01"))
+	it.AssertLedgerBalanced(t, h)
+}
+
 func TestInvoicingNumberingConcurrentGapFree(t *testing.T) {
 	h := harness.New(t, harness.Options{})
 	_ = h
@@ -221,12 +570,261 @@ func TestInvoicingNumberingConcurrentGapFree(t *testing.T) {
 func newInvoiceService(t testing.TB, h *harness.Harness) *invoicing.Service {
 	t.Helper()
 	modulePool := testdb.AsModule(t, invoicing.ModuleName)
+	moneyFXPool := testdb.AsModule(t, moneyfx.ModuleName)
 	return invoicing.NewService(
 		modulePool,
 		invoicing.Store{},
 		invoicing.WithClock(h.Clock),
 		invoicing.WithTodayRate(fakeTodayRate),
+		invoicing.WithRateLocker(testRateLocker{service: moneyfx.NewService(moneyfx.NewStore(moneyFXPool), h.Clock)}),
+		invoicing.WithLedger(ledger.New(h.LedgerPool, h.Bus)),
+		invoicing.WithEventBus(h.Bus),
 	)
+}
+
+type testRateLocker struct {
+	service *moneyfx.Service
+}
+
+func (l testRateLocker) LockRate(ctx context.Context, tx db.Tx, ref invoicing.RateLockRef, from string, to string, date time.Time) (invoicing.RateLock, error) {
+	lock, err := l.service.Lock(ctx, tx, moneyfx.LockRef{Module: ref.Module, Ref: ref.Ref}, from, to, date)
+	if err != nil {
+		return invoicing.RateLock{}, err
+	}
+	return invoicing.RateLock{ID: int64(lock.ID), Rate: lock.Rate}, nil
+}
+
+type wantInvoicePosting struct {
+	account   string
+	amount    int64
+	currency  string
+	amountGBP int64
+}
+
+func createEURInvoiceDraft(t testing.TB, h *harness.Harness, service *invoicing.Service, amount int64) invoicing.Invoice {
+	t.Helper()
+
+	contoso := fixtures.Contoso(t, h)
+	draft, err := service.CreateDraft(context.Background(), contoso.ID)
+	if err != nil {
+		t.Fatalf("CreateDraft() error = %v", err)
+	}
+	lines := []invoicing.InvoiceLineInput{{
+		Description: "Monthly retainer",
+		Qty:         invoicing.MustQuantity("1"),
+		UnitPrice:   invoicing.Money{Amount: amount, Currency: string(invoicing.CurrencyEUR)},
+	}}
+	updated, err := service.UpdateDraft(context.Background(), draft.ID, invoicing.DraftPatch{Lines: &lines})
+	if err != nil {
+		t.Fatalf("UpdateDraft(lines) error = %v", err)
+	}
+	return updated
+}
+
+func markSettledFromBankingTx(t testing.TB, h *harness.Harness, service *invoicing.Service, id string, txnRef string, date time.Time, amount invoicing.Money) (_ invoicing.Invoice, err error) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	bankingPool := testdb.AsModule(t, banking.ModuleName)
+	tx, err := bankingPool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin banking transaction: %v", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(context.Background())
+		}
+	}()
+
+	settled, err := service.MarkSettled(ctx, tx, id, txnRef, date, amount)
+	if err != nil {
+		return invoicing.Invoice{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return invoicing.Invoice{}, fmt.Errorf("commit banking settlement transaction: %w", err)
+	}
+	committed = true
+	return settled, nil
+}
+
+func mustInvoiceLockID(t testing.TB, invoice invoicing.Invoice) int64 {
+	t.Helper()
+	if invoice.LockID == nil {
+		t.Fatal("invoice LockID = nil")
+	}
+	var id int64
+	if _, err := fmt.Sscan(*invoice.LockID, &id); err != nil {
+		t.Fatalf("parse LockID %q: %v", *invoice.LockID, err)
+	}
+	return id
+}
+
+func assertInvoiceRateLock(t testing.TB, h *harness.Harness, lockID string, ref string, from string, to string, rate string) {
+	t.Helper()
+
+	var gotRef, gotFrom, gotTo, gotRate string
+	if err := h.DB.QueryRow(context.Background(), `
+SELECT ref, from_currency, to_currency, rate
+FROM moneyfx.rate_locks
+WHERE id = $1`, lockID).Scan(&gotRef, &gotFrom, &gotTo, &gotRate); err != nil {
+		t.Fatalf("query rate lock %s: %v", lockID, err)
+	}
+	if gotRef != ref || gotFrom != from || gotTo != to || gotRate != rate {
+		t.Fatalf("rate lock %s = ref=%s from=%s to=%s rate=%s, want ref=%s from=%s to=%s rate=%s",
+			lockID, gotRef, gotFrom, gotTo, gotRate, ref, from, to, rate)
+	}
+}
+
+func assertRateLockCount(t testing.TB, h *harness.Harness, refLike string, want int) {
+	t.Helper()
+
+	var got int
+	if err := h.DB.QueryRow(context.Background(), `
+SELECT count(*)
+FROM moneyfx.rate_locks
+WHERE ref LIKE $1`, refLike).Scan(&got); err != nil {
+		t.Fatalf("count rate locks %s: %v", refLike, err)
+	}
+	if got != want {
+		t.Fatalf("rate lock count for %s = %d, want %d", refLike, got, want)
+	}
+}
+
+func assertInvoicingLedgerPostings(t testing.TB, h *harness.Harness, sourceRef string, want []wantInvoicePosting) {
+	t.Helper()
+	assertModuleLedgerPostings(t, h, invoicing.ModuleName, sourceRef, want)
+}
+
+func assertModuleLedgerPostings(t testing.TB, h *harness.Harness, module string, sourceRef string, want []wantInvoicePosting) {
+	t.Helper()
+
+	rows, err := h.DB.Query(context.Background(), `
+SELECT p.account_code, p.amount, p.currency, p.amount_gbp
+FROM ledger.journal_entries AS je
+JOIN ledger.postings AS p ON p.entry_id = je.id
+WHERE je.source_module = $1
+	AND je.source_ref = $2
+ORDER BY p.id`, module, sourceRef)
+	if err != nil {
+		t.Fatalf("query ledger postings for %s/%s: %v", module, sourceRef, err)
+	}
+	defer rows.Close()
+
+	var got []wantInvoicePosting
+	for rows.Next() {
+		var posting wantInvoicePosting
+		if err := rows.Scan(&posting.account, &posting.amount, &posting.currency, &posting.amountGBP); err != nil {
+			t.Fatalf("scan ledger posting for %s/%s: %v", module, sourceRef, err)
+		}
+		got = append(got, posting)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("collect ledger postings for %s/%s: %v", module, sourceRef, err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ledger postings for %s/%s = %#v, want %#v", module, sourceRef, got, want)
+	}
+}
+
+func assertLedgerEntryCountForSource(t testing.TB, h *harness.Harness, module string, sourceRef string, want int) {
+	t.Helper()
+
+	query := `
+SELECT count(*)
+FROM ledger.journal_entries
+WHERE source_module = $1`
+	args := []any{module}
+	if sourceRef != "" {
+		query += ` AND source_ref = $2`
+		args = append(args, sourceRef)
+	}
+
+	var got int
+	if err := h.DB.QueryRow(context.Background(), query, args...).Scan(&got); err != nil {
+		t.Fatalf("count ledger entries for %s/%s: %v", module, sourceRef, err)
+	}
+	if got != want {
+		t.Fatalf("ledger entry count for %s/%s = %d, want %d", module, sourceRef, got, want)
+	}
+}
+
+func assertRealisedFXRow(t testing.TB, h *harness.Harness, invoiceID string, lockID int64, wantCount int, wantAmountGBP int64) {
+	t.Helper()
+
+	rows, err := h.DB.Query(context.Background(), `
+SELECT amount_gbp
+FROM moneyfx.realised_fx
+WHERE invoice_id = $1
+	AND lock_id = $2`, invoiceID, lockID)
+	if err != nil {
+		t.Fatalf("query realised FX rows: %v", err)
+	}
+	defer rows.Close()
+
+	var amounts []int64
+	for rows.Next() {
+		var amount int64
+		if err := rows.Scan(&amount); err != nil {
+			t.Fatalf("scan realised FX row: %v", err)
+		}
+		amounts = append(amounts, amount)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("collect realised FX rows: %v", err)
+	}
+	if len(amounts) != wantCount {
+		t.Fatalf("realised FX rows = %d (%v), want %d", len(amounts), amounts, wantCount)
+	}
+	if wantCount > 0 && amounts[0] != wantAmountGBP {
+		t.Fatalf("realised FX amount = %d, want %d", amounts[0], wantAmountGBP)
+	}
+}
+
+func assertSourceRefNetsZero(t testing.TB, h *harness.Harness, module string, sourceRef string) {
+	t.Helper()
+
+	rows, err := h.DB.Query(context.Background(), `
+SELECT p.currency, COALESCE(sum(p.amount), 0)::bigint, COALESCE(sum(p.amount_gbp), 0)::bigint
+FROM ledger.journal_entries AS je
+JOIN ledger.postings AS p ON p.entry_id = je.id
+WHERE je.source_module = $1
+	AND je.source_ref = $2
+GROUP BY p.currency
+ORDER BY p.currency`, module, sourceRef)
+	if err != nil {
+		t.Fatalf("query source ref net for %s/%s: %v", module, sourceRef, err)
+	}
+	defer rows.Close()
+
+	seen := false
+	for rows.Next() {
+		seen = true
+		var currency string
+		var amount, amountGBP int64
+		if err := rows.Scan(&currency, &amount, &amountGBP); err != nil {
+			t.Fatalf("scan source ref net for %s/%s: %v", module, sourceRef, err)
+		}
+		if amount != 0 || amountGBP != 0 {
+			t.Fatalf("source ref %s/%s nets %d %s and %d GBP, want zero", module, sourceRef, amount, currency, amountGBP)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("collect source ref net for %s/%s: %v", module, sourceRef, err)
+	}
+	if !seen {
+		t.Fatalf("source ref %s/%s had no postings, want reversal postings", module, sourceRef)
+	}
+}
+
+func invoiceSendSourceRefForTest(number string) string {
+	return "invoice:" + number + ":send"
+}
+
+func invoiceSettlementSourceRefForTest(id string) string {
+	return "invoice:" + id + ":settlement"
 }
 
 func fakeTodayRate(_ context.Context, from string, to string) (invoicing.FXRate, time.Time, error) {

@@ -150,7 +150,11 @@ func (h realisedFXHandler) realisedFXAmount(ctx context.Context, tx db.Tx, evt i
 }
 
 func validateInvoiceLockOwner(evt invoicing.InvoiceSettled, lock RateLock) error {
-	expected, _, err := normalizeLockRef(LockRef{Module: invoicing.ModuleName, Ref: evt.InvoiceID})
+	ref := evt.InvoiceID
+	if strings.TrimSpace(evt.InvoiceNumber) != "" {
+		ref = evt.InvoiceNumber
+	}
+	expected, _, err := normalizeLockRef(LockRef{Module: invoicing.ModuleName, Ref: ref})
 	if err != nil {
 		return err
 	}
@@ -194,6 +198,7 @@ func lockedGBPAmount(native money.Money, lock RateLock) (money.Money, error) {
 func normalizeInvoiceSettled(evt invoicing.InvoiceSettled) (invoicing.InvoiceSettled, error) {
 	normalized := invoicing.InvoiceSettled{
 		InvoiceID:      strings.TrimSpace(evt.InvoiceID),
+		InvoiceNumber:  strings.TrimSpace(evt.InvoiceNumber),
 		LockID:         evt.LockID,
 		NativeAmount:   evt.NativeAmount,
 		SettlementDate: normalizeRateDate(evt.SettlementDate),

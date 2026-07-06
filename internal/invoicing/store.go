@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -351,7 +352,7 @@ SELECT id,
 	qty::text,
 	unit_price_amount_minor,
 	unit_price_currency
-FROM invoice_lines
+FROM invoicing.invoice_lines
 WHERE invoice_id = $1
 ORDER BY position, id`, invoiceID)
 	if err != nil {
@@ -506,18 +507,48 @@ WHERE id = $1
 	return ErrInvoiceNotFound
 }
 
+func (s Store) SetInvoiceSent(ctx context.Context, tx db.Tx, id string, number string, lockID int64, sendLedgerEntryID int64, sentAt time.Time) (Invoice, error) {
+	updated, err := scanInvoiceRow(tx.QueryRow(ctx, `
+UPDATE invoicing.invoices
+SET number = $2,
+	lock_id = $3,
+	send_ledger_entry_id = $4,
+	sent_at = $5,
+	status = 'sent',
+	updated_at = now()
+WHERE id = $1
+	AND status = 'draft'
+RETURNING `+invoiceColumnsSQL(),
+		id,
+		number,
+		strconv.FormatInt(lockID, 10),
+		sendLedgerEntryID,
+		sentAt.UTC(),
+	))
+	if errors.Is(err, ErrInvoiceNotFound) {
+		exists, existsErr := s.invoiceExists(ctx, tx, id)
+		if existsErr != nil {
+			return Invoice{}, existsErr
+		}
+		if exists {
+			return Invoice{}, ErrInvoiceImmutable
+		}
+	}
+	return updated, err
+}
+
 func (s Store) SetInvoiceSettlement(ctx context.Context, tx db.Tx, id string, settlement InvoiceSettlement) (Invoice, error) {
 	amount, currency := nullableInvoiceMoney(settlement.SettledAmount)
 	updated, err := scanInvoiceRow(tx.QueryRow(ctx, `
-UPDATE invoices
+UPDATE invoicing.invoices
 SET settlement_txn_ref = $2,
 	settled_date = $3,
 	settled_amount_minor = $4,
 	settled_amount_currency = $5,
-	status = CASE WHEN $2::text IS NOT NULL OR $3::date IS NOT NULL OR $4::bigint IS NOT NULL THEN 'paid' ELSE status END,
+	status = 'paid',
 	updated_at = now()
 WHERE id = $1
-	AND status IN ('sent', 'paid')
+	AND status = 'sent'
 RETURNING `+invoiceColumnsSQL(),
 		id,
 		nullableString(settlement.TxnRef),
@@ -525,6 +556,33 @@ RETURNING `+invoiceColumnsSQL(),
 		amount,
 		currency,
 	))
+	if errors.Is(err, ErrInvoiceNotFound) {
+		exists, existsErr := s.invoiceExists(ctx, tx, id)
+		if existsErr != nil {
+			return Invoice{}, existsErr
+		}
+		if exists {
+			return Invoice{}, ErrInvoiceImmutable
+		}
+	}
+	return updated, err
+}
+
+func (s Store) RevertSentToDraft(ctx context.Context, tx db.Tx, id string) (Invoice, error) {
+	updated, err := scanInvoiceRow(tx.QueryRow(ctx, `
+UPDATE invoicing.invoices
+SET number = NULL,
+	lock_id = NULL,
+	send_ledger_entry_id = NULL,
+	sent_at = NULL,
+	status = 'draft',
+	updated_at = now()
+WHERE id = $1
+	AND status = 'sent'
+	AND settlement_txn_ref IS NULL
+	AND settled_date IS NULL
+	AND settled_amount_minor IS NULL
+RETURNING `+invoiceColumnsSQL(), id))
 	if errors.Is(err, ErrInvoiceNotFound) {
 		exists, existsErr := s.invoiceExists(ctx, tx, id)
 		if existsErr != nil {
@@ -572,14 +630,14 @@ WHERE year = $1`, year, nextSeq)
 
 func (Store) invoiceExists(ctx context.Context, tx db.Tx, id string) (bool, error) {
 	var exists bool
-	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM invoices WHERE id = $1)`, id).Scan(&exists); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM invoicing.invoices WHERE id = $1)`, id).Scan(&exists); err != nil {
 		return false, fmt.Errorf("invoicing: check invoice exists: %w", err)
 	}
 	return exists, nil
 }
 
 func selectInvoiceSQL() string {
-	return "SELECT " + invoiceColumnsSQL() + "\nFROM invoices"
+	return "SELECT " + invoiceColumnsSQL() + "\nFROM invoicing.invoices"
 }
 
 func invoiceColumnsSQL() string {
@@ -591,6 +649,8 @@ func invoiceColumnsSQL() string {
 	due_date,
 	currency,
 	lock_id,
+	send_ledger_entry_id,
+	sent_at,
 	vat_treatment,
 	settlement_txn_ref,
 	settled_date,
@@ -608,6 +668,8 @@ func scanInvoiceRow(row clientRow) (Invoice, error) {
 		status           string
 		currency         string
 		lockID           sql.NullString
+		sendEntryID      sql.NullInt64
+		sentAt           sql.NullTime
 		vatTreatment     string
 		settlementTxnRef sql.NullString
 		settledDate      sql.NullTime
@@ -624,6 +686,8 @@ func scanInvoiceRow(row clientRow) (Invoice, error) {
 		&invoice.DueDate,
 		&currency,
 		&lockID,
+		&sendEntryID,
+		&sentAt,
 		&vatTreatment,
 		&settlementTxnRef,
 		&settledDate,
@@ -646,6 +710,13 @@ func scanInvoiceRow(row clientRow) (Invoice, error) {
 	invoice.Currency = Currency(currency)
 	if lockID.Valid {
 		invoice.LockID = &lockID.String
+	}
+	if sendEntryID.Valid {
+		invoice.SendLedgerEntryID = &sendEntryID.Int64
+	}
+	if sentAt.Valid {
+		value := sentAt.Time.UTC()
+		invoice.SentAt = &value
 	}
 	invoice.VATTreatment = VATTreatment(vatTreatment)
 	if settlementTxnRef.Valid {

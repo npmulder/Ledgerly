@@ -19,9 +19,12 @@ const (
 )
 
 var (
-	ErrInvoiceNotFound  = errors.New("invoicing: invoice not found")
-	ErrInvoiceImmutable = errors.New("invoicing: invoice is immutable")
-	ErrRateUnavailable  = errors.New("invoicing: rate unavailable")
+	ErrInvoiceNotFound                 = errors.New("invoicing: invoice not found")
+	ErrInvoiceImmutable                = errors.New("invoicing: invoice is immutable")
+	ErrRateUnavailable                 = errors.New("invoicing: rate unavailable")
+	ErrInvoicePartialPayment           = errors.New("invoicing: partial invoice payments are not supported")
+	ErrInvoiceSettlementAmountMismatch = errors.New("invoicing: settlement amount does not match invoice total")
+	ErrInvoicePostingNotFound          = errors.New("invoicing: send ledger posting not found")
 
 	decimalQuantityPattern = regexp.MustCompile(`^[0-9]+(\.[0-9]+)?$`)
 )
@@ -64,23 +67,25 @@ type Quantity string
 // Invoice is an invoice header, ordered lines, settlement metadata, and
 // computed totals. Totals are never stored.
 type Invoice struct {
-	ID               string        `json:"id"`
-	Number           *string       `json:"number"`
-	ClientID         string        `json:"client_id"`
-	Status           InvoiceStatus `json:"status"`
-	IssueDate        time.Time     `json:"issue_date"`
-	DueDate          time.Time     `json:"due_date"`
-	Currency         Currency      `json:"currency"`
-	LockID           *string       `json:"lock_id"`
-	VATTreatment     VATTreatment  `json:"vat_treatment"`
-	SettlementTxnRef *string       `json:"settlement_txn_ref"`
-	SettledDate      *time.Time    `json:"settled_date"`
-	SettledAmount    *Money        `json:"settled_amount"`
-	PDFAsset         *string       `json:"pdf_asset"`
-	Lines            []InvoiceLine `json:"lines"`
-	Totals           InvoiceTotals `json:"totals"`
-	CreatedAt        time.Time     `json:"created_at"`
-	UpdatedAt        time.Time     `json:"updated_at"`
+	ID                string        `json:"id"`
+	Number            *string       `json:"number"`
+	ClientID          string        `json:"client_id"`
+	Status            InvoiceStatus `json:"status"`
+	IssueDate         time.Time     `json:"issue_date"`
+	DueDate           time.Time     `json:"due_date"`
+	Currency          Currency      `json:"currency"`
+	LockID            *string       `json:"lock_id"`
+	SendLedgerEntryID *int64        `json:"-"`
+	SentAt            *time.Time    `json:"sent_at,omitempty"`
+	VATTreatment      VATTreatment  `json:"vat_treatment"`
+	SettlementTxnRef  *string       `json:"settlement_txn_ref"`
+	SettledDate       *time.Time    `json:"settled_date"`
+	SettledAmount     *Money        `json:"settled_amount"`
+	PDFAsset          *string       `json:"pdf_asset"`
+	Lines             []InvoiceLine `json:"lines"`
+	Totals            InvoiceTotals `json:"totals"`
+	CreatedAt         time.Time     `json:"created_at"`
+	UpdatedAt         time.Time     `json:"updated_at"`
 }
 
 // InvoiceLine is an ordered invoice row. LineTotal is computed from quantity

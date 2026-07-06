@@ -107,7 +107,7 @@ INSERT INTO ledger.accounts (code, name, type, currency)
 VALUES
 	('1100-debtors-eur', 'Trade debtors EUR', 'asset', 'EUR'),
 	('1101-debtors-gbp', 'Trade debtors GBP', 'asset', 'GBP'),
-	('2200-vat-control', 'VAT control', 'liability', 'GBP'),
+	('2200-vat-control', 'VAT control', 'liability', NULL),
 	('2300-directors-loan', 'Director''s loan account', 'liability', 'GBP'),
 	('3000-retained-earnings', 'Retained earnings', 'equity', 'GBP'),
 	('4000-sales', 'Sales', 'income', NULL),
