@@ -1215,12 +1215,26 @@
   gap: 4px;
 }
 
+.dashboard-greeting__actions {
+  display: grid;
+  justify-items: end;
+  gap: 6px;
+}
+
 .dashboard-greeting__company {
   margin: 0;
   overflow-wrap: anywhere;
   font-size: var(--type-page-title-size);
   font-weight: var(--type-page-title-weight);
   line-height: var(--type-page-title-line-height);
+}
+
+.dashboard-greeting__retainer {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--type-secondary-size);
+  line-height: var(--type-secondary-line-height);
+  text-align: right;
 }
 
 .dashboard-section-note {
@@ -1239,29 +1253,29 @@
   gap: var(--layout-grid-gap);
 }
 
-.dashboard-stat-card--teal {
+article.ui-stat-card.dashboard-stat-card--teal {
   box-shadow: inset 4px 0 0 var(--color-teal);
 }
 
-.dashboard-stat-card--amber {
+article.ui-stat-card.dashboard-stat-card--amber {
   box-shadow: inset 4px 0 0 var(--color-warning);
 }
 
-.dashboard-stat-card--navy .ui-stat-card__value {
+article.ui-stat-card.dashboard-stat-card--navy .ui-stat-card__value {
   color: var(--color-navy);
 }
 
-.dashboard-stat-card--muted {
+article.ui-stat-card.dashboard-stat-card--muted {
   background: var(--color-neutral-bg);
   color: var(--color-text-secondary);
 }
 
-.dashboard-stat-card--muted .ui-stat-card__value,
-.dashboard-stat-card--unavailable .ui-stat-card__value {
+article.ui-stat-card.dashboard-stat-card--muted .ui-stat-card__value,
+article.ui-stat-card.dashboard-stat-card--unavailable .ui-stat-card__value {
   color: var(--color-text-muted);
 }
 
-.dashboard-stat-card--unavailable {
+article.ui-stat-card.dashboard-stat-card--unavailable {
   border-style: dashed;
   background: var(--color-page-bg);
 }
@@ -1382,7 +1396,7 @@
   line-height: 1.15;
 }
 
-.dashboard-rate-card--stale {
+.ui-card.dashboard-rate-card--stale {
   border-color: var(--color-warning-border);
   background: var(--color-warning-callout);
 }
@@ -1772,6 +1786,14 @@
 
   .dashboard-greeting .ui-button {
     width: 100%;
+  }
+
+  .dashboard-greeting__actions {
+    justify-items: stretch;
+  }
+
+  .dashboard-greeting__retainer {
+    text-align: left;
   }
 
   .dashboard-stat-grid,

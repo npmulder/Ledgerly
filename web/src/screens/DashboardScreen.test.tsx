@@ -73,6 +73,7 @@ describe("DashboardScreen", () => {
 
     renderDashboard();
 
+    expect(await screen.findByText("Retainer: Contoso GmbH")).toBeInTheDocument();
     await user.click(
       await screen.findByRole("button", { name: "Raise July invoice" }),
     );
@@ -94,6 +95,37 @@ describe("DashboardScreen", () => {
         },
       ],
       vat_treatment: "reverse-charge-eu-b2b",
+    });
+  });
+
+  it("computes retainer invoice dates at creation time", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-07-31T23:50:00Z"));
+    const user = userEvent.setup();
+    const api = dashboardApi({
+      clients: clientsFixture(),
+      summary: dashboardSummaryFixture(),
+    });
+    vi.stubGlobal("fetch", api.fetch);
+
+    renderDashboard();
+
+    const button = await screen.findByRole("button", {
+      name: "Raise July invoice",
+    });
+    vi.setSystemTime(new Date("2026-08-01T09:00:00Z"));
+    await user.click(button);
+
+    expect(await screen.findByText("Editor landed")).toBeInTheDocument();
+    expect(api.patchRequests[0]).toMatchObject({
+      due_date: "2026-08-15",
+      issue_date: "2026-08-01",
+      lines: [
+        {
+          description: "August retainer",
+          id: "line_retainer_2026_08",
+        },
+      ],
     });
   });
 

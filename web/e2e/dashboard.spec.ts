@@ -11,6 +11,7 @@ test("renders seeded dashboard, raises retainer invoice, and follows list links"
   page,
 }) => {
   const state = dashboardState();
+  await page.clock.setFixedTime(new Date("2026-07-06T09:00:00Z"));
   await mockDashboardApi(page, state);
 
   await page.goto("/");
@@ -27,6 +28,7 @@ test("renders seeded dashboard, raises retainer invoice, and follows list links"
   await expect(page.getByText("STALE")).toBeVisible();
   await expect(page.getByText("INV-2026-07")).toBeVisible();
   await expect(page.getByText("CONTOSO GMBH SEPA")).toBeVisible();
+  await expect(page.getByText("Retainer: Contoso GmbH")).toBeVisible();
 
   await page.screenshot({
     fullPage: true,

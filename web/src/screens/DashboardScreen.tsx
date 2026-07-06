@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
 
@@ -44,7 +44,7 @@ import {
 export function DashboardScreen() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const today = useMemo(() => new Date(), []);
+  const today = useToday();
   const currentMonth = monthName(today);
 
   const summaryQuery = useQuery({
@@ -69,7 +69,9 @@ export function DashboardScreen() {
       if (!retainerClient?.retainer_amount) {
         throw new Error("No retainer client is available");
       }
-      const issueDate = dateInputValue(today);
+      const invoiceDate = new Date();
+      const issueDate = dateInputValue(invoiceDate);
+      const invoiceMonth = monthName(invoiceDate);
       const draft = await createDraftInvoice({ client_id: retainerClient.id });
       return patchInvoice(draft.id, {
         client_id: retainerClient.id,
@@ -78,7 +80,7 @@ export function DashboardScreen() {
         issue_date: issueDate,
         lines: [
           {
-            description: `${currentMonth} retainer`,
+            description: `${invoiceMonth} retainer`,
             id: retainerLineId(issueDate),
             qty: "1",
             unit_price: {
@@ -120,12 +122,19 @@ export function DashboardScreen() {
           </p>
           <p className="dashboard-greeting__company">{tradingName}</p>
         </div>
-        <Button
-          disabled={clientsQuery.isPending || raiseRetainerMutation.isPending}
-          onClick={handlePrimaryCTA}
-        >
-          {raiseRetainerMutation.isPending ? "Creating draft" : ctaLabel}
-        </Button>
+        <div className="dashboard-greeting__actions">
+          <Button
+            disabled={clientsQuery.isPending || raiseRetainerMutation.isPending}
+            onClick={handlePrimaryCTA}
+          >
+            {raiseRetainerMutation.isPending ? "Creating draft" : ctaLabel}
+          </Button>
+          {retainerClient ? (
+            <p className="dashboard-greeting__retainer">
+              Retainer: {retainerClient.name}
+            </p>
+          ) : null}
+        </div>
       </div>
 
       {summaryQuery.isPending ? (
@@ -471,6 +480,38 @@ function QuietUnavailable({ title }: { readonly title: string }) {
       <span>Section unavailable.</span>
     </div>
   );
+}
+
+function useToday() {
+  const [today, setToday] = useState(() => new Date());
+
+  useEffect(() => {
+    let timerID: number | undefined;
+
+    function scheduleMidnightRefresh() {
+      const now = new Date();
+      const nextUTCDate = new Date(
+        Date.UTC(
+          now.getUTCFullYear(),
+          now.getUTCMonth(),
+          now.getUTCDate() + 1,
+        ),
+      );
+      timerID = window.setTimeout(() => {
+        setToday(new Date());
+        scheduleMidnightRefresh();
+      }, nextUTCDate.getTime() - now.getTime() + 1000);
+    }
+
+    scheduleMidnightRefresh();
+    return () => {
+      if (timerID !== undefined) {
+        window.clearTimeout(timerID);
+      }
+    };
+  }, []);
+
+  return today;
 }
 
 function ProblemAlert({
