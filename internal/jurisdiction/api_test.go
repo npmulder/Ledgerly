@@ -368,6 +368,21 @@ func TestTaxYearForDateUsesActivePackYearEnd(t *testing.T) {
 	}
 }
 
+func TestTaxYearPeriodUsesActivePackYearEnd(t *testing.T) {
+	loadIsleOfManForAccessors(t)
+
+	from, to, err := TaxYearPeriod("2025-26")
+	if err != nil {
+		t.Fatalf("TaxYearPeriod() error = %v", err)
+	}
+	if got := from.Format(time.DateOnly); got != "2025-04-06" {
+		t.Fatalf("TaxYearPeriod() from = %s, want 2025-04-06", got)
+	}
+	if got := to.Format(time.DateOnly); got != "2026-04-05" {
+		t.Fatalf("TaxYearPeriod() to = %s, want 2026-04-05", got)
+	}
+}
+
 func TestActivePackOverviewReturnsIsleOfManSummaries(t *testing.T) {
 	loadIsleOfManForAccessors(t)
 

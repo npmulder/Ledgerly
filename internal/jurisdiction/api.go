@@ -3,6 +3,8 @@ package jurisdiction
 import (
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -118,6 +120,31 @@ func TaxYearForDate(date time.Time) (string, error) {
 	return taxYearForDate(date, pack.Tax.YearEnd)
 }
 
+// TaxYearPeriod resolves a tax-year key such as 2025-26 into the active pack's
+// inclusive date window.
+func TaxYearPeriod(taxYear string) (time.Time, time.Time, error) {
+	pack, err := activePackSnapshot()
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	if err := validateYearEnd(pack.Tax.YearEnd); err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	startYear, endYear, err := parseTaxYearKey(taxYear)
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	previousEnd, err := clampedDate(startYear, pack.Tax.YearEnd.Month, pack.Tax.YearEnd.Day)
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	end, err := clampedDate(endYear, pack.Tax.YearEnd.Month, pack.Tax.YearEnd.Day)
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	return previousEnd.AddDate(0, 0, 1), end, nil
+}
+
 // ReverseChargeWording returns invoice wording for a reverse-charge kind.
 func ReverseChargeWording(kind string) (Wording, error) {
 	pack, err := activePackSnapshot()
@@ -164,6 +191,29 @@ func taxYearForDate(date time.Time, yearEnd YearEnd) (string, error) {
 		endYear = year + 1
 	}
 	return fmt.Sprintf("%04d-%02d", startYear, endYear%100), nil
+}
+
+func parseTaxYearKey(taxYear string) (int, int, error) {
+	parts := strings.Split(strings.TrimSpace(taxYear), "-")
+	if len(parts) != 2 || len(parts[0]) != 4 || len(parts[1]) != 2 {
+		return 0, 0, UnknownTaxYearError{TaxYear: taxYear, Path: "tax"}
+	}
+	startYear, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, 0, UnknownTaxYearError{TaxYear: taxYear, Path: "tax"}
+	}
+	endSuffix, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return 0, 0, UnknownTaxYearError{TaxYear: taxYear, Path: "tax"}
+	}
+	endYear := startYear/100*100 + endSuffix
+	if endYear <= startYear {
+		endYear += 100
+	}
+	if endYear != startYear+1 {
+		return 0, 0, UnknownTaxYearError{TaxYear: taxYear, Path: "tax"}
+	}
+	return startYear, endYear, nil
 }
 
 // FilingRules returns declarative filing rules. Use FilingDeadlines to resolve

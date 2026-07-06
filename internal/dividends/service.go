@@ -2,32 +2,47 @@ package dividends
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"math/big"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/npmulder/ledgerly/internal/dla"
 	"github.com/npmulder/ledgerly/internal/identity"
 	"github.com/npmulder/ledgerly/internal/jurisdiction"
+	ledgerapi "github.com/npmulder/ledgerly/internal/ledger"
 	"github.com/npmulder/ledgerly/internal/moneyfx/money"
+	"github.com/npmulder/ledgerly/internal/platform/bus"
 	"github.com/npmulder/ledgerly/internal/platform/clock"
+	"github.com/npmulder/ledgerly/internal/platform/db"
 	"github.com/npmulder/ledgerly/internal/reports"
 )
 
 const gbpCurrency = "GBP"
 
+const (
+	defaultDeclarationDescription = "Dividend declared"
+	dividendSourcePrefix          = "dividends:"
+)
+
 // Service composes ledger, reports, jurisdiction, identity, and declaration
 // storage into the live dividend headroom read model.
 type Service struct {
-	pool     *pgxpool.Pool
-	ledger   Ledger
-	reports  reports.Reports
-	identity Identity
-	clock    clock.Clock
-	store    Store
+	pool        *pgxpool.Pool
+	ledger      Ledger
+	reports     reports.Reports
+	identity    Identity
+	dla         DLA
+	bus         *bus.Bus
+	clock       clock.Clock
+	idGenerator func() (DeclarationID, error)
+	store       Store
 }
 
 var _ Dividends = (*Service)(nil)
@@ -42,14 +57,36 @@ func WithClock(clk clock.Clock) Option {
 	}
 }
 
+// WithDLA injects the DLA presentation-ledger append API.
+func WithDLA(dlaAPI DLA) Option {
+	return func(s *Service) {
+		s.dla = dlaAPI
+	}
+}
+
+// WithBus injects the event bus used to publish declaration facts.
+func WithBus(eventBus *bus.Bus) Option {
+	return func(s *Service) {
+		s.bus = eventBus
+	}
+}
+
+// WithIDGenerator injects declaration ID generation for deterministic tests.
+func WithIDGenerator(generator func() (DeclarationID, error)) Option {
+	return func(s *Service) {
+		s.idGenerator = generator
+	}
+}
+
 // New returns the dividends read API.
 func New(pool *pgxpool.Pool, ledgerAPI Ledger, reportsAPI reports.Reports, identityAPI Identity, opts ...Option) *Service {
 	service := &Service{
-		pool:     pool,
-		ledger:   ledgerAPI,
-		reports:  reportsAPI,
-		identity: identityAPI,
-		clock:    clock.New(),
+		pool:        pool,
+		ledger:      ledgerAPI,
+		reports:     reportsAPI,
+		identity:    identityAPI,
+		clock:       clock.New(),
+		idGenerator: newDeclarationID,
 	}
 	for _, opt := range opts {
 		opt(service)
@@ -57,12 +94,19 @@ func New(pool *pgxpool.Pool, ledgerAPI Ledger, reportsAPI reports.Reports, ident
 	if service.clock == nil {
 		service.clock = clock.New()
 	}
+	if service.idGenerator == nil {
+		service.idGenerator = newDeclarationID
+	}
 	return service
 }
 
 // Headroom returns the live distributable-reserves calculation. It stores no
 // derived balance.
 func (s *Service) Headroom(ctx context.Context) (HeadroomBreakdown, error) {
+	return s.headroom(ctx, nil)
+}
+
+func (s *Service) headroom(ctx context.Context, tx db.Tx) (HeadroomBreakdown, error) {
 	if s.ledger == nil {
 		return HeadroomBreakdown{}, fmt.Errorf("ledger: %w", ErrMissingProvider)
 	}
@@ -81,6 +125,15 @@ func (s *Service) Headroom(ctx context.Context) (HeadroomBreakdown, error) {
 	if err != nil {
 		return HeadroomBreakdown{}, err
 	}
+	return s.headroomWithFacts(ctx, tx, facts, asOf)
+}
+
+func (s *Service) headroomWithFacts(
+	ctx context.Context,
+	tx db.Tx,
+	facts identity.CompanyFacts,
+	asOf time.Time,
+) (HeadroomBreakdown, error) {
 	financialYear, err := financialYearForDate(asOf, facts.YearEnd.Month, facts.YearEnd.Day)
 	if err != nil {
 		return HeadroomBreakdown{}, err
@@ -91,7 +144,12 @@ func (s *Service) Headroom(ctx context.Context) (HeadroomBreakdown, error) {
 	}
 	priorYearEnd := period.From.AddDate(0, 0, -1)
 
-	retainedBalance, err := s.ledger.AccountBalance(ctx, RetainedEarningsAccountCode, priorYearEnd)
+	var retainedBalance ledgerapi.AccountBalance
+	if tx != nil {
+		retainedBalance, err = s.ledger.AccountBalanceInTx(ctx, tx, RetainedEarningsAccountCode, priorYearEnd)
+	} else {
+		retainedBalance, err = s.ledger.AccountBalance(ctx, RetainedEarningsAccountCode, priorYearEnd)
+	}
 	if err != nil {
 		return HeadroomBreakdown{}, err
 	}
@@ -100,7 +158,7 @@ func (s *Service) Headroom(ctx context.Context) (HeadroomBreakdown, error) {
 		return HeadroomBreakdown{}, err
 	}
 
-	ytdProfit, err := s.reports.ProfitYTD(ctx, financialYear)
+	ytdProfit, err := s.profitYTD(ctx, tx, financialYear)
 	if err != nil {
 		return HeadroomBreakdown{}, err
 	}
@@ -112,7 +170,7 @@ func (s *Service) Headroom(ctx context.Context) (HeadroomBreakdown, error) {
 	if err != nil {
 		return HeadroomBreakdown{}, err
 	}
-	declared, err := s.declaredInYearWithFacts(ctx, financialYear, facts)
+	declared, err := s.declaredInYearWithFacts(ctx, tx, financialYear, facts)
 	if err != nil {
 		return HeadroomBreakdown{}, err
 	}
@@ -154,6 +212,211 @@ func (s *Service) Headroom(ctx context.Context) (HeadroomBreakdown, error) {
 	}, nil
 }
 
+// Validate returns the validation-strip payload for a candidate declaration.
+func (s *Service) Validate(ctx context.Context, amount money.Money) (ValidationResult, error) {
+	asOf, err := normalizeDate(s.now())
+	if err != nil {
+		return ValidationResult{}, err
+	}
+	return s.validateAt(ctx, nil, amount, asOf)
+}
+
+// Declare appends a dividend declaration and all related side effects in one
+// transaction.
+func (s *Service) Declare(ctx context.Context, amount money.Money) (declaration Declaration, err error) {
+	if s.pool == nil {
+		return Declaration{}, fmt.Errorf("dividends: declare requires pool")
+	}
+	if s.dla == nil {
+		return Declaration{}, fmt.Errorf("dla: %w", ErrMissingProvider)
+	}
+	if s.ledger == nil {
+		return Declaration{}, fmt.Errorf("ledger: %w", ErrMissingProvider)
+	}
+	if s.identity == nil {
+		return Declaration{}, fmt.Errorf("identity: %w", ErrMissingProvider)
+	}
+	if s.reports == nil {
+		return Declaration{}, fmt.Errorf("reports: %w", ErrMissingProvider)
+	}
+
+	declaredDate, err := normalizeDate(s.now())
+	if err != nil {
+		return Declaration{}, err
+	}
+	id, err := s.idGenerator()
+	if err != nil {
+		return Declaration{}, err
+	}
+
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return Declaration{}, fmt.Errorf("dividends: begin declaration transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(context.Background())
+		}
+	}()
+
+	if err := lockDeclarationMutation(ctx, tx); err != nil {
+		return Declaration{}, err
+	}
+	validation, err := s.validateAt(ctx, tx, amount, declaredDate)
+	if err != nil {
+		return Declaration{}, err
+	}
+
+	profile, err := s.identity.Profile(ctx)
+	if err != nil {
+		return Declaration{}, err
+	}
+	shareholder, err := declarationShareholder(profile)
+	if err != nil {
+		return Declaration{}, err
+	}
+	perShare, err := perShareAmount(validation.Amount, shareholder.Shares)
+	if err != nil {
+		return Declaration{}, err
+	}
+
+	stored, err := s.store.InsertDeclaration(ctx, tx, Declaration{
+		ID:              id,
+		DeclaredDate:    declaredDate,
+		Amount:          validation.Amount,
+		PerShare:        perShare,
+		Shares:          shareholder.Shares,
+		ShareholderName: shareholder.Name,
+	})
+	if err != nil {
+		return Declaration{}, err
+	}
+	if _, err := s.ledger.Post(ctx, tx, declarationJournalEntry(stored)); err != nil {
+		return Declaration{}, err
+	}
+	if err := s.dla.RecordExternalCredit(
+		ctx,
+		tx,
+		dividendSourceRef(stored.ID),
+		stored.DeclaredDate,
+		stored.Amount,
+		defaultDeclarationDescription,
+	); err != nil {
+		return Declaration{}, err
+	}
+	if err := s.publishDeclared(ctx, tx, stored); err != nil {
+		return Declaration{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Declaration{}, fmt.Errorf("dividends: commit declaration transaction: %w", err)
+	}
+	committed = true
+	return stored, nil
+}
+
+func (s *Service) validateAt(
+	ctx context.Context,
+	tx db.Tx,
+	amount money.Money,
+	asOf time.Time,
+) (ValidationResult, error) {
+	normalized, err := normalizeDeclarationAmount(amount)
+	if err != nil {
+		return ValidationResult{}, err
+	}
+	if s.ledger == nil {
+		return ValidationResult{}, fmt.Errorf("ledger: %w", ErrMissingProvider)
+	}
+	if s.reports == nil {
+		return ValidationResult{}, fmt.Errorf("reports: %w", ErrMissingProvider)
+	}
+	if s.identity == nil {
+		return ValidationResult{}, fmt.Errorf("identity: %w", ErrMissingProvider)
+	}
+	facts, err := s.identity.CompanyFacts(ctx)
+	if err != nil {
+		return ValidationResult{}, err
+	}
+	headroom, err := s.headroomWithFacts(ctx, tx, facts, asOf)
+	if err != nil {
+		return ValidationResult{}, err
+	}
+	taxYear, err := jurisdiction.TaxYearForDate(asOf)
+	if err != nil {
+		return ValidationResult{}, err
+	}
+	withholding, err := jurisdiction.DividendWithholding(taxYear)
+	if err != nil {
+		return ValidationResult{}, err
+	}
+	taxFrom, _, err := jurisdiction.TaxYearPeriod(taxYear)
+	if err != nil {
+		return ValidationResult{}, err
+	}
+	priorYTD, err := s.declaredInPeriod(ctx, tx, taxFrom, asOf)
+	if err != nil {
+		return ValidationResult{}, err
+	}
+	withDividend, err := priorYTD.Add(normalized)
+	if err != nil {
+		return ValidationResult{}, fmt.Errorf("dividends: add candidate dividend to personal tax YTD: %w", err)
+	}
+	priorEstimate, err := jurisdiction.PersonalTaxEstimate(taxYear, priorYTD)
+	if err != nil {
+		return ValidationResult{}, err
+	}
+	totalEstimate, err := jurisdiction.PersonalTaxEstimate(taxYear, withDividend)
+	if err != nil {
+		return ValidationResult{}, err
+	}
+	marginal, err := totalEstimate.Total.Sub(priorEstimate.Total)
+	if err != nil {
+		return ValidationResult{}, fmt.Errorf("dividends: marginal personal tax estimate: %w", err)
+	}
+
+	cmp, err := normalized.Cmp(headroom.Available)
+	if err != nil {
+		return ValidationResult{}, fmt.Errorf("dividends: compare amount to headroom: %w", err)
+	}
+	result := ValidationResult{
+		Amount:             normalized,
+		Headroom:           headroom,
+		WithinHeadroom:     headroom.Distributable && cmp <= 0,
+		Distributable:      headroom.Distributable,
+		DistributableTotal: headroom.Available,
+		Withholding: WithholdingValidation{
+			TaxYear:       taxYear,
+			Policy:        withholding,
+			Applies:       dividendWithholdingApplies(withholding),
+			Informational: true,
+		},
+		PersonalTax: PersonalTaxValidation{
+			TaxYear:       taxYear,
+			PriorYTD:      priorYTD,
+			WithDividend:  withDividend,
+			PriorEstimate: priorEstimate,
+			TotalEstimate: totalEstimate,
+			Marginal:      marginal,
+			Message:       fmt.Sprintf("set aside personally %s", marginal.Format()),
+		},
+	}
+
+	if !headroom.Distributable {
+		return result, &NonDistributableYearError{
+			FinancialYear: headroom.FinancialYear,
+			Distributable: headroom.Available,
+		}
+	}
+	if cmp > 0 {
+		return result, &OverHeadroomError{
+			Amount:        normalized,
+			Distributable: headroom.Available,
+		}
+	}
+	return result, nil
+}
+
 // DeclaredInYear returns total declared dividends inside the company financial
 // year identified by financialYear, using identity CompanyFacts boundaries.
 func (s *Service) DeclaredInYear(ctx context.Context, financialYear string) (money.Money, error) {
@@ -164,7 +427,7 @@ func (s *Service) DeclaredInYear(ctx context.Context, financialYear string) (mon
 	if err != nil {
 		return money.Money{}, err
 	}
-	return s.declaredInYearWithFacts(ctx, financialYear, facts)
+	return s.declaredInYearWithFacts(ctx, nil, financialYear, facts)
 }
 
 // History returns declarations newest first.
@@ -175,15 +438,162 @@ func (s *Service) History(ctx context.Context) ([]Declaration, error) {
 	return s.store.Declarations(ctx, s.pool)
 }
 
-func (s *Service) declaredInYearWithFacts(ctx context.Context, financialYear string, facts identity.CompanyFacts) (money.Money, error) {
-	if s.pool == nil {
-		return money.Money{}, fmt.Errorf("dividends: declared-in-year requires pool")
+func (s *Service) profitYTD(ctx context.Context, tx db.Tx, financialYear string) (money.Money, error) {
+	if tx == nil {
+		return s.reports.ProfitYTD(ctx, financialYear)
 	}
+	reportsInTx, ok := s.reports.(interface {
+		ProfitYTDInTx(context.Context, db.Tx, string) (money.Money, error)
+	})
+	if !ok {
+		return money.Money{}, fmt.Errorf("reports: transaction-scoped ProfitYTD unavailable: %w", ErrMissingProvider)
+	}
+	return reportsInTx.ProfitYTDInTx(ctx, tx, financialYear)
+}
+
+func (s *Service) declaredInYearWithFacts(
+	ctx context.Context,
+	tx db.Tx,
+	financialYear string,
+	facts identity.CompanyFacts,
+) (money.Money, error) {
 	period, err := financialYearPeriod(financialYear, facts.YearEnd.Month, facts.YearEnd.Day)
 	if err != nil {
 		return money.Money{}, err
 	}
-	return s.store.DeclaredInPeriod(ctx, s.pool, period.From, period.To)
+	return s.declaredInPeriod(ctx, tx, period.From, period.To)
+}
+
+func (s *Service) declaredInPeriod(ctx context.Context, tx db.Tx, from time.Time, to time.Time) (money.Money, error) {
+	if tx != nil {
+		return s.store.DeclaredInPeriod(ctx, tx, from, to)
+	}
+	if s.pool == nil {
+		return money.Money{}, fmt.Errorf("dividends: declared-in-year requires pool")
+	}
+	return s.store.DeclaredInPeriod(ctx, s.pool, from, to)
+}
+
+func lockDeclarationMutation(ctx context.Context, tx db.Tx) error {
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1, $2)`, int32(0x44495632), int32(1)); err != nil {
+		return fmt.Errorf("dividends: lock declaration mutation: %w", err)
+	}
+	return nil
+}
+
+func normalizeDeclarationAmount(amount money.Money) (money.Money, error) {
+	currency := strings.ToUpper(strings.TrimSpace(amount.Currency))
+	if currency != gbpCurrency {
+		return money.Money{}, fmt.Errorf("dividends: amount currency %q must be GBP: %w", amount.Currency, ErrInvalidDeclaration)
+	}
+	if amount.Amount <= 0 {
+		return money.Money{}, fmt.Errorf("dividends: amount must be positive: %w", ErrNonPositiveAmount)
+	}
+	return money.Money{Amount: amount.Amount, Currency: gbpCurrency}, nil
+}
+
+func declarationShareholder(profile identity.CompanyProfile) (identity.Shareholder, error) {
+	if len(profile.Shareholders) != 1 {
+		return identity.Shareholder{}, fmt.Errorf("dividends: expected exactly one shareholder snapshot, got %d: %w",
+			len(profile.Shareholders),
+			ErrInvalidDeclaration,
+		)
+	}
+	shareholder := profile.Shareholders[0]
+	shareholder.Name = strings.TrimSpace(shareholder.Name)
+	if shareholder.Name == "" {
+		return identity.Shareholder{}, fmt.Errorf("dividends: shareholder name is required: %w", ErrInvalidDeclaration)
+	}
+	if shareholder.Shares <= 0 {
+		return identity.Shareholder{}, fmt.Errorf("dividends: shareholder shares must be positive: %w", ErrInvalidDeclaration)
+	}
+	return shareholder, nil
+}
+
+func perShareAmount(amount money.Money, shares int64) (money.Money, error) {
+	if shares <= 0 {
+		return money.Money{}, fmt.Errorf("dividends: shares must be positive: %w", ErrInvalidDeclaration)
+	}
+	maxInt := int64(int(^uint(0) >> 1))
+	if shares > maxInt {
+		return money.Money{}, fmt.Errorf("dividends: shares %d exceed allocation limit: %w", shares, ErrInvalidDeclaration)
+	}
+	ratios := make([]int, int(shares))
+	for i := range ratios {
+		ratios[i] = 1
+	}
+	allocations := amount.Allocate(ratios)
+	if len(allocations) == 0 {
+		return money.Money{}, fmt.Errorf("dividends: no share allocations: %w", ErrInvalidDeclaration)
+	}
+
+	perShare := allocations[0]
+	total := money.Zero(amount.Currency)
+	for i, allocation := range allocations {
+		next, err := total.Add(allocation)
+		if err != nil {
+			return money.Money{}, fmt.Errorf("dividends: sum share allocation %d: %w", i, err)
+		}
+		total = next
+		if allocation != perShare {
+			return money.Money{}, fmt.Errorf("dividends: amount %s cannot be represented as a uniform per-share amount across %d shares: %w",
+				amount.Format(),
+				shares,
+				ErrInvalidDeclaration,
+			)
+		}
+	}
+	if total != amount {
+		return money.Money{}, fmt.Errorf("dividends: share allocations sum to %+v, want %+v: %w", total, amount, ErrInvalidDeclaration)
+	}
+	if perShare.Amount <= 0 {
+		return money.Money{}, fmt.Errorf("dividends: per share amount must be positive: %w", ErrInvalidDeclaration)
+	}
+	return perShare, nil
+}
+
+func declarationJournalEntry(declaration Declaration) ledgerapi.NewJournalEntry {
+	creditDLA := money.Money{Amount: -declaration.Amount.Amount, Currency: declaration.Amount.Currency}
+	return ledgerapi.NewJournalEntry{
+		Date:         declaration.DeclaredDate,
+		Description:  defaultDeclarationDescription,
+		SourceModule: ModuleName,
+		SourceRef:    dividendSourceRef(declaration.ID),
+		Postings: []ledgerapi.NewPosting{
+			{AccountCode: RetainedEarningsAccountCode, Amount: declaration.Amount, AmountGBP: declaration.Amount},
+			{AccountCode: dla.DLAAccountCode, Amount: creditDLA, AmountGBP: creditDLA},
+		},
+	}
+}
+
+func dividendSourceRef(id DeclarationID) string {
+	return dividendSourcePrefix + string(id)
+}
+
+func dividendWithholdingApplies(policy string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(policy))
+	return normalized != "" && normalized != "none"
+}
+
+func (s *Service) publishDeclared(ctx context.Context, tx db.Tx, declaration Declaration) error {
+	if s.bus == nil {
+		return nil
+	}
+	if err := s.bus.Publish(ctx, tx, Declared{
+		DeclarationID: declaration.ID,
+		Amount:        declaration.Amount,
+	}); err != nil {
+		return fmt.Errorf("dividends: publish declared: %w", err)
+	}
+	return nil
+}
+
+func newDeclarationID() (DeclarationID, error) {
+	var bytes [16]byte
+	if _, err := rand.Read(bytes[:]); err != nil {
+		return "", fmt.Errorf("dividends: generate declaration id: %w", err)
+	}
+	return DeclarationID("dividend_" + hex.EncodeToString(bytes[:])), nil
 }
 
 func (s *Service) now() time.Time {

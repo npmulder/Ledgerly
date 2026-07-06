@@ -130,6 +130,7 @@ type Entry struct {
 // DLA exposes the director's loan core API.
 type DLA interface {
 	FileDrawing(ctx context.Context, tx db.Tx, src TxnRef) error
+	RecordExternalCredit(ctx context.Context, tx db.Tx, ref string, date time.Time, amount money.Money, description string) error
 	AddEntry(ctx context.Context, e NewEntry) error
 	Ledger(ctx context.Context, filter LedgerFilter) ([]Entry, error)
 	CurrentBalance(ctx context.Context) (money.Money, Status, error)
