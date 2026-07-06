@@ -16,10 +16,14 @@ import (
 )
 
 type Service struct {
-	pool    *pgxpool.Pool
-	ledger  LedgerAccountEnsurer
-	store   Store
-	parsers map[Provider]StatementParser
+	pool                       *pgxpool.Pool
+	ledger                     LedgerAccountEnsurer
+	store                      Store
+	parsers                    map[Provider]StatementParser
+	invoiceCandidates          InvoiceCandidateSource
+	directorNames              DirectorNameSource
+	payeeRuleAutoPostThreshold int
+	dlaPersonalPatterns        []string
 }
 
 type ServiceOption func(*Service)
@@ -34,15 +38,48 @@ func WithParser(provider Provider, parser StatementParser) ServiceOption {
 	}
 }
 
+func WithInvoiceCandidates(source InvoiceCandidateSource) ServiceOption {
+	return func(s *Service) {
+		s.invoiceCandidates = source
+	}
+}
+
+func WithDirectorNames(source DirectorNameSource) ServiceOption {
+	return func(s *Service) {
+		s.directorNames = source
+	}
+}
+
+func WithPayeeRuleAutoPostThreshold(threshold int) ServiceOption {
+	return func(s *Service) {
+		s.payeeRuleAutoPostThreshold = threshold
+	}
+}
+
+func WithDLAPersonalPatterns(patterns []string) ServiceOption {
+	return func(s *Service) {
+		s.dlaPersonalPatterns = append([]string{}, patterns...)
+	}
+}
+
 func NewService(pool *pgxpool.Pool, ledgerEnsurer LedgerAccountEnsurer, opts ...ServiceOption) *Service {
 	service := &Service{
-		pool:    pool,
-		ledger:  ledgerEnsurer,
-		store:   Store{},
-		parsers: defaultParserSnapshot(),
+		pool:                       pool,
+		ledger:                     ledgerEnsurer,
+		store:                      Store{},
+		parsers:                    defaultParserSnapshot(),
+		invoiceCandidates:          defaultInvoiceCandidateSource(),
+		payeeRuleAutoPostThreshold: DefaultPayeeRuleAutoPostThreshold,
+		dlaPersonalPatterns:        defaultDLAPersonalPatterns(),
 	}
 	for _, opt := range opts {
 		opt(service)
+	}
+	if service.payeeRuleAutoPostThreshold < 0 {
+		service.payeeRuleAutoPostThreshold = DefaultPayeeRuleAutoPostThreshold
+	}
+	if len(service.dlaPersonalPatterns) == 0 {
+		service.dlaPersonalPatterns = defaultDLAPersonalPatterns()
 	}
 	return service
 }
@@ -150,14 +187,16 @@ func (s *Service) ImportCSV(ctx context.Context, accountID AccountID, file Impor
 		return BatchSummary{}, err
 	}
 	summary := batch
+	var newTxnIDs []TransactionID
 	for _, txn := range validated {
 		txn.ImportBatchID = batch.BatchID
-		inserted, err := s.store.InsertTransaction(ctx, tx, txn)
+		txnID, inserted, err := s.store.InsertTransaction(ctx, tx, txn)
 		if err != nil {
 			return BatchSummary{}, err
 		}
 		if inserted {
 			summary.NewRows++
+			newTxnIDs = append(newTxnIDs, txnID)
 		} else {
 			summary.DuplicateRows++
 		}
@@ -165,6 +204,11 @@ func (s *Service) ImportCSV(ctx context.Context, accountID AccountID, file Impor
 	summary, err = s.store.UpdateImportBatchCounts(ctx, tx, summary)
 	if err != nil {
 		return BatchSummary{}, err
+	}
+	if len(newTxnIDs) > 0 {
+		if _, err := s.runMatchEngineTx(ctx, tx, MatchEngineTriggerImportCompletion, newTxnIDs); err != nil {
+			return BatchSummary{}, err
+		}
 	}
 	if err = tx.Commit(ctx); err != nil {
 		return BatchSummary{}, fmt.Errorf("banking: commit import transaction: %w", err)
@@ -247,6 +291,33 @@ func (s *Service) RecordPayeeRuleApplied(ctx context.Context, id PayeeRuleID) (P
 	return s.store.RecordPayeeRuleApplied(ctx, s.pool, id)
 }
 
+func (s *Service) LearnFromRecode(ctx context.Context, txnID TransactionID, accountCode ledger.AccountCode) (_ PayeeRule, err error) {
+	if s.pool == nil {
+		return PayeeRule{}, fmt.Errorf("banking: rule learning requires pool")
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return PayeeRule{}, fmt.Errorf("banking: begin rule learning transaction: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+	txn, err := s.store.Transaction(ctx, tx, txnID)
+	if err != nil {
+		return PayeeRule{}, err
+	}
+	rule, err := s.store.LearnPayeeRuleFromRecode(ctx, tx, txn, accountCode)
+	if err != nil {
+		return PayeeRule{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return PayeeRule{}, fmt.Errorf("banking: commit rule learning transaction: %w", err)
+	}
+	return rule, nil
+}
+
 func (s *Service) MatchingPayeeRules(ctx context.Context, payee string) ([]PayeeRule, error) {
 	if s.pool == nil {
 		return nil, fmt.Errorf("banking: payee rule matching requires pool")
@@ -277,6 +348,13 @@ func (s *Service) RecentlyReconciled(ctx context.Context, limit int) ([]Reconcil
 		return nil, fmt.Errorf("banking: recently reconciled requires pool")
 	}
 	return s.store.RecentlyReconciled(ctx, s.pool, normalizeRecentlyReconciledLimit(limit))
+}
+
+func (s *Service) Accounts(ctx context.Context) ([]BankAccount, error) {
+	if s.pool == nil {
+		return nil, fmt.Errorf("banking: accounts requires pool")
+	}
+	return s.store.ListAccounts(ctx, s.pool)
 }
 
 func (s *Service) UnreconciledCount(ctx context.Context, accountID AccountID) (int, error) {

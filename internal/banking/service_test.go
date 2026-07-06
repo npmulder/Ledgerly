@@ -1192,6 +1192,33 @@ func openBankingTestPool(t testing.TB, ctx context.Context, databaseURL string, 
 	return pool
 }
 
+func openBankingTestRolePool(t testing.TB, ctx context.Context, databaseURL string, dbName string, role string, opts ...db.PoolOption) *pgxpool.Pool {
+	t.Helper()
+
+	cfg, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		t.Fatalf("ParseConfig() error = %v", err)
+	}
+	cfg.ConnConfig.Database = dbName
+	cfg.ConnConfig.User = role
+	cfg.ConnConfig.Password = role
+	for _, opt := range opts {
+		if err := opt(cfg); err != nil {
+			t.Fatalf("pool option error = %v", err)
+		}
+	}
+
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatalf("NewWithConfig() error = %v", err)
+	}
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		t.Fatalf("Ping() error = %v", err)
+	}
+	return pool
+}
+
 func findRepoRoot(t testing.TB) string {
 	t.Helper()
 

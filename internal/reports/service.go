@@ -15,6 +15,7 @@ import (
 	"github.com/npmulder/ledgerly/internal/ledger"
 	"github.com/npmulder/ledgerly/internal/moneyfx/money"
 	"github.com/npmulder/ledgerly/internal/platform/clock"
+	"github.com/npmulder/ledgerly/internal/platform/db"
 )
 
 const (
@@ -114,6 +115,44 @@ func (s *Service) ProfitYTD(ctx context.Context, taxYear string) (money.Money, e
 		return money.Money{}, err
 	}
 	return pl.NetProfit, nil
+}
+
+// ProfitYTDInTx returns net profit using the caller's transaction for ledger
+// reads, so command modules can validate against the same snapshot they mutate.
+func (s *Service) ProfitYTDInTx(ctx context.Context, tx db.Tx, taxYear string) (money.Money, error) {
+	if tx == nil {
+		return money.Money{}, fmt.Errorf("reports: profit YTD requires transaction")
+	}
+	ledgerInTx, ok := s.ledger.(transactionalLedger)
+	if !ok {
+		return money.Money{}, fmt.Errorf("ledger: transaction-scoped reads unavailable: %w", ErrMissingProvider)
+	}
+	scoped := *s
+	scoped.ledger = txLedgerView{tx: tx, ledger: ledgerInTx}
+	return scoped.ProfitYTD(ctx, taxYear)
+}
+
+type transactionalLedger interface {
+	AccountsInTx(context.Context, db.Tx) ([]ledger.Account, error)
+	BalancesByTypeInTx(context.Context, db.Tx, time.Time, time.Time) ([]ledger.AccountBalance, error)
+	EntriesInTx(context.Context, db.Tx, ledger.EntryFilter) ([]ledger.JournalEntry, error)
+}
+
+type txLedgerView struct {
+	tx     db.Tx
+	ledger transactionalLedger
+}
+
+func (v txLedgerView) Accounts(ctx context.Context) ([]ledger.Account, error) {
+	return v.ledger.AccountsInTx(ctx, v.tx)
+}
+
+func (v txLedgerView) BalancesByType(ctx context.Context, from time.Time, to time.Time) ([]ledger.AccountBalance, error) {
+	return v.ledger.BalancesByTypeInTx(ctx, v.tx, from, to)
+}
+
+func (v txLedgerView) Entries(ctx context.Context, filter ledger.EntryFilter) ([]ledger.JournalEntry, error) {
+	return v.ledger.EntriesInTx(ctx, v.tx, filter)
 }
 
 func (s *Service) profitAndLoss(ctx context.Context, period Period) (PL, error) {

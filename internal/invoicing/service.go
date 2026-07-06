@@ -3,9 +3,12 @@ package invoicing
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"math/big"
 	"strconv"
 	"strings"
@@ -13,6 +16,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/npmulder/ledgerly/internal/identity"
 	"github.com/npmulder/ledgerly/internal/jurisdiction"
 	"github.com/npmulder/ledgerly/internal/ledger"
 	"github.com/npmulder/ledgerly/internal/platform/bus"
@@ -25,6 +29,16 @@ const (
 	problemTypeClientNotFound       = "https://ledgerly.local/problems/invoicing/client-not-found"
 	problemTypeClientValidation     = "https://ledgerly.local/problems/invoicing/client-validation"
 	problemTypeClientCurrencyLocked = "https://ledgerly.local/problems/invoicing/client-currency-locked"
+	problemTypeInvoiceNotFound      = "https://ledgerly.local/problems/invoicing/invoice-not-found"
+	problemTypeInvoiceValidation    = "https://ledgerly.local/problems/invoicing/invoice-validation"
+	problemTypeInvoiceImmutable     = "https://ledgerly.local/problems/invoicing/invoice-immutable"
+	problemTypeInvoiceWrongAmount   = "https://ledgerly.local/problems/invoicing/wrong-amount"
+	problemTypeInvoiceRate          = "https://ledgerly.local/problems/invoicing/rate-unavailable"
+)
+
+const (
+	defaultPDFRetryAttempts = 3
+	defaultPDFRetryBackoff  = 250 * time.Millisecond
 )
 
 // Service orchestrates invoicing client commands and queries.
@@ -38,6 +52,11 @@ type Service struct {
 	ledger             LedgerJournal
 	eventBus           *bus.Bus
 	invoiceUsage       InvoiceUsageChecker
+	identity           identity.Identity
+	pdfAssetStore      InvoicePDFAssetStore
+	pdfEngine          InvoicePDFEngine
+	pdfRetryBackoff    time.Duration
+	logger             *slog.Logger
 	idGenerator        func() (string, error)
 	invoiceIDGenerator func() (string, error)
 	lineIDGenerator    func() (string, error)
@@ -113,6 +132,63 @@ func WithEventBus(eventBus *bus.Bus) ServiceOption {
 	}
 }
 
+// WithIdentity installs the identity profile API used to snapshot invoice
+// render identity.
+func WithIdentity(profile identity.Identity) ServiceOption {
+	return func(s *Service) {
+		if profile != nil {
+			s.identity = profile
+		}
+	}
+}
+
+// WithInvoicePDFAssetStore installs immutable PDF asset storage.
+func WithInvoicePDFAssetStore(store InvoicePDFAssetStore) ServiceOption {
+	return func(s *Service) {
+		if store != nil {
+			s.pdfAssetStore = store
+		}
+	}
+}
+
+// WithInvoicePDFEngine installs the engine used to render invoice print
+// payloads to PDF bytes.
+func WithInvoicePDFEngine(engine InvoicePDFEngine) ServiceOption {
+	return func(s *Service) {
+		if engine != nil {
+			s.pdfEngine = engine
+		}
+	}
+}
+
+// WithInvoicePDFBaseURL installs the production chromedp engine when a custom
+// engine was not supplied.
+func WithInvoicePDFBaseURL(baseURL string) ServiceOption {
+	return func(s *Service) {
+		if s.pdfEngine == nil && strings.TrimSpace(baseURL) != "" {
+			s.pdfEngine = NewChromePDFEngine(baseURL)
+		}
+	}
+}
+
+// WithInvoicePDFRetryBackoff overrides the send-time async retry backoff.
+func WithInvoicePDFRetryBackoff(backoff time.Duration) ServiceOption {
+	return func(s *Service) {
+		if backoff >= 0 {
+			s.pdfRetryBackoff = backoff
+		}
+	}
+}
+
+// WithLogger installs the logger used for non-blocking PDF render failures.
+func WithLogger(logger *slog.Logger) ServiceOption {
+	return func(s *Service) {
+		if logger != nil {
+			s.logger = logger
+		}
+	}
+}
+
 func NewService(pool *pgxpool.Pool, store Store, opts ...ServiceOption) *Service {
 	service := &Service{
 		pool:               pool,
@@ -121,6 +197,8 @@ func NewService(pool *pgxpool.Pool, store Store, opts ...ServiceOption) *Service
 		todayRate:          defaultTodayRate,
 		eventBus:           bus.New(),
 		invoiceUsage:       noInvoiceUsageChecker{},
+		pdfRetryBackoff:    defaultPDFRetryBackoff,
+		logger:             slog.New(slog.NewTextHandler(io.Discard, nil)),
 		idGenerator:        newClientID,
 		invoiceIDGenerator: newInvoiceID,
 		lineIDGenerator:    newInvoiceLineID,
@@ -196,7 +274,7 @@ func (s *Service) Invoice(ctx context.Context, id string) (Invoice, error) {
 	if err != nil {
 		return Invoice{}, err
 	}
-	return s.withComputedTotals(ctx, invoice)
+	return s.withReadComputedTotals(ctx, invoice)
 }
 
 // InvoiceVATContextBySendEntryID returns the narrow VAT context for a sent
@@ -217,7 +295,7 @@ func (s *Service) InvoiceByNumber(ctx context.Context, number string) (Invoice, 
 	if err != nil {
 		return Invoice{}, err
 	}
-	return s.withComputedTotals(ctx, invoice)
+	return s.withReadComputedTotals(ctx, invoice)
 }
 
 // UpdateDraft applies a patch to a mutable draft invoice only.
@@ -241,6 +319,16 @@ func (s *Service) UpdateDraft(ctx context.Context, id string, patch DraftPatch) 
 	}
 
 	next := existing
+	if patch.ClientID != nil {
+		client, clientErr := s.store.Client(ctx, tx, *patch.ClientID)
+		if clientErr != nil {
+			return Invoice{}, clientErr
+		}
+		if client.ArchivedAt != nil {
+			return Invoice{}, invoiceValidationError([]FieldError{{Pointer: "/client_id", Detail: "must be an active client"}})
+		}
+		next.ClientID = client.ID
+	}
 	if patch.IssueDate != nil {
 		next.IssueDate = dateOnly(*patch.IssueDate)
 	}
@@ -377,6 +465,7 @@ func (s *Service) Send(ctx context.Context, id string) (_ Invoice, err error) {
 	}
 	sent.Lines = draft.Lines
 	sent.Totals = draft.Totals
+	sent.sendRateLock = &lock
 	if err := s.publish(ctx, tx, InvoiceSent{
 		InvoiceID: sent.ID,
 		Number:    number,
@@ -390,7 +479,209 @@ func (s *Service) Send(ctx context.Context, id string) (_ Invoice, err error) {
 	if err = tx.Commit(ctx); err != nil {
 		return Invoice{}, fmt.Errorf("invoicing: commit send transaction: %w", err)
 	}
+	s.scheduleInvoicePDFRender(sent.ID)
 	return sent, nil
+}
+
+// RenderInvoicePDFNow renders and stores a sent invoice PDF unless the invoice
+// already points at an immutable PDF asset.
+func (s *Service) RenderInvoicePDFNow(ctx context.Context, id string) (Invoice, error) {
+	if err := s.renderAndStoreInvoicePDF(ctx, strings.TrimSpace(id)); err != nil {
+		return Invoice{}, err
+	}
+	return s.Invoice(ctx, id)
+}
+
+// PreviewDraftInvoicePDF renders a DRAFT-watermarked PDF without storing it.
+func (s *Service) PreviewDraftInvoicePDF(ctx context.Context, id string) ([]byte, error) {
+	if s.pdfEngine == nil {
+		return nil, fmt.Errorf("invoicing: invoice PDF renderer is not configured")
+	}
+	payload, err := s.InvoicePrintPayload(ctx, strings.TrimSpace(id), true)
+	if err != nil {
+		return nil, err
+	}
+	if payload.Invoice.Status != InvoiceStatusDraft {
+		return nil, ErrInvoiceImmutable
+	}
+	return s.pdfEngine.RenderInvoicePDF(ctx, payload)
+}
+
+func (s *Service) scheduleInvoicePDFRender(id string) {
+	if s.pdfEngine == nil || s.pdfAssetStore == nil {
+		return
+	}
+	invoiceID := strings.TrimSpace(id)
+	if invoiceID == "" {
+		return
+	}
+	go s.renderInvoicePDFWithRetry(invoiceID)
+}
+
+func (s *Service) renderInvoicePDFWithRetry(id string) {
+	backoff := s.pdfRetryBackoff
+	for attempt := 1; attempt <= defaultPDFRetryAttempts; attempt++ {
+		err := s.renderAndStoreInvoicePDF(context.Background(), id)
+		if err == nil {
+			return
+		}
+		s.logPDFRenderFailure(id, attempt, err)
+		if attempt == defaultPDFRetryAttempts || backoff <= 0 {
+			continue
+		}
+		time.Sleep(backoff * time.Duration(1<<(attempt-1)))
+	}
+}
+
+func (s *Service) renderAndStoreInvoicePDF(ctx context.Context, id string) error {
+	if s.pdfEngine == nil {
+		return fmt.Errorf("invoicing: invoice PDF renderer is not configured")
+	}
+	if s.pdfAssetStore == nil {
+		return fmt.Errorf("invoicing: invoice PDF asset store is not configured")
+	}
+	payload, err := s.InvoicePrintPayload(ctx, strings.TrimSpace(id), false)
+	if err != nil {
+		return err
+	}
+	if payload.Invoice.PDFAsset != nil && strings.TrimSpace(*payload.Invoice.PDFAsset) != "" {
+		return nil
+	}
+	switch payload.Invoice.Status {
+	case InvoiceStatusSent, InvoiceStatusPaid, InvoiceStatusOverdue:
+	default:
+		return ErrInvoiceImmutable
+	}
+
+	pdfBytes, err := s.pdfEngine.RenderInvoicePDF(ctx, payload)
+	if err != nil {
+		return err
+	}
+	assetURL, err := s.pdfAssetStore.StoreInvoicePDF(ctx, pdfBytes)
+	if err != nil {
+		return err
+	}
+	if _, err := s.store.SetInvoicePDFAsset(ctx, s.pool, payload.Invoice.ID, assetURL); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *Service) logPDFRenderFailure(id string, attempt int, err error) {
+	logger := s.logger
+	if logger == nil {
+		return
+	}
+	logger.Error("invoice PDF render failed", "invoice_id", id, "attempt", attempt, "error", err)
+}
+
+// InvoicePrintPayload returns the exact payload consumed by the React print route.
+func (s *Service) InvoicePrintPayload(ctx context.Context, id string, draftWatermark bool) (InvoicePrintPayload, error) {
+	if s.identity == nil {
+		return InvoicePrintPayload{}, fmt.Errorf("invoicing: identity profile API is not configured")
+	}
+	invoice, err := s.Invoice(ctx, strings.TrimSpace(id))
+	if err != nil {
+		return InvoicePrintPayload{}, err
+	}
+	client, err := s.store.Client(ctx, s.pool, invoice.ClientID)
+	if err != nil {
+		return InvoicePrintPayload{}, err
+	}
+	profile, err := s.identity.Profile(ctx)
+	if err != nil {
+		return InvoicePrintPayload{}, err
+	}
+	vatRate, vatTaxYear, err := jurisdiction.VATStandardRateForDate(invoice.IssueDate)
+	if err != nil {
+		return InvoicePrintPayload{}, fmt.Errorf("invoicing: invoice print VAT rate: %w", err)
+	}
+	reverseChargeNote, err := reverseChargeInvoiceNote(invoice.VATTreatment)
+	if err != nil {
+		return InvoicePrintPayload{}, err
+	}
+	lockedRate, err := s.invoicePrintLockedRate(ctx, invoice)
+	if err != nil {
+		return InvoicePrintPayload{}, err
+	}
+	return InvoicePrintPayload{
+		Invoice:           invoice,
+		Client:            client,
+		Identity:          s.invoicePrintIdentity(ctx, profile),
+		VATRate:           vatRate.String(),
+		VATTaxYear:        vatTaxYear,
+		ReverseChargeNote: reverseChargeNote,
+		LockedRate:        lockedRate,
+		DraftWatermark:    draftWatermark,
+	}, nil
+}
+
+func (s *Service) invoicePrintIdentity(ctx context.Context, profile identity.CompanyProfile) InvoicePrintIdentity {
+	var (
+		logoAssetURL *string
+		logoDataURI  *string
+	)
+	if profile.LogoAssetID != nil {
+		url := "/api/identity/assets/" + string(*profile.LogoAssetID)
+		logoAssetURL = &url
+		if asset, err := s.identity.Asset(ctx, *profile.LogoAssetID); err == nil {
+			dataURI := "data:" + asset.MIME + ";base64," + base64.StdEncoding.EncodeToString(asset.Bytes)
+			logoDataURI = &dataURI
+		}
+	}
+	return InvoicePrintIdentity{
+		TradingName:   profile.TradingName,
+		LegalName:     profile.LegalName,
+		CompanyNumber: profile.CompanyNumber,
+		Address: Address{
+			Line1:      profile.RegisteredOffice.Line1,
+			Line2:      profile.RegisteredOffice.Line2,
+			Locality:   profile.RegisteredOffice.Locality,
+			Region:     profile.RegisteredOffice.Region,
+			PostalCode: profile.RegisteredOffice.PostalCode,
+			Country:    profile.RegisteredOffice.Country,
+		},
+		VATNumber:    profile.VATNumber,
+		IBAN:         profile.BankDetails.IBAN,
+		BIC:          profile.BankDetails.BIC,
+		BankName:     profile.BankDetails.BankName,
+		LogoAssetURL: logoAssetURL,
+		LogoDataURI:  logoDataURI,
+	}
+}
+
+func reverseChargeInvoiceNote(treatment VATTreatment) (*string, error) {
+	semantics, err := jurisdiction.VATSemanticsForTreatment(string(treatment))
+	if err != nil {
+		return nil, fmt.Errorf("invoicing: invoice print VAT semantics: %w", err)
+	}
+	if strings.TrimSpace(semantics.ReverseChargeKind) == "" {
+		return nil, nil
+	}
+	wording, err := jurisdiction.ReverseChargeWording(semantics.ReverseChargeKind)
+	if err != nil {
+		return nil, fmt.Errorf("invoicing: invoice print reverse-charge wording: %w", err)
+	}
+	note := strings.TrimSpace(wording.InvoiceWording)
+	if note == "" {
+		return nil, nil
+	}
+	return &note, nil
+}
+
+func (s *Service) invoicePrintLockedRate(ctx context.Context, invoice Invoice) (*InvoicePrintLockedRate, error) {
+	if invoice.LockID == nil || strings.TrimSpace(*invoice.LockID) == "" || s.rateLocks == nil {
+		return nil, nil
+	}
+	lockID, err := invoiceLockID(invoice)
+	if err != nil {
+		return nil, err
+	}
+	lock, err := s.rateLocks.RateLock(ctx, lockID)
+	if err != nil {
+		return nil, fmt.Errorf("invoicing: invoice print locked rate: %w", err)
+	}
+	return &InvoicePrintLockedRate{ID: lock.ID, Rate: lock.Rate}, nil
 }
 
 // MarkSettled records a full invoice settlement inside the caller's
@@ -825,8 +1116,22 @@ func (s *Service) now() time.Time {
 func (s *Service) normalizeLineInputs(invoiceID string, currency Currency, inputs []InvoiceLineInput) ([]InvoiceLine, error) {
 	lines := make([]InvoiceLine, 0, len(inputs))
 	var fields []FieldError
+	seenIDs := make(map[string]bool, len(inputs))
 	for i, input := range inputs {
 		prefix := fmt.Sprintf("/lines/%d", i)
+		lineID := strings.TrimSpace(input.ID)
+		if lineID == "" {
+			var err error
+			lineID, err = s.lineIDGenerator()
+			if err != nil {
+				return nil, err
+			}
+		}
+		if seenIDs[lineID] {
+			fields = append(fields, FieldError{Pointer: prefix + "/id", Detail: "must be unique"})
+		}
+		seenIDs[lineID] = true
+
 		description := strings.TrimSpace(input.Description)
 		if description == "" {
 			fields = append(fields, FieldError{Pointer: prefix + "/description", Detail: "is required"})
@@ -841,10 +1146,6 @@ func (s *Service) normalizeLineInputs(invoiceID string, currency Currency, input
 		}
 		fields = append(fields, validateInvoiceMoney(prefix+"/unit_price", currency, unitPrice)...)
 
-		lineID, err := s.lineIDGenerator()
-		if err != nil {
-			return nil, err
-		}
 		lines = append(lines, InvoiceLine{
 			ID:          lineID,
 			InvoiceID:   invoiceID,
@@ -937,6 +1238,18 @@ func validateInvoiceMoney(pointer string, invoiceCurrency Currency, amount Money
 
 func (s *Service) withComputedTotals(ctx context.Context, invoice Invoice) (Invoice, error) {
 	return s.computeTotals(ctx, invoice, invoice.Status == InvoiceStatusDraft)
+}
+
+func (s *Service) withReadComputedTotals(ctx context.Context, invoice Invoice) (Invoice, error) {
+	invoice.Status = virtualInvoiceStatus(invoice, dateOnly(s.now()))
+	return s.withComputedTotals(ctx, invoice)
+}
+
+func virtualInvoiceStatus(invoice Invoice, today time.Time) InvoiceStatus {
+	if invoice.Status == InvoiceStatusSent && dateOnly(invoice.DueDate).Before(dateOnly(today)) {
+		return InvoiceStatusOverdue
+	}
+	return invoice.Status
 }
 
 func (s *Service) computeTotals(ctx context.Context, invoice Invoice, includeDraftApprox bool) (Invoice, error) {
@@ -1063,6 +1376,7 @@ func (c storeInvoiceUsageChecker) ClientHasInvoices(ctx context.Context, clientI
 
 func problemForError(err error) (httpserver.Problem, bool) {
 	var validation ValidationError
+	var invoiceValidation InvoiceValidationError
 	switch {
 	case errors.As(err, &validation):
 		return httpserver.Problem{
@@ -1072,6 +1386,16 @@ func problemForError(err error) (httpserver.Problem, bool) {
 			Detail: "client validation failed",
 			Extensions: map[string]any{
 				"errors": validation.Fields,
+			},
+		}, true
+	case errors.As(err, &invoiceValidation):
+		return httpserver.Problem{
+			Type:   problemTypeInvoiceValidation,
+			Title:  "Invoice validation failed",
+			Status: 422,
+			Detail: "invoice validation failed",
+			Extensions: map[string]any{
+				"errors": invoiceValidation.Fields,
 			},
 		}, true
 	case errors.Is(err, ErrClientNotFound):
@@ -1088,7 +1412,60 @@ func problemForError(err error) (httpserver.Problem, bool) {
 			Status: 409,
 			Detail: "default currency cannot be changed after a client has invoices",
 		}, true
+	case errors.Is(err, ErrInvoiceNotFound):
+		return httpserver.Problem{
+			Type:   problemTypeInvoiceNotFound,
+			Title:  "Invoice not found",
+			Status: 404,
+			Detail: "invoice was not found",
+		}, true
+	case errors.Is(err, ErrInvoiceImmutable):
+		return httpserver.Problem{
+			Type:   problemTypeInvoiceImmutable,
+			Title:  "Invoice is immutable",
+			Status: 409,
+			Detail: "invoice cannot be changed by this command",
+			Extensions: map[string]any{
+				"errors": []FieldError{{Pointer: "/status", Detail: "must allow this invoice command"}},
+			},
+		}, true
+	case errors.Is(err, ErrInvoicePartialPayment):
+		return invoiceWrongAmountProblem("partial invoice payments are not supported"), true
+	case errors.Is(err, ErrInvoiceSettlementAmountMismatch):
+		return invoiceWrongAmountProblem("settlement amount must match invoice total"), true
+	case errors.Is(err, ErrRateUnavailable):
+		return httpserver.Problem{
+			Type:   problemTypeInvoiceRate,
+			Title:  "Invoice rate unavailable",
+			Status: 409,
+			Detail: "required invoice exchange rate is unavailable",
+			Extensions: map[string]any{
+				"errors": []FieldError{{Pointer: "/issue_date", Detail: "rate is unavailable for invoice date"}},
+			},
+		}, true
+	case errors.Is(err, ErrInvoicePostingNotFound):
+		return httpserver.Problem{
+			Type:   problemTypeInvoiceImmutable,
+			Title:  "Invoice posting not found",
+			Status: 409,
+			Detail: "invoice send posting was not found",
+			Extensions: map[string]any{
+				"errors": []FieldError{{Pointer: "/send_ledger_entry_id", Detail: "is required to revert invoice"}},
+			},
+		}, true
 	default:
 		return httpserver.Problem{}, false
+	}
+}
+
+func invoiceWrongAmountProblem(detail string) httpserver.Problem {
+	return httpserver.Problem{
+		Type:   problemTypeInvoiceWrongAmount,
+		Title:  "Invoice amount mismatch",
+		Status: 422,
+		Detail: detail,
+		Extensions: map[string]any{
+			"errors": []FieldError{{Pointer: "/settled_amount", Detail: detail}},
+		},
 	}
 }

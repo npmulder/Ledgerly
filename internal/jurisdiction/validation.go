@@ -145,8 +145,16 @@ func validatePersonalIncomeYear(file, year string, value PersonalIncomeYear) err
 }
 
 func validateDividendYear(file, year string, value DividendYear) error {
+	path := "tax.dividends." + year
 	if strings.TrimSpace(value.Withholding) == "" {
-		return fieldError(file, "tax.dividends."+year+".withholding", "withholding", "must not be empty")
+		return fieldError(file, path+".withholding", "withholding", "must not be empty")
+	}
+	template := strings.TrimSpace(value.PersonalTaxSetAsideTemplate)
+	if template == "" {
+		return fieldError(file, path+".personal_tax_set_aside_template", "personal_tax_set_aside_template", "must not be empty")
+	}
+	if !strings.Contains(template, "{{ estimate }}") {
+		return fieldError(file, path+".personal_tax_set_aside_template", "personal_tax_set_aside_template", "must contain {{ estimate }}")
 	}
 	return nil
 }

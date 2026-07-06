@@ -84,6 +84,12 @@ type LogoUpload struct {
 	Bytes []byte
 }
 
+// AssetUpload is a validated immutable document asset candidate.
+type AssetUpload struct {
+	MIME  string
+	Bytes []byte
+}
+
 // Asset is the stored logo asset read model.
 type Asset struct {
 	ID        AssetID

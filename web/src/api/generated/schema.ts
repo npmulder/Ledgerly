@@ -4,6 +4,26 @@
  */
 
 export interface paths {
+    "/api/dashboard/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Return the dashboard summary
+         * @description Composes existing read APIs into the screen-01 dashboard payload. Individual section failures return null sections plus errors; the endpoint only fails when every section is unavailable.
+         */
+        get: operations["dashboardGetSummary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/dla/balance": {
         parameters: {
             query?: never;
@@ -269,6 +289,168 @@ export interface paths {
         put?: never;
         /** Archive a client */
         post: operations["invoicingArchiveClient"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/invoicing/invoices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List invoices
+         * @description Returns a paginated invoice list with status counts and filtered totals for list screens and CLI exports.
+         */
+        get: operations["invoicingListInvoices"];
+        put?: never;
+        /** Create a draft invoice */
+        post: operations["invoicingCreateDraftInvoice"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/invoicing/invoices/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Return an invoice */
+        get: operations["invoicingGetInvoice"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Autosave a draft invoice
+         * @description Partially updates mutable draft fields. When lines are supplied, the client-generated line-id array replaces the current line array using last-write-wins semantics.
+         */
+        patch: operations["invoicingPatchInvoice"];
+        trace?: never;
+    };
+    "/api/invoicing/invoices/{id}/pdf": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Redirect to an invoice PDF asset
+         * @description Redirects to the immutable stored invoice PDF asset.
+         */
+        get: operations["invoicingGetInvoicePDF"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/invoicing/invoices/{id}/pdf/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Render a draft invoice PDF preview
+         * @description Renders a DRAFT-watermarked PDF on demand and never stores the result.
+         */
+        get: operations["invoicingPreviewInvoicePDF"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/invoicing/invoices/{id}/pdf/render": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Render and store an invoice PDF
+         * @description Explicit recovery action for render failures. If an immutable PDF is already stored, it is returned unchanged.
+         */
+        post: operations["invoicingRenderInvoicePDF"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/invoicing/invoices/{id}/print": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Return invoice print route payload
+         * @description Returns the authoritative payload consumed by the React invoice print route.
+         */
+        get: operations["invoicingGetInvoicePrintPayload"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/invoicing/invoices/{id}/revert": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Revert a same-day sent invoice to draft
+         * @description Un-sends an unsettled invoice only on the same day it was sent. No settlement endpoint is exposed in REST; banking calls the Go API in-transaction.
+         */
+        post: operations["invoicingRevertInvoice"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/invoicing/invoices/{id}/send": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send an invoice
+         * @description Validates a complete draft, assigns the invoice number, locks the FX rate, posts the ledger entry, and returns the locked rate.
+         */
+        post: operations["invoicingSendInvoice"];
         delete?: never;
         options?: never;
         head?: never;
@@ -656,6 +838,94 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        DashboardCash: {
+            accounts: components["schemas"]["DashboardCashAccount"][];
+            total_gbp: components["schemas"]["DashboardMoney"];
+        };
+        DashboardCashAccount: {
+            currency: string;
+            gbp_balance: components["schemas"]["DashboardMoney"];
+            /** Format: int64 */
+            id: number;
+            ledger_account_code: string;
+            name: string;
+            native_balance: components["schemas"]["DashboardMoney"];
+            provider: string;
+        };
+        DashboardDLA: {
+            balance: components["schemas"]["DashboardMoney"];
+            status: string;
+        };
+        DashboardDividendHeadroom: {
+            available: components["schemas"]["DashboardMoney"];
+            distributable: boolean;
+        };
+        DashboardGreeting: {
+            trading_name: string;
+            user_name: string;
+        };
+        DashboardMoney: {
+            /** Format: int64 */
+            amount: number;
+            currency: string;
+        };
+        DashboardOutstanding: {
+            /** Format: date */
+            earliest_due_date: string | null;
+            total_gbp: components["schemas"]["DashboardMoney"];
+            totals: components["schemas"]["DashboardMoney"][];
+        };
+        DashboardRate: {
+            /** Format: date-time */
+            fetched_at: string;
+            from: string;
+            rate: string;
+            /** Format: date */
+            rate_date: string;
+            source: string;
+            to: string;
+        };
+        DashboardRecentInvoice: {
+            amount: components["schemas"]["DashboardMoney"];
+            client: string;
+            days_overdue?: number | null;
+            number: string | null;
+            status: string;
+        };
+        DashboardReconcileAccount: {
+            currency: string;
+            /** Format: int64 */
+            id: number;
+            ledger_account_code: string;
+            name: string;
+            unreconciled_count: number;
+        };
+        DashboardReviewQueueItem: {
+            amount: components["schemas"]["DashboardMoney"];
+            /** Format: double */
+            confidence: number;
+            kind: string;
+            payee: string;
+        };
+        DashboardSectionError: {
+            detail: string;
+            section: string;
+        };
+        DashboardSummary: {
+            cash: components["schemas"]["DashboardCash"] | null;
+            dividendHeadroom: components["schemas"]["DashboardDividendHeadroom"] | null;
+            dla: components["schemas"]["DashboardDLA"] | null;
+            errors: components["schemas"]["DashboardSectionError"][];
+            greeting: components["schemas"]["DashboardGreeting"] | null;
+            outstanding: components["schemas"]["DashboardOutstanding"] | null;
+            rate: components["schemas"]["DashboardRate"] | null;
+            recentInvoices: components["schemas"]["DashboardRecentInvoice"][] | null;
+            toReconcile: components["schemas"]["DashboardToReconcile"] | null;
+        };
+        DashboardToReconcile: {
+            accounts: components["schemas"]["DashboardReconcileAccount"][];
+            review_queue: components["schemas"]["DashboardReviewQueueItem"][];
+        };
         FieldError: {
             detail: string;
             pointer: string;
@@ -819,11 +1089,176 @@ export interface components {
         InvoicingClientsResponse: {
             clients: components["schemas"]["InvoicingClient"][];
         };
+        InvoicingCreateDraftInvoiceRequest: {
+            client_id: string;
+        };
+        InvoicingFXRate: {
+            /** @enum {string} */
+            from: "EUR" | "GBP";
+            /** Format: date-time */
+            rate_date: string;
+            source: string;
+            /** @enum {string} */
+            to: "EUR" | "GBP";
+            value: string;
+        };
+        InvoicingGBPApprox: {
+            amount: components["schemas"]["InvoicingMoney"];
+            /** Format: date-time */
+            as_of: string;
+            locked: boolean;
+            rate: components["schemas"]["InvoicingFXRate"];
+        };
+        InvoicingInvoice: {
+            client_id: string;
+            /** Format: date-time */
+            created_at: string;
+            /** @enum {string} */
+            currency: "EUR" | "GBP";
+            /** Format: date-time */
+            due_date: string;
+            id: string;
+            /** Format: date-time */
+            issue_date: string;
+            lines: components["schemas"]["InvoicingInvoiceLine"][];
+            lock_id: string | null;
+            number: string | null;
+            pdf_asset: string | null;
+            /** Format: date-time */
+            sent_at?: string | null;
+            settled_amount: components["schemas"]["InvoicingMoney"] | null;
+            /** Format: date-time */
+            settled_date: string | null;
+            settlement_txn_ref: string | null;
+            /** @enum {string} */
+            status: "draft" | "sent" | "paid" | "overdue";
+            totals: components["schemas"]["InvoicingInvoiceTotals"];
+            /** Format: date-time */
+            updated_at: string;
+            /** @enum {string} */
+            vat_treatment: "domestic" | "reverse-charge-eu-b2b";
+        };
+        InvoicingInvoiceLine: {
+            description: string;
+            id: string;
+            invoice_id: string;
+            line_total: components["schemas"]["InvoicingMoney"];
+            position: number;
+            qty: string;
+            unit_price: components["schemas"]["InvoicingMoney"];
+        };
+        InvoicingInvoiceLineInput: {
+            description: string;
+            id: string;
+            qty: string;
+            unit_price: components["schemas"]["InvoicingMoney"];
+        };
+        InvoicingInvoiceListItem: {
+            client_id: string;
+            client_name: string;
+            /** Format: date-time */
+            created_at: string;
+            /** @enum {string} */
+            currency: "EUR" | "GBP";
+            days_overdue: number;
+            /** Format: date-time */
+            due_date: string;
+            id: string;
+            /** Format: date-time */
+            issue_date: string;
+            number: string | null;
+            /** @enum {string} */
+            status: "draft" | "sent" | "paid" | "overdue";
+            totals: components["schemas"]["InvoicingInvoiceTotals"];
+            /** Format: date-time */
+            updated_at: string;
+        };
+        InvoicingInvoicePatch: {
+            client_id?: string;
+            /** @enum {string} */
+            currency?: "EUR" | "GBP";
+            /** Format: date */
+            due_date?: string;
+            /** Format: date */
+            issue_date?: string;
+            lines?: components["schemas"]["InvoicingInvoiceLineInput"][];
+            /** @enum {string} */
+            vat_treatment?: "domestic" | "reverse-charge-eu-b2b";
+        };
+        InvoicingInvoicePrintIdentity: {
+            address: components["schemas"]["InvoicingAddress"];
+            bank_name: string;
+            bic: string;
+            company_number: string;
+            iban: string;
+            legal_name: string;
+            /** Format: uri-reference */
+            logo_asset_url?: string | null;
+            logo_data_uri?: string | null;
+            trading_name: string;
+            vat_number?: string | null;
+        };
+        InvoicingInvoicePrintPayload: {
+            client: components["schemas"]["InvoicingClient"];
+            draft_watermark: boolean;
+            identity: components["schemas"]["InvoicingInvoicePrintIdentity"];
+            invoice: components["schemas"]["InvoicingInvoice"];
+            locked_rate?: components["schemas"]["InvoicingLockedRate"] | null;
+            reverse_charge_note?: string | null;
+            vat_rate: string;
+            vat_tax_year: string;
+        };
+        InvoicingInvoiceStatusCount: {
+            count: number;
+            /** @enum {string} */
+            status: "draft" | "sent" | "paid" | "overdue";
+        };
+        InvoicingInvoiceTotals: {
+            approx_gbp?: components["schemas"]["InvoicingGBPApprox"] | null;
+            subtotal: components["schemas"]["InvoicingMoney"];
+            total: components["schemas"]["InvoicingMoney"];
+            vat: components["schemas"]["InvoicingMoney"];
+        };
+        InvoicingInvoiceTotalsSummary: {
+            subtotals: components["schemas"]["InvoicingMoney"][];
+            total_gbp: components["schemas"]["InvoicingMoney"];
+        };
+        InvoicingInvoicesResponse: {
+            counts: components["schemas"]["InvoicingInvoiceStatusCount"][];
+            invoices: components["schemas"]["InvoicingInvoiceListItem"][];
+            limit: number;
+            offset: number;
+            total_count: number;
+            totals: components["schemas"]["InvoicingInvoiceTotalsSummary"];
+        };
+        InvoicingLockedRate: {
+            /** @enum {string} */
+            from: "EUR" | "GBP";
+            /** Format: int64 */
+            id: number;
+            rate: string;
+            /** Format: date */
+            rate_date: string;
+            source: string;
+            /** @enum {string} */
+            to: "EUR" | "GBP";
+        };
+        InvoicingMoney: {
+            /** Format: int64 */
+            amount: number;
+            /** @enum {string} */
+            currency: "EUR" | "GBP";
+        };
         InvoicingMoneyAmount: {
             /** Format: int64 */
             amount_minor: number;
             /** @enum {string} */
             currency: "EUR" | "GBP";
+        };
+        InvoicingSendInvoiceResult: {
+            invoice: components["schemas"]["InvoicingInvoice"];
+            locked_rate: components["schemas"]["InvoicingLockedRate"];
+            number: string;
         };
         JurisdictionFilingDeadline: {
             authority: string;
@@ -1034,6 +1469,44 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    dashboardGetSummary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Dashboard summary */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DashboardSummary"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description All dashboard sections failed */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     dlaGetBalance: {
         parameters: {
             query?: never;
@@ -1945,6 +2418,520 @@ export interface operations {
                 };
                 content: {
                     "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    invoicingListInvoices: {
+        parameters: {
+            query?: {
+                /** @description Filter by one or more invoice statuses. Repeat the parameter or pass a comma-separated value. */
+                status?: ("draft" | "sent" | "paid" | "overdue")[];
+                /** @description Search invoice numbers and client names. */
+                search?: string;
+                /** @description Page size. */
+                limit?: number;
+                /** @description Zero-based row offset. */
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Invoices listed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvoicingInvoicesResponse"];
+                };
+            };
+            /** @description Invalid invoice query */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    invoicingCreateDraftInvoice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InvoicingCreateDraftInvoiceRequest"];
+            };
+        };
+        responses: {
+            /** @description Draft invoice created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvoicingInvoice"];
+                };
+            };
+            /** @description Malformed invoice request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Client was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Invoice request body is too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Invoice validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ValidationProblem"];
+                };
+            };
+        };
+    };
+    invoicingGetInvoice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Invoice */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvoicingInvoice"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Invoice was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    invoicingPatchInvoice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InvoicingInvoicePatch"];
+            };
+        };
+        responses: {
+            /** @description Updated invoice with recomputed totals */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvoicingInvoice"];
+                };
+            };
+            /** @description Malformed invoice patch */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Invoice was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Invoice cannot be edited */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ValidationProblem"];
+                };
+            };
+            /** @description Invoice patch request body is too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Invoice validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ValidationProblem"];
+                };
+            };
+        };
+    };
+    invoicingGetInvoicePDF: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Redirect to stored invoice PDF asset */
+            302: {
+                headers: {
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Invoice PDF asset was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ValidationProblem"];
+                };
+            };
+        };
+    };
+    invoicingPreviewInvoicePDF: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Draft PDF preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/pdf": string;
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Invoice was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    invoicingRenderInvoicePDF: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Invoice with PDF asset */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvoicingInvoice"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Invoice was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    invoicingGetInvoicePrintPayload: {
+        parameters: {
+            query?: {
+                /** @description Render the payload with the draft watermark enabled. */
+                draft?: boolean;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Invoice print payload */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvoicingInvoicePrintPayload"];
+                };
+            };
+            /** @description Invalid print query */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Invoice was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    invoicingRevertInvoice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Invoice reverted to draft */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvoicingInvoice"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Invoice was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Invoice cannot be reverted */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ValidationProblem"];
+                };
+            };
+        };
+    };
+    invoicingSendInvoice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Invoice sent */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvoicingSendInvoiceResult"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Invoice was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Invoice cannot be sent */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ValidationProblem"];
+                };
+            };
+            /** @description Invoice validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ValidationProblem"];
                 };
             };
         };
