@@ -4,6 +4,26 @@
  */
 
 export interface paths {
+    "/api/dashboard/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Return the dashboard summary
+         * @description Composes existing read APIs into the screen-01 dashboard payload. Individual section failures return null sections plus errors; the endpoint only fails when every section is unavailable.
+         */
+        get: operations["dashboardGetSummary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/dla/balance": {
         parameters: {
             query?: never;
@@ -326,9 +346,69 @@ export interface paths {
         };
         /**
          * Redirect to an invoice PDF asset
-         * @description Returns 404 until INV-8 stores invoice PDF assets; once present, redirects to the stored asset URL.
+         * @description Redirects to the immutable stored invoice PDF asset.
          */
         get: operations["invoicingGetInvoicePDF"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/invoicing/invoices/{id}/pdf/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Render a draft invoice PDF preview
+         * @description Renders a DRAFT-watermarked PDF on demand and never stores the result.
+         */
+        get: operations["invoicingPreviewInvoicePDF"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/invoicing/invoices/{id}/pdf/render": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Render and store an invoice PDF
+         * @description Explicit recovery action for render failures. If an immutable PDF is already stored, it is returned unchanged.
+         */
+        post: operations["invoicingRenderInvoicePDF"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/invoicing/invoices/{id}/print": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Return invoice print route payload
+         * @description Returns the authoritative payload consumed by the React invoice print route.
+         */
+        get: operations["invoicingGetInvoicePrintPayload"];
         put?: never;
         post?: never;
         delete?: never;
@@ -678,6 +758,94 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        DashboardCash: {
+            accounts: components["schemas"]["DashboardCashAccount"][];
+            total_gbp: components["schemas"]["DashboardMoney"];
+        };
+        DashboardCashAccount: {
+            currency: string;
+            gbp_balance: components["schemas"]["DashboardMoney"];
+            /** Format: int64 */
+            id: number;
+            ledger_account_code: string;
+            name: string;
+            native_balance: components["schemas"]["DashboardMoney"];
+            provider: string;
+        };
+        DashboardDLA: {
+            balance: components["schemas"]["DashboardMoney"];
+            status: string;
+        };
+        DashboardDividendHeadroom: {
+            available: components["schemas"]["DashboardMoney"];
+            distributable: boolean;
+        };
+        DashboardGreeting: {
+            trading_name: string;
+            user_name: string;
+        };
+        DashboardMoney: {
+            /** Format: int64 */
+            amount: number;
+            currency: string;
+        };
+        DashboardOutstanding: {
+            /** Format: date */
+            earliest_due_date: string | null;
+            total_gbp: components["schemas"]["DashboardMoney"];
+            totals: components["schemas"]["DashboardMoney"][];
+        };
+        DashboardRate: {
+            /** Format: date-time */
+            fetched_at: string;
+            from: string;
+            rate: string;
+            /** Format: date */
+            rate_date: string;
+            source: string;
+            to: string;
+        };
+        DashboardRecentInvoice: {
+            amount: components["schemas"]["DashboardMoney"];
+            client: string;
+            days_overdue?: number | null;
+            number: string | null;
+            status: string;
+        };
+        DashboardReconcileAccount: {
+            currency: string;
+            /** Format: int64 */
+            id: number;
+            ledger_account_code: string;
+            name: string;
+            unreconciled_count: number;
+        };
+        DashboardReviewQueueItem: {
+            amount: components["schemas"]["DashboardMoney"];
+            /** Format: double */
+            confidence: number;
+            kind: string;
+            payee: string;
+        };
+        DashboardSectionError: {
+            detail: string;
+            section: string;
+        };
+        DashboardSummary: {
+            cash: components["schemas"]["DashboardCash"] | null;
+            dividendHeadroom: components["schemas"]["DashboardDividendHeadroom"] | null;
+            dla: components["schemas"]["DashboardDLA"] | null;
+            errors: components["schemas"]["DashboardSectionError"][];
+            greeting: components["schemas"]["DashboardGreeting"] | null;
+            outstanding: components["schemas"]["DashboardOutstanding"] | null;
+            rate: components["schemas"]["DashboardRate"] | null;
+            recentInvoices: components["schemas"]["DashboardRecentInvoice"][] | null;
+            toReconcile: components["schemas"]["DashboardToReconcile"] | null;
+        };
+        DashboardToReconcile: {
+            accounts: components["schemas"]["DashboardReconcileAccount"][];
+            review_queue: components["schemas"]["DashboardReviewQueueItem"][];
+        };
         FieldError: {
             detail: string;
             pointer: string;
@@ -926,6 +1094,7 @@ export interface components {
             updated_at: string;
         };
         InvoicingInvoicePatch: {
+            client_id?: string;
             /** @enum {string} */
             currency?: "EUR" | "GBP";
             /** Format: date */
@@ -935,6 +1104,29 @@ export interface components {
             lines?: components["schemas"]["InvoicingInvoiceLineInput"][];
             /** @enum {string} */
             vat_treatment?: "domestic" | "reverse-charge-eu-b2b";
+        };
+        InvoicingInvoicePrintIdentity: {
+            address: components["schemas"]["InvoicingAddress"];
+            bank_name: string;
+            bic: string;
+            company_number: string;
+            iban: string;
+            legal_name: string;
+            /** Format: uri-reference */
+            logo_asset_url?: string | null;
+            logo_data_uri?: string | null;
+            trading_name: string;
+            vat_number?: string | null;
+        };
+        InvoicingInvoicePrintPayload: {
+            client: components["schemas"]["InvoicingClient"];
+            draft_watermark: boolean;
+            identity: components["schemas"]["InvoicingInvoicePrintIdentity"];
+            invoice: components["schemas"]["InvoicingInvoice"];
+            locked_rate?: components["schemas"]["InvoicingLockedRate"] | null;
+            reverse_charge_note?: string | null;
+            vat_rate: string;
+            vat_tax_year: string;
         };
         InvoicingInvoiceStatusCount: {
             count: number;
@@ -960,9 +1152,16 @@ export interface components {
             totals: components["schemas"]["InvoicingInvoiceTotalsSummary"];
         };
         InvoicingLockedRate: {
+            /** @enum {string} */
+            from: "EUR" | "GBP";
             /** Format: int64 */
             id: number;
             rate: string;
+            /** Format: date */
+            rate_date: string;
+            source: string;
+            /** @enum {string} */
+            to: "EUR" | "GBP";
         };
         InvoicingMoney: {
             /** Format: int64 */
@@ -1120,6 +1319,44 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    dashboardGetSummary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Dashboard summary */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DashboardSummary"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description All dashboard sections failed */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     dlaGetBalance: {
         parameters: {
             query?: never;
@@ -2306,6 +2543,138 @@ export interface operations {
                 };
                 content: {
                     "application/problem+json": components["schemas"]["ValidationProblem"];
+                };
+            };
+        };
+    };
+    invoicingPreviewInvoicePDF: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Draft PDF preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/pdf": string;
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Invoice was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    invoicingRenderInvoicePDF: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Invoice with PDF asset */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvoicingInvoice"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Invoice was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    invoicingGetInvoicePrintPayload: {
+        parameters: {
+            query?: {
+                /** @description Render the payload with the draft watermark enabled. */
+                draft?: boolean;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Invoice print payload */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvoicingInvoicePrintPayload"];
+                };
+            };
+            /** @description Invalid print query */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Invoice was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };

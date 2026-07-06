@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/npmulder/ledgerly/internal/identity"
 	"github.com/npmulder/ledgerly/internal/ledger"
 	"github.com/npmulder/ledgerly/internal/platform/bus"
 	"github.com/npmulder/ledgerly/internal/platform/clock"
@@ -64,6 +66,12 @@ type Config struct {
 	Ledger              LedgerJournal
 	Bus                 *bus.Bus
 	InvoiceUsageChecker InvoiceUsageChecker
+	Identity            identity.Identity
+	PDFAssetStore       InvoicePDFAssetStore
+	PDFEngine           InvoicePDFEngine
+	PDFBaseURL          string
+	PDFRetryBackoff     time.Duration
+	Logger              *slog.Logger
 }
 
 // Module is the invoicing module wiring surface used by the app builder.
@@ -98,6 +106,12 @@ func New(cfg Config) (*Module, error) {
 			WithLedger(cfg.Ledger),
 			WithEventBus(cfg.Bus),
 			WithInvoiceUsageChecker(invoiceUsage),
+			WithIdentity(cfg.Identity),
+			WithInvoicePDFAssetStore(cfg.PDFAssetStore),
+			WithInvoicePDFEngine(cfg.PDFEngine),
+			WithInvoicePDFBaseURL(cfg.PDFBaseURL),
+			WithInvoicePDFRetryBackoff(cfg.PDFRetryBackoff),
+			WithLogger(cfg.Logger),
 		),
 	}, nil
 }
@@ -153,6 +167,20 @@ type Client struct {
 	DayRate         *MoneyAmount `json:"day_rate"`
 	CreatedAt       time.Time    `json:"created_at"`
 	ArchivedAt      *time.Time   `json:"archived_at"`
+}
+
+// MatchCandidate is the public invoice fact shape used by banking's
+// deterministic match engine. It intentionally excludes draft invoices.
+type MatchCandidate struct {
+	InvoiceID  string
+	Number     string
+	ClientName string
+	IssueDate  time.Time
+	DueDate    time.Time
+	TermsDays  int
+	Amount     Money
+	Status     InvoiceStatus
+	Settled    bool
 }
 
 // FieldError points to an invalid JSON field in client commands.
@@ -349,8 +377,12 @@ type RateLockRef struct {
 
 // RateLock is the subset of a moneyfx lock that invoicing needs for posting.
 type RateLock struct {
-	ID   int64
-	Rate string
+	ID       int64
+	From     string
+	To       string
+	Rate     string
+	RateDate time.Time
+	Source   string
 }
 
 // RateLocker is the moneyfx capability invoicing needs for send-time locks.

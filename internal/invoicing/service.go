@@ -3,9 +3,12 @@ package invoicing
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"math/big"
 	"strconv"
 	"strings"
@@ -13,6 +16,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/npmulder/ledgerly/internal/identity"
 	"github.com/npmulder/ledgerly/internal/jurisdiction"
 	"github.com/npmulder/ledgerly/internal/ledger"
 	"github.com/npmulder/ledgerly/internal/platform/bus"
@@ -32,6 +36,11 @@ const (
 	problemTypeInvoiceRate          = "https://ledgerly.local/problems/invoicing/rate-unavailable"
 )
 
+const (
+	defaultPDFRetryAttempts = 3
+	defaultPDFRetryBackoff  = 250 * time.Millisecond
+)
+
 // Service orchestrates invoicing client commands and queries.
 type Service struct {
 	pool               *pgxpool.Pool
@@ -43,6 +52,11 @@ type Service struct {
 	ledger             LedgerJournal
 	eventBus           *bus.Bus
 	invoiceUsage       InvoiceUsageChecker
+	identity           identity.Identity
+	pdfAssetStore      InvoicePDFAssetStore
+	pdfEngine          InvoicePDFEngine
+	pdfRetryBackoff    time.Duration
+	logger             *slog.Logger
 	idGenerator        func() (string, error)
 	invoiceIDGenerator func() (string, error)
 	lineIDGenerator    func() (string, error)
@@ -118,6 +132,63 @@ func WithEventBus(eventBus *bus.Bus) ServiceOption {
 	}
 }
 
+// WithIdentity installs the identity profile API used to snapshot invoice
+// render identity.
+func WithIdentity(profile identity.Identity) ServiceOption {
+	return func(s *Service) {
+		if profile != nil {
+			s.identity = profile
+		}
+	}
+}
+
+// WithInvoicePDFAssetStore installs immutable PDF asset storage.
+func WithInvoicePDFAssetStore(store InvoicePDFAssetStore) ServiceOption {
+	return func(s *Service) {
+		if store != nil {
+			s.pdfAssetStore = store
+		}
+	}
+}
+
+// WithInvoicePDFEngine installs the engine used to render invoice print
+// payloads to PDF bytes.
+func WithInvoicePDFEngine(engine InvoicePDFEngine) ServiceOption {
+	return func(s *Service) {
+		if engine != nil {
+			s.pdfEngine = engine
+		}
+	}
+}
+
+// WithInvoicePDFBaseURL installs the production chromedp engine when a custom
+// engine was not supplied.
+func WithInvoicePDFBaseURL(baseURL string) ServiceOption {
+	return func(s *Service) {
+		if s.pdfEngine == nil && strings.TrimSpace(baseURL) != "" {
+			s.pdfEngine = NewChromePDFEngine(baseURL)
+		}
+	}
+}
+
+// WithInvoicePDFRetryBackoff overrides the send-time async retry backoff.
+func WithInvoicePDFRetryBackoff(backoff time.Duration) ServiceOption {
+	return func(s *Service) {
+		if backoff >= 0 {
+			s.pdfRetryBackoff = backoff
+		}
+	}
+}
+
+// WithLogger installs the logger used for non-blocking PDF render failures.
+func WithLogger(logger *slog.Logger) ServiceOption {
+	return func(s *Service) {
+		if logger != nil {
+			s.logger = logger
+		}
+	}
+}
+
 func NewService(pool *pgxpool.Pool, store Store, opts ...ServiceOption) *Service {
 	service := &Service{
 		pool:               pool,
@@ -126,6 +197,8 @@ func NewService(pool *pgxpool.Pool, store Store, opts ...ServiceOption) *Service
 		todayRate:          defaultTodayRate,
 		eventBus:           bus.New(),
 		invoiceUsage:       noInvoiceUsageChecker{},
+		pdfRetryBackoff:    defaultPDFRetryBackoff,
+		logger:             slog.New(slog.NewTextHandler(io.Discard, nil)),
 		idGenerator:        newClientID,
 		invoiceIDGenerator: newInvoiceID,
 		lineIDGenerator:    newInvoiceLineID,
@@ -246,6 +319,16 @@ func (s *Service) UpdateDraft(ctx context.Context, id string, patch DraftPatch) 
 	}
 
 	next := existing
+	if patch.ClientID != nil {
+		client, clientErr := s.store.Client(ctx, tx, *patch.ClientID)
+		if clientErr != nil {
+			return Invoice{}, clientErr
+		}
+		if client.ArchivedAt != nil {
+			return Invoice{}, invoiceValidationError([]FieldError{{Pointer: "/client_id", Detail: "must be an active client"}})
+		}
+		next.ClientID = client.ID
+	}
 	if patch.IssueDate != nil {
 		next.IssueDate = dateOnly(*patch.IssueDate)
 	}
@@ -396,7 +479,209 @@ func (s *Service) Send(ctx context.Context, id string) (_ Invoice, err error) {
 	if err = tx.Commit(ctx); err != nil {
 		return Invoice{}, fmt.Errorf("invoicing: commit send transaction: %w", err)
 	}
+	s.scheduleInvoicePDFRender(sent.ID)
 	return sent, nil
+}
+
+// RenderInvoicePDFNow renders and stores a sent invoice PDF unless the invoice
+// already points at an immutable PDF asset.
+func (s *Service) RenderInvoicePDFNow(ctx context.Context, id string) (Invoice, error) {
+	if err := s.renderAndStoreInvoicePDF(ctx, strings.TrimSpace(id)); err != nil {
+		return Invoice{}, err
+	}
+	return s.Invoice(ctx, id)
+}
+
+// PreviewDraftInvoicePDF renders a DRAFT-watermarked PDF without storing it.
+func (s *Service) PreviewDraftInvoicePDF(ctx context.Context, id string) ([]byte, error) {
+	if s.pdfEngine == nil {
+		return nil, fmt.Errorf("invoicing: invoice PDF renderer is not configured")
+	}
+	payload, err := s.InvoicePrintPayload(ctx, strings.TrimSpace(id), true)
+	if err != nil {
+		return nil, err
+	}
+	if payload.Invoice.Status != InvoiceStatusDraft {
+		return nil, ErrInvoiceImmutable
+	}
+	return s.pdfEngine.RenderInvoicePDF(ctx, payload)
+}
+
+func (s *Service) scheduleInvoicePDFRender(id string) {
+	if s.pdfEngine == nil || s.pdfAssetStore == nil {
+		return
+	}
+	invoiceID := strings.TrimSpace(id)
+	if invoiceID == "" {
+		return
+	}
+	go s.renderInvoicePDFWithRetry(invoiceID)
+}
+
+func (s *Service) renderInvoicePDFWithRetry(id string) {
+	backoff := s.pdfRetryBackoff
+	for attempt := 1; attempt <= defaultPDFRetryAttempts; attempt++ {
+		err := s.renderAndStoreInvoicePDF(context.Background(), id)
+		if err == nil {
+			return
+		}
+		s.logPDFRenderFailure(id, attempt, err)
+		if attempt == defaultPDFRetryAttempts || backoff <= 0 {
+			continue
+		}
+		time.Sleep(backoff * time.Duration(1<<(attempt-1)))
+	}
+}
+
+func (s *Service) renderAndStoreInvoicePDF(ctx context.Context, id string) error {
+	if s.pdfEngine == nil {
+		return fmt.Errorf("invoicing: invoice PDF renderer is not configured")
+	}
+	if s.pdfAssetStore == nil {
+		return fmt.Errorf("invoicing: invoice PDF asset store is not configured")
+	}
+	payload, err := s.InvoicePrintPayload(ctx, strings.TrimSpace(id), false)
+	if err != nil {
+		return err
+	}
+	if payload.Invoice.PDFAsset != nil && strings.TrimSpace(*payload.Invoice.PDFAsset) != "" {
+		return nil
+	}
+	switch payload.Invoice.Status {
+	case InvoiceStatusSent, InvoiceStatusPaid, InvoiceStatusOverdue:
+	default:
+		return ErrInvoiceImmutable
+	}
+
+	pdfBytes, err := s.pdfEngine.RenderInvoicePDF(ctx, payload)
+	if err != nil {
+		return err
+	}
+	assetURL, err := s.pdfAssetStore.StoreInvoicePDF(ctx, pdfBytes)
+	if err != nil {
+		return err
+	}
+	if _, err := s.store.SetInvoicePDFAsset(ctx, s.pool, payload.Invoice.ID, assetURL); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *Service) logPDFRenderFailure(id string, attempt int, err error) {
+	logger := s.logger
+	if logger == nil {
+		return
+	}
+	logger.Error("invoice PDF render failed", "invoice_id", id, "attempt", attempt, "error", err)
+}
+
+// InvoicePrintPayload returns the exact payload consumed by the React print route.
+func (s *Service) InvoicePrintPayload(ctx context.Context, id string, draftWatermark bool) (InvoicePrintPayload, error) {
+	if s.identity == nil {
+		return InvoicePrintPayload{}, fmt.Errorf("invoicing: identity profile API is not configured")
+	}
+	invoice, err := s.Invoice(ctx, strings.TrimSpace(id))
+	if err != nil {
+		return InvoicePrintPayload{}, err
+	}
+	client, err := s.store.Client(ctx, s.pool, invoice.ClientID)
+	if err != nil {
+		return InvoicePrintPayload{}, err
+	}
+	profile, err := s.identity.Profile(ctx)
+	if err != nil {
+		return InvoicePrintPayload{}, err
+	}
+	vatRate, vatTaxYear, err := jurisdiction.VATStandardRateForDate(invoice.IssueDate)
+	if err != nil {
+		return InvoicePrintPayload{}, fmt.Errorf("invoicing: invoice print VAT rate: %w", err)
+	}
+	reverseChargeNote, err := reverseChargeInvoiceNote(invoice.VATTreatment)
+	if err != nil {
+		return InvoicePrintPayload{}, err
+	}
+	lockedRate, err := s.invoicePrintLockedRate(ctx, invoice)
+	if err != nil {
+		return InvoicePrintPayload{}, err
+	}
+	return InvoicePrintPayload{
+		Invoice:           invoice,
+		Client:            client,
+		Identity:          s.invoicePrintIdentity(ctx, profile),
+		VATRate:           vatRate.String(),
+		VATTaxYear:        vatTaxYear,
+		ReverseChargeNote: reverseChargeNote,
+		LockedRate:        lockedRate,
+		DraftWatermark:    draftWatermark,
+	}, nil
+}
+
+func (s *Service) invoicePrintIdentity(ctx context.Context, profile identity.CompanyProfile) InvoicePrintIdentity {
+	var (
+		logoAssetURL *string
+		logoDataURI  *string
+	)
+	if profile.LogoAssetID != nil {
+		url := "/api/identity/assets/" + string(*profile.LogoAssetID)
+		logoAssetURL = &url
+		if asset, err := s.identity.Asset(ctx, *profile.LogoAssetID); err == nil {
+			dataURI := "data:" + asset.MIME + ";base64," + base64.StdEncoding.EncodeToString(asset.Bytes)
+			logoDataURI = &dataURI
+		}
+	}
+	return InvoicePrintIdentity{
+		TradingName:   profile.TradingName,
+		LegalName:     profile.LegalName,
+		CompanyNumber: profile.CompanyNumber,
+		Address: Address{
+			Line1:      profile.RegisteredOffice.Line1,
+			Line2:      profile.RegisteredOffice.Line2,
+			Locality:   profile.RegisteredOffice.Locality,
+			Region:     profile.RegisteredOffice.Region,
+			PostalCode: profile.RegisteredOffice.PostalCode,
+			Country:    profile.RegisteredOffice.Country,
+		},
+		VATNumber:    profile.VATNumber,
+		IBAN:         profile.BankDetails.IBAN,
+		BIC:          profile.BankDetails.BIC,
+		BankName:     profile.BankDetails.BankName,
+		LogoAssetURL: logoAssetURL,
+		LogoDataURI:  logoDataURI,
+	}
+}
+
+func reverseChargeInvoiceNote(treatment VATTreatment) (*string, error) {
+	semantics, err := jurisdiction.VATSemanticsForTreatment(string(treatment))
+	if err != nil {
+		return nil, fmt.Errorf("invoicing: invoice print VAT semantics: %w", err)
+	}
+	if strings.TrimSpace(semantics.ReverseChargeKind) == "" {
+		return nil, nil
+	}
+	wording, err := jurisdiction.ReverseChargeWording(semantics.ReverseChargeKind)
+	if err != nil {
+		return nil, fmt.Errorf("invoicing: invoice print reverse-charge wording: %w", err)
+	}
+	note := strings.TrimSpace(wording.InvoiceWording)
+	if note == "" {
+		return nil, nil
+	}
+	return &note, nil
+}
+
+func (s *Service) invoicePrintLockedRate(ctx context.Context, invoice Invoice) (*InvoicePrintLockedRate, error) {
+	if invoice.LockID == nil || strings.TrimSpace(*invoice.LockID) == "" || s.rateLocks == nil {
+		return nil, nil
+	}
+	lockID, err := invoiceLockID(invoice)
+	if err != nil {
+		return nil, err
+	}
+	lock, err := s.rateLocks.RateLock(ctx, lockID)
+	if err != nil {
+		return nil, fmt.Errorf("invoicing: invoice print locked rate: %w", err)
+	}
+	return &InvoicePrintLockedRate{ID: lock.ID, Rate: lock.Rate}, nil
 }
 
 // MarkSettled records a full invoice settlement inside the caller's

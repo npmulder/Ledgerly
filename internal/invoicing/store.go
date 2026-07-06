@@ -453,16 +453,18 @@ RETURNING `+invoiceColumnsSQL(),
 func (s Store) UpdateDraftInvoice(ctx context.Context, tx db.Tx, invoice Invoice) (Invoice, error) {
 	updated, err := scanInvoiceRow(tx.QueryRow(ctx, `
 UPDATE invoices
-SET issue_date = $2,
-	due_date = $3,
-	currency = $4,
-	vat_treatment = $5,
-	pdf_asset = $6,
+SET client_id = $2,
+	issue_date = $3,
+	due_date = $4,
+	currency = $5,
+	vat_treatment = $6,
+	pdf_asset = $7,
 	updated_at = now()
 WHERE id = $1
 	AND status = 'draft'
 RETURNING `+invoiceColumnsSQL(),
 		invoice.ID,
+		invoice.ClientID,
 		invoice.IssueDate,
 		invoice.DueDate,
 		string(invoice.Currency),
@@ -576,6 +578,32 @@ RETURNING `+invoiceColumnsSQL(),
 	return updated, nil
 }
 
+func (s Store) SetInvoicePDFAsset(ctx context.Context, tx db.Tx, id string, assetURL string) (Invoice, error) {
+	updated, err := scanInvoiceRow(tx.QueryRow(ctx, `
+UPDATE invoicing.invoices
+SET pdf_asset = $2,
+	updated_at = now()
+WHERE id = $1
+	AND (pdf_asset IS NULL OR btrim(pdf_asset) = '')
+RETURNING `+invoiceColumnsSQL(),
+		id,
+		strings.TrimSpace(assetURL),
+	))
+	if err == nil {
+		return updated, nil
+	}
+	if errors.Is(err, ErrInvoiceNotFound) {
+		existing, existingErr := s.Invoice(ctx, tx, id)
+		if existingErr != nil {
+			return Invoice{}, existingErr
+		}
+		if existing.PDFAsset != nil && strings.TrimSpace(*existing.PDFAsset) != "" {
+			return existing, nil
+		}
+	}
+	return updated, err
+}
+
 func (Store) InsertInvoiceSendVATContext(ctx context.Context, tx db.Tx, invoiceID string, sendLedgerEntryID int64, treatment VATTreatment) error {
 	_, err := tx.Exec(ctx, `
 INSERT INTO invoicing.invoice_send_vat_context (
@@ -635,6 +663,7 @@ SET number = NULL,
 	lock_id = NULL,
 	send_ledger_entry_id = NULL,
 	sent_at = NULL,
+	pdf_asset = NULL,
 	status = 'draft',
 	updated_at = now()
 WHERE id = $1
