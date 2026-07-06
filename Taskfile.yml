@@ -25,14 +25,9 @@ tasks:
       - go list ./... | grep -v '/web/node_modules/' | xargs go test
 
   test:integration:
-    desc: Run integration tests when LEDGERLY_TEST_DB is configured
+    desc: Run integration tests
     cmds:
-      - |
-        if [ -z "${LEDGERLY_TEST_DB:-}" ]; then
-          echo "LEDGERLY_TEST_DB not set; skipping integration tests."
-          exit 0
-        fi
-        go list ./... | grep -v '/web/node_modules/' | xargs go test -tags=integration
+      - go test -tags=integration ./internal/it/... {{.GO_TEST_ARGS}} {{.CLI_ARGS}}
 
   golden:update:
     desc: Regenerate document golden snapshots inside the deterministic Chromium image

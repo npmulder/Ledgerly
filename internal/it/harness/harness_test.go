@@ -9,6 +9,8 @@ import (
 	"errors"
 	"io"
 	nethttp "net/http"
+	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"testing"
@@ -183,6 +185,36 @@ func TestLedgerTrialBalanceJobDegradesHealthUntilCleanRun(t *testing.T) {
 		t.Fatalf("RunJob(%s) recovery error = %v", ledger.TrialBalanceJobName, err)
 	}
 	assertHealthStatus(t, h, nethttp.StatusOK, "")
+}
+
+func TestAssertLedgerBalancedTeardownCatchesUnbalancedLedger(t *testing.T) {
+	if os.Getenv("LEDGERLY_BALANCE_CHECK_FAILURE_SCENARIO") == "1" {
+		h := harness.New(t, harness.Options{})
+		service := ledger.New(h.LedgerPool)
+		entryID := postLedgerEntry(t, h, service)
+		corruptLedgerPosting(t, h, entryID, 1)
+		return
+	}
+
+	cmd := exec.Command(os.Args[0],
+		"-test.run=^TestAssertLedgerBalancedTeardownCatchesUnbalancedLedger$",
+		"-test.count=1",
+		"-test.v",
+	)
+	cmd.Env = append(os.Environ(), "LEDGERLY_BALANCE_CHECK_FAILURE_SCENARIO=1")
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("unbalanced ledger scenario passed, want teardown failure; output:\n%s", output)
+	}
+	for _, want := range []string{
+		"ledger balance check failed",
+		"ledger trial balance unbalanced",
+		"first offending entry id=",
+	} {
+		if !strings.Contains(string(output), want) {
+			t.Fatalf("unbalanced ledger output missing %q:\n%s", want, output)
+		}
+	}
 }
 
 func postNote(t *testing.T, h *harness.Harness, body string, wantStatus int) demo.Note {

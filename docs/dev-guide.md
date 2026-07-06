@@ -83,6 +83,9 @@ module's store or mounting routes directly in `cmd/ledgerly`.
 
 ## Integration Proof
 
+See [Testing](testing.md) for the full integration-suite conventions, CI
+artifact behavior, flake policy, and module-author checklist.
+
 The IT-0 walking-skeleton test lives under `internal/it/harness` with the
 `integration` build tag. It boots the full monolith in-process on an isolated
 IT0-1 database:
