@@ -232,20 +232,24 @@ func invoiceMatchExplanation(match invoiceMatchResult) string {
 }
 
 func referenceContainsInvoiceNumber(reference string, number string) bool {
-	normalizedReference := NormalizePayee(reference)
-	normalizedNumber := NormalizePayee(number)
-	if normalizedReference == "" || normalizedNumber == "" {
+	return normalizedContainsTokenSequence(reference, number)
+}
+
+func normalizedContainsTokenSequence(value string, sequence string) bool {
+	normalizedValue := NormalizePayee(value)
+	normalizedSequence := NormalizePayee(sequence)
+	if normalizedValue == "" || normalizedSequence == "" {
 		return false
 	}
-	referenceTokens := strings.Fields(normalizedReference)
-	numberTokens := strings.Fields(normalizedNumber)
-	if len(numberTokens) == 0 || len(numberTokens) > len(referenceTokens) {
+	valueTokens := strings.Fields(normalizedValue)
+	sequenceTokens := strings.Fields(normalizedSequence)
+	if len(sequenceTokens) == 0 || len(sequenceTokens) > len(valueTokens) {
 		return false
 	}
-	for start := 0; start <= len(referenceTokens)-len(numberTokens); start++ {
+	for start := 0; start <= len(valueTokens)-len(sequenceTokens); start++ {
 		matched := true
-		for offset, token := range numberTokens {
-			if referenceTokens[start+offset] != token {
+		for offset, token := range sequenceTokens {
+			if valueTokens[start+offset] != token {
 				matched = false
 				break
 			}
@@ -320,7 +324,7 @@ func (s *Service) dlaDecision(ctx context.Context, txn Transaction) (*suggestion
 		if normalizedPattern == "" {
 			continue
 		}
-		if strings.Contains(normalizedPayee, normalizedPattern) {
+		if normalizedContainsTokenSequence(normalizedPayee, normalizedPattern) {
 			return &suggestionDecision{input: SuggestionInput{
 				TransactionID: txn.ID,
 				Kind:          SuggestionKindDLA,

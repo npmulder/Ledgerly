@@ -245,7 +245,7 @@ func (Store) MatchableTransactionsByID(ctx context.Context, tx db.Tx, ids []Tran
 	rows, err := tx.Query(ctx, transactionSelectSQL()+`
 WHERE id = ANY($1::bigint[])
 	AND state IN ('unreconciled', 'suggested')
-ORDER BY array_position($1::bigint[], id)`, intIDs)
+ORDER BY id`, intIDs)
 	if err != nil {
 		return nil, fmt.Errorf("banking: matchable transactions by id: %w", err)
 	}
@@ -470,6 +470,20 @@ RETURNING id, matcher, match_mode, account_code, times_applied, last_applied_at,
 		string(normalized.AccountCode),
 		string(normalized.CreatedFrom),
 	))
+}
+
+func (Store) PayeeRule(ctx context.Context, tx db.Tx, id PayeeRuleID) (PayeeRule, error) {
+	rule, err := scanPayeeRuleRow(tx.QueryRow(ctx, `
+SELECT id, matcher, match_mode, account_code, times_applied, last_applied_at, created_from, created_at
+FROM payee_rules
+WHERE id = $1`, int64(id)))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return PayeeRule{}, ErrPayeeRuleNotFound
+		}
+		return PayeeRule{}, fmt.Errorf("banking: load payee rule %d: %w", id, err)
+	}
+	return rule, nil
 }
 
 func (Store) RecordPayeeRuleApplied(ctx context.Context, tx db.Tx, id PayeeRuleID) (PayeeRule, error) {

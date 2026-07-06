@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/npmulder/ledgerly/internal/invoicing"
 	"github.com/npmulder/ledgerly/internal/ledger"
 	"github.com/npmulder/ledgerly/internal/moneyfx/money"
@@ -140,6 +142,36 @@ func TestDLADetectionUsesDirectorNameFixture(t *testing.T) {
 	}
 }
 
+func TestDLAPersonalPatternsUseTokenBoundaries(t *testing.T) {
+	service := NewService(nil, nil, WithDLAPersonalPatterns([]string{"personal"}))
+	for _, payee := range []string{"Personalised Gifts Ltd", "Impersonal Software"} {
+		decision, err := service.dlaDecision(context.Background(), Transaction{
+			ID:     42,
+			Amount: money.Money{Amount: -50000, Currency: "GBP"},
+			Payee:  payee,
+		})
+		if err != nil {
+			t.Fatalf("dlaDecision(%q) error = %v", payee, err)
+		}
+		if decision != nil {
+			t.Fatalf("dlaDecision(%q) = %#v, want no substring false positive", payee, decision.input)
+		}
+	}
+
+	decision, err := service.dlaDecision(context.Background(), Transaction{
+		ID:        43,
+		Amount:    money.Money{Amount: -50000, Currency: "GBP"},
+		Payee:     "Director personal drawing",
+		Reference: "personal",
+	})
+	if err != nil {
+		t.Fatalf("dlaDecision(personal drawing) error = %v", err)
+	}
+	if decision == nil || decision.input.Kind != SuggestionKindDLA {
+		t.Fatalf("dlaDecision(personal drawing) = %#v, want DLA suggestion", decision)
+	}
+}
+
 func TestSuggestionKindPriorityOrderingAllKinds(t *testing.T) {
 	decisions := []suggestionDecision{
 		{input: SuggestionInput{Kind: SuggestionKindDLA, Confidence: 0.82, Target: "director-loan"}},
@@ -238,7 +270,7 @@ func TestPayeeRuleApplicationCountSerializedByTransactionLock(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	service := NewService(pool, ledger.New(ledgerPool))
+	service := NewService(pool, ledger.New(ledgerPool), WithPayeeRuleAutoPostThreshold(1))
 	account, err := service.CreateAccount(ctx, AccountInput{
 		Name:     "Revolut GBP",
 		Provider: ProviderRevolut,
@@ -306,6 +338,21 @@ func TestPayeeRuleApplicationCountSerializedByTransactionLock(t *testing.T) {
 		t.Fatalf("InsertSuggestion(tx1) error = %v", err)
 	}
 
+	staleTxn, err := service.store.Transaction(ctx, tx2, txnID)
+	if err != nil {
+		t.Fatalf("load stale transaction in tx2: %v", err)
+	}
+	staleDecision, err := service.evaluateTransaction(ctx, tx2, staleTxn)
+	if err != nil {
+		t.Fatalf("evaluateTransaction(tx2) error = %v", err)
+	}
+	if staleDecision == nil || staleDecision.payeeRule == nil {
+		t.Fatalf("stale decision = %#v, want payee-rule decision", staleDecision)
+	}
+	if staleDecision.payeeRule.TimesApplied != 0 {
+		t.Fatalf("stale decision times_applied = %d, want pre-commit value 0", staleDecision.payeeRule.TimesApplied)
+	}
+
 	started := make(chan struct{})
 	errCh := make(chan error, 1)
 	go func() {
@@ -326,6 +373,19 @@ func TestPayeeRuleApplicationCountSerializedByTransactionLock(t *testing.T) {
 		}
 		if !recorded {
 			errCh <- fmt.Errorf("PayeeRuleSuggestionRecorded(tx2) = false, want true after tx1 commits")
+			return
+		}
+		currentInput, err := service.payeeRuleSuggestionInputAfterLock(ctx, tx2, txnID, *staleDecision.payeeRule)
+		if err != nil {
+			errCh <- err
+			return
+		}
+		if !currentInput.AutoPostable {
+			errCh <- fmt.Errorf("reloaded payee-rule suggestion auto_postable = false, want true at threshold 1")
+			return
+		}
+		if !strings.Contains(currentInput.Explanation, "applied 1 time") {
+			errCh <- fmt.Errorf("reloaded payee-rule explanation = %q, want current applied count", currentInput.Explanation)
 			return
 		}
 		errCh <- nil
@@ -379,6 +439,46 @@ func TestPayeeRuleApplicationCountSerializedByTransactionLock(t *testing.T) {
 	if lockedTxn.State != TransactionStateExcluded {
 		t.Fatalf("locked transaction state = %q, want excluded", lockedTxn.State)
 	}
+}
+
+func TestTargetedMatchEngineRunsUseStableTransactionOrder(t *testing.T) {
+	pool, ledgerPool := temporaryMigratedBankingDatabase(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	service := NewService(pool, ledger.New(ledgerPool))
+	account, err := service.CreateAccount(ctx, AccountInput{
+		Name:     "Revolut GBP",
+		Provider: ProviderRevolut,
+		Currency: "GBP",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount() error = %v", err)
+	}
+	firstTxn := importSingleBankingTxn(t, ctx, pool, service, account.ID, revolutTestTxn{
+		Date:      time.Date(2026, 7, 5, 9, 0, 0, 0, time.UTC),
+		ID:        "stable-order-1",
+		Payee:     "Stationery Shop",
+		Reference: "office paper",
+		Amount:    money.Money{Amount: -1500, Currency: "GBP"},
+	})
+	secondTxn := importSingleBankingTxn(t, ctx, pool, service, account.ID, revolutTestTxn{
+		Date:      time.Date(2026, 7, 6, 9, 0, 0, 0, time.UTC),
+		ID:        "stable-order-2",
+		Payee:     "Coffee Supplies",
+		Reference: "office coffee",
+		Amount:    money.Money{Amount: -2100, Currency: "GBP"},
+	})
+
+	run, err := service.RunMatchEngine(ctx, MatchEngineTriggerManualRefresh, []TransactionID{secondTxn, firstTxn})
+	if err != nil {
+		t.Fatalf("RunMatchEngine() error = %v", err)
+	}
+	want := []TransactionID{firstTxn, secondTxn}
+	if !slices.Equal(run.TxnsEvaluated, want) {
+		t.Fatalf("txns evaluated = %v, want stable id order %v", run.TxnsEvaluated, want)
+	}
+	assertLastEngineRun(t, ctx, pool, MatchEngineTriggerManualRefresh, want)
 }
 
 func TestMatchEngineInvoiceSentManualRefreshPriorityAndDeterminism(t *testing.T) {
@@ -457,6 +557,50 @@ func TestMatchEngineInvoiceSentManualRefreshPriorityAndDeterminism(t *testing.T)
 	secondProjection := suggestionProjection(activeSuggestion(t, refreshedHistory))
 	if firstProjection != secondProjection {
 		t.Fatalf("determinism projection = %#v then %#v, want identical", firstProjection, secondProjection)
+	}
+}
+
+func TestDefaultInvoiceCandidatesUseSentUnsettledInvoicingRecords(t *testing.T) {
+	pool, ledgerPool := temporaryMigratedBankingDatabase(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	invoicingPool := openBankingTestRolePool(t, ctx, bankingTestDatabaseURL(t), pool.Config().ConnConfig.Database, "ledgerly_invoicing", db.WithModule(invoicing.ModuleName))
+	t.Cleanup(invoicingPool.Close)
+	seedSentInvoiceCandidate(t, ctx, invoicingPool, sentInvoiceSeed{
+		InvoiceID:  "default-source-invoice",
+		Number:     "INV-2026-31",
+		ClientID:   "default-source-client",
+		ClientName: "Default Source Ltd",
+		IssueDate:  time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC),
+		DueDate:    time.Date(2026, 7, 31, 0, 0, 0, 0, time.UTC),
+		Amount:     money.Money{Amount: 310000, Currency: "GBP"},
+	})
+
+	service := NewService(pool, ledger.New(ledgerPool))
+	account, err := service.CreateAccount(ctx, AccountInput{
+		Name:     "Revolut GBP",
+		Provider: ProviderRevolut,
+		Currency: "GBP",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount() error = %v", err)
+	}
+	txnID := importSingleBankingTxn(t, ctx, pool, service, account.ID, revolutTestTxn{
+		Date:      time.Date(2026, 7, 20, 9, 0, 0, 0, time.UTC),
+		ID:        "default-source-match",
+		Payee:     "Default Source Ltd",
+		Reference: "Payment INV-2026-31",
+		Amount:    money.Money{Amount: 310000, Currency: "GBP"},
+	})
+
+	history, err := service.SuggestionsForTransaction(ctx, txnID)
+	if err != nil {
+		t.Fatalf("SuggestionsForTransaction() error = %v", err)
+	}
+	active := activeSuggestion(t, history)
+	if active.Kind != SuggestionKindInvoiceMatch || active.Target != "default-source-invoice" {
+		t.Fatalf("active suggestion = %#v, want default-source invoice match", active)
 	}
 }
 
@@ -655,6 +799,75 @@ func TestManualRefreshClearsStaleSuggestionWhenDecisionDisappears(t *testing.T) 
 		t.Fatalf("active manual suggestion ID = %d, want preserved %d despite match-engine decision", active.ID, manualDecisionSuggestion.ID)
 	}
 	assertStoredTransactionState(t, ctx, pool, manualDecisionTxn, TransactionStateSuggested)
+}
+
+type sentInvoiceSeed struct {
+	InvoiceID  string
+	Number     string
+	ClientID   string
+	ClientName string
+	IssueDate  time.Time
+	DueDate    time.Time
+	Amount     money.Money
+}
+
+func seedSentInvoiceCandidate(t *testing.T, ctx context.Context, pool *pgxpool.Pool, seed sentInvoiceSeed) {
+	t.Helper()
+	address := `{"line1":"1 Test Street","line2":"","locality":"Douglas","region":"","postal_code":"IM1 1AA","country":"IM"}`
+	if _, err := pool.Exec(ctx, `
+INSERT INTO clients (
+	id,
+	name,
+	address,
+	vat_number,
+	default_currency,
+	terms_days,
+	vat_treatment
+) VALUES ($1, $2, $3::jsonb, NULL, $4, 30, 'reverse-charge-eu-b2b')`,
+		seed.ClientID,
+		seed.ClientName,
+		address,
+		seed.Amount.Currency,
+	); err != nil {
+		t.Fatalf("seed invoice client: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+INSERT INTO invoices (
+	id,
+	number,
+	client_id,
+	status,
+	issue_date,
+	due_date,
+	currency,
+	vat_treatment
+) VALUES ($1, $2, $3, 'sent', $4, $5, $6, 'reverse-charge-eu-b2b')`,
+		seed.InvoiceID,
+		seed.Number,
+		seed.ClientID,
+		seed.IssueDate,
+		seed.DueDate,
+		seed.Amount.Currency,
+	); err != nil {
+		t.Fatalf("seed invoice: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+INSERT INTO invoice_lines (
+	id,
+	invoice_id,
+	position,
+	description,
+	qty,
+	unit_price_amount_minor,
+	unit_price_currency
+) VALUES ($1, $2, 1, 'Consulting', 1, $3, $4)`,
+		seed.InvoiceID+"-line-1",
+		seed.InvoiceID,
+		seed.Amount.Amount,
+		seed.Amount.Currency,
+	); err != nil {
+		t.Fatalf("seed invoice line: %v", err)
+	}
 }
 
 type staticDirectorNames []string

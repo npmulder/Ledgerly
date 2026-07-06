@@ -126,18 +126,10 @@ func (s *Service) runMatchEngineTx(ctx context.Context, tx db.Tx, trigger MatchE
 			continue
 		}
 		if decision.payeeRule != nil {
-			rule := *decision.payeeRule
-			recorded, err := s.store.PayeeRuleSuggestionRecorded(ctx, tx, txn.ID, rule.AccountCode)
+			input, err = s.payeeRuleSuggestionInputAfterLock(ctx, tx, lockedTxn.ID, *decision.payeeRule)
 			if err != nil {
 				return MatchEngineRun{}, err
 			}
-			if !recorded {
-				rule, err = s.store.RecordPayeeRuleApplied(ctx, tx, rule.ID)
-				if err != nil {
-					return MatchEngineRun{}, err
-				}
-			}
-			input = payeeRuleSuggestionInput(lockedTxn.ID, rule, s.payeeRuleAutoPostThreshold)
 		}
 		input.CreatedBy = matchEngineCreatedBy(run.ID)
 		suggestion, err := s.store.InsertSuggestion(ctx, tx, input)
@@ -147,6 +139,25 @@ func (s *Service) runMatchEngineTx(ctx context.Context, tx db.Tx, trigger MatchE
 		run.Suggestions = append(run.Suggestions, suggestion)
 	}
 	return run, nil
+}
+
+func (s *Service) payeeRuleSuggestionInputAfterLock(ctx context.Context, tx db.Tx, txnID TransactionID, rule PayeeRule) (SuggestionInput, error) {
+	recorded, err := s.store.PayeeRuleSuggestionRecorded(ctx, tx, txnID, rule.AccountCode)
+	if err != nil {
+		return SuggestionInput{}, err
+	}
+	if recorded {
+		rule, err = s.store.PayeeRule(ctx, tx, rule.ID)
+		if err != nil {
+			return SuggestionInput{}, err
+		}
+	} else {
+		rule, err = s.store.RecordPayeeRuleApplied(ctx, tx, rule.ID)
+		if err != nil {
+			return SuggestionInput{}, err
+		}
+	}
+	return payeeRuleSuggestionInput(txnID, rule, s.payeeRuleAutoPostThreshold), nil
 }
 
 func (s *Service) canWriteMatchEngineSuggestion(ctx context.Context, tx db.Tx, txnID TransactionID) (Transaction, bool, error) {

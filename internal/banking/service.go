@@ -68,6 +68,7 @@ func NewService(pool *pgxpool.Pool, ledgerEnsurer LedgerAccountEnsurer, opts ...
 		ledger:                     ledgerEnsurer,
 		store:                      Store{},
 		parsers:                    defaultParserSnapshot(),
+		invoiceCandidates:          defaultInvoiceCandidateSource(),
 		payeeRuleAutoPostThreshold: DefaultPayeeRuleAutoPostThreshold,
 		dlaPersonalPatterns:        defaultDLAPersonalPatterns(),
 	}
