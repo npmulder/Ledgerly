@@ -17,6 +17,7 @@ require (
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.40.0
 	golang.org/x/crypto v0.43.0
 	gopkg.in/yaml.v3 v3.0.1
+	pgregory.net/rapid v1.3.0
 )
 
 require (
