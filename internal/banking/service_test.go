@@ -32,10 +32,11 @@ func TestMain(m *testing.M) {
 }
 
 func TestCreateAccountEnsuresLedgerOnceAndRetryIsIdempotent(t *testing.T) {
+	pool, _ := temporaryMigratedBankingDatabase(t)
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	pool, _ := temporaryMigratedBankingDatabase(t)
 	ensurer := &recordingEnsurer{}
 	service := NewService(pool, ensurer)
 
@@ -85,10 +86,11 @@ func TestCreateAccountEnsuresLedgerOnceAndRetryIsIdempotent(t *testing.T) {
 }
 
 func TestCreateAccountConcurrentDuplicateReturnsExistingAccount(t *testing.T) {
+	pool, _ := temporaryMigratedBankingDatabase(t)
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	pool, _ := temporaryMigratedBankingDatabase(t)
 	ensurer := newBlockingEnsurer()
 	t.Cleanup(ensurer.Release)
 	service := NewService(pool, ensurer)
@@ -139,10 +141,11 @@ func TestCreateAccountConcurrentDuplicateReturnsExistingAccount(t *testing.T) {
 }
 
 func TestCreateAccountDisambiguatesLedgerCodesForSlugCollisions(t *testing.T) {
+	pool, _ := temporaryMigratedBankingDatabase(t)
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	pool, _ := temporaryMigratedBankingDatabase(t)
 	ensurer := &recordingEnsurer{}
 	service := NewService(pool, ensurer)
 
@@ -174,10 +177,11 @@ func TestCreateAccountDisambiguatesLedgerCodesForSlugCollisions(t *testing.T) {
 }
 
 func TestImportCSVDedupesOverlappingExportsAndReferenceWhitespace(t *testing.T) {
+	bankingPool, ledgerPool := temporaryMigratedBankingDatabase(t)
+
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	bankingPool, ledgerPool := temporaryMigratedBankingDatabase(t)
 	service := NewService(bankingPool, ledger.New(ledgerPool))
 
 	account, err := service.CreateAccount(ctx, AccountInput{
@@ -249,10 +253,11 @@ LIMIT 1`, int64(account.ID)).Scan(&state); err != nil {
 }
 
 func TestImportCSVBlankReferenceFallsBackToPayeeForDedupe(t *testing.T) {
+	bankingPool, ledgerPool := temporaryMigratedBankingDatabase(t)
+
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	bankingPool, ledgerPool := temporaryMigratedBankingDatabase(t)
 	service := NewService(bankingPool, ledger.New(ledgerPool))
 
 	account, err := service.CreateAccount(ctx, AccountInput{
@@ -316,10 +321,11 @@ ORDER BY payee`, int64(account.ID))
 }
 
 func TestImportCSVRejectsMalformedRowsWithoutBatch(t *testing.T) {
+	pool, _ := temporaryMigratedBankingDatabase(t)
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	pool, _ := temporaryMigratedBankingDatabase(t)
 	service := NewService(pool, &recordingEnsurer{})
 	account, err := service.CreateAccount(ctx, AccountInput{
 		Name:     "Revolut GBP",
@@ -348,10 +354,11 @@ func TestImportCSVRejectsMalformedRowsWithoutBatch(t *testing.T) {
 }
 
 func TestImportCSVRejectsCurrencyMismatchWithoutWrites(t *testing.T) {
+	pool, _ := temporaryMigratedBankingDatabase(t)
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	pool, _ := temporaryMigratedBankingDatabase(t)
 	service := NewService(pool, &recordingEnsurer{})
 	account, err := service.CreateAccount(ctx, AccountInput{
 		Name:     "Revolut GBP",
