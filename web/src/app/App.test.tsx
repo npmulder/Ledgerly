@@ -180,6 +180,12 @@ describe("App routing shell", () => {
       if (path === "/api/identity/profile") {
         return jsonResponse(identityProfile());
       }
+      if (path === "/api/dashboard/summary") {
+        return jsonResponse(dashboardSummary());
+      }
+      if (path === "/api/invoicing/clients") {
+        return jsonResponse({ clients: [] });
+      }
       if (path === "/api/identity/logout") {
         return jsonResponse(
           {
@@ -236,6 +242,9 @@ function authenticatedFetch() {
     }
     if (path === "/api/identity/profile") {
       return jsonResponse(identityProfile());
+    }
+    if (path === "/api/dashboard/summary") {
+      return jsonResponse(dashboardSummary());
     }
     if (path === "/api/invoicing/clients") {
       return jsonResponse({ clients: [] });
@@ -430,6 +439,46 @@ function identityProfile() {
     trading_name: "NPM Limited",
     vat_number: null,
     year_end: { day: 31, month: 3 },
+  };
+}
+
+function dashboardSummary() {
+  return {
+    cash: {
+      accounts: [],
+      total_gbp: { amount: 0, currency: "GBP" },
+    },
+    dividendHeadroom: {
+      available: { amount: 0, currency: "GBP" },
+      distributable: true,
+    },
+    dla: {
+      balance: { amount: 0, currency: "GBP" },
+      status: "credit",
+    },
+    errors: [],
+    greeting: {
+      trading_name: "NPM Limited",
+      user_name: "N. Meyer",
+    },
+    outstanding: {
+      earliest_due_date: null,
+      total_gbp: { amount: 0, currency: "GBP" },
+      totals: [],
+    },
+    rate: {
+      fetched_at: "2026-07-06T09:00:00Z",
+      from: "EUR",
+      rate: "0.8500",
+      rate_date: "2026-07-06",
+      source: "ECB daily",
+      to: "GBP",
+    },
+    recentInvoices: [],
+    toReconcile: {
+      accounts: [],
+      review_queue: [],
+    },
   };
 }
 

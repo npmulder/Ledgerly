@@ -829,6 +829,7 @@ export interface components {
             amount: components["schemas"]["DashboardMoney"];
             client: string;
             days_overdue?: number | null;
+            id: string;
             number: string | null;
             status: string;
         };

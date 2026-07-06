@@ -395,6 +395,7 @@ type DashboardRecentInvoice struct {
 	Amount      DashboardMoney `json:"amount"`
 	Client      string         `json:"client"`
 	DaysOverdue *int           `json:"days_overdue"`
+	Id          string         `json:"id"`
 	Number      *string        `json:"number"`
 	Status      string         `json:"status"`
 }
