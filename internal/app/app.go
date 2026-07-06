@@ -302,7 +302,8 @@ func OpenAPIDocument(version string) map[string]any {
 
 func buildInvoicingModule(_ context.Context, deps ModuleDeps) (Module, error) {
 	invoicingModule, err := invoicing.New(invoicing.Config{
-		Pool: deps.InvoicingPool,
+		Pool:  deps.InvoicingPool,
+		Clock: deps.Clock,
 	})
 	if err != nil {
 		return Module{}, err

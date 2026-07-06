@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/npmulder/ledgerly/internal/platform/clock"
 	httpserver "github.com/npmulder/ledgerly/internal/platform/http"
 )
 
@@ -53,6 +54,8 @@ type MoneyAmount struct {
 // Config contains the platform dependencies required by invoicing.
 type Config struct {
 	Pool                *pgxpool.Pool
+	Clock               clock.Clock
+	TodayRate           TodayRateFunc
 	InvoiceUsageChecker InvoiceUsageChecker
 }
 
@@ -66,11 +69,18 @@ func New(cfg Config) (*Module, error) {
 	if cfg.Pool == nil {
 		return nil, fmt.Errorf("invoicing: pool is required")
 	}
+	store := Store{}
+	invoiceUsage := cfg.InvoiceUsageChecker
+	if invoiceUsage == nil {
+		invoiceUsage = storeInvoiceUsageChecker{pool: cfg.Pool, store: store}
+	}
 	return &Module{
 		service: NewService(
 			cfg.Pool,
-			Store{},
-			WithInvoiceUsageChecker(cfg.InvoiceUsageChecker),
+			store,
+			WithClock(cfg.Clock),
+			WithTodayRate(cfg.TodayRate),
+			WithInvoiceUsageChecker(invoiceUsage),
 		),
 	}, nil
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -300,4 +301,429 @@ func moneyFromNullable(amount sql.NullInt64, currency sql.NullString) *MoneyAmou
 		AmountMinor: amount.Int64,
 		Currency:    Currency(currency.String),
 	}
+}
+
+func (s Store) ClientHasInvoices(ctx context.Context, tx db.Tx, clientID string) (bool, error) {
+	var exists bool
+	if err := tx.QueryRow(ctx, `
+SELECT EXISTS (
+	SELECT 1
+	FROM invoices
+	WHERE client_id = $1
+)`, clientID).Scan(&exists); err != nil {
+		return false, fmt.Errorf("invoicing: check client invoices: %w", err)
+	}
+	return exists, nil
+}
+
+func (s Store) Invoice(ctx context.Context, tx db.Tx, id string) (Invoice, error) {
+	invoice, err := scanInvoiceRow(tx.QueryRow(ctx, selectInvoiceSQL()+"\nWHERE id = $1", id))
+	if err != nil {
+		return Invoice{}, err
+	}
+	lines, err := s.InvoiceLines(ctx, tx, id)
+	if err != nil {
+		return Invoice{}, err
+	}
+	invoice.Lines = lines
+	return invoice, nil
+}
+
+func (s Store) InvoiceForUpdate(ctx context.Context, tx db.Tx, id string) (Invoice, error) {
+	invoice, err := scanInvoiceRow(tx.QueryRow(ctx, selectInvoiceSQL()+"\nWHERE id = $1\nFOR UPDATE", id))
+	if err != nil {
+		return Invoice{}, err
+	}
+	lines, err := s.InvoiceLines(ctx, tx, id)
+	if err != nil {
+		return Invoice{}, err
+	}
+	invoice.Lines = lines
+	return invoice, nil
+}
+
+func (Store) InvoiceLines(ctx context.Context, tx db.Tx, invoiceID string) ([]InvoiceLine, error) {
+	rows, err := tx.Query(ctx, `
+SELECT id,
+	invoice_id,
+	position,
+	description,
+	qty::text,
+	unit_price_amount_minor,
+	unit_price_currency
+FROM invoice_lines
+WHERE invoice_id = $1
+ORDER BY position, id`, invoiceID)
+	if err != nil {
+		return nil, fmt.Errorf("invoicing: list invoice lines: %w", err)
+	}
+	defer rows.Close()
+
+	lines, err := pgx.CollectRows(rows, scanInvoiceLine)
+	if err != nil {
+		return nil, fmt.Errorf("invoicing: collect invoice lines: %w", err)
+	}
+	return lines, nil
+}
+
+func (Store) InsertDraftInvoice(ctx context.Context, tx db.Tx, invoice Invoice) (Invoice, error) {
+	return scanInvoiceRow(tx.QueryRow(ctx, `
+INSERT INTO invoices (
+	id,
+	number,
+	client_id,
+	status,
+	issue_date,
+	due_date,
+	currency,
+	lock_id,
+	vat_treatment,
+	settlement_txn_ref,
+	settled_date,
+	settled_amount_minor,
+	settled_amount_currency,
+	pdf_asset
+) VALUES (
+	$1,
+	$2,
+	$3,
+	$4,
+	$5,
+	$6,
+	$7,
+	$8,
+	$9,
+	$10,
+	$11,
+	$12,
+	$13,
+	$14
+)
+RETURNING `+invoiceColumnsSQL(),
+		invoice.ID,
+		nullableString(invoice.Number),
+		invoice.ClientID,
+		string(invoice.Status),
+		invoice.IssueDate,
+		invoice.DueDate,
+		string(invoice.Currency),
+		nullableString(invoice.LockID),
+		string(invoice.VATTreatment),
+		nullableString(invoice.SettlementTxnRef),
+		nullableTime(invoice.SettledDate),
+		nullableInvoiceMoneyAmount(invoice.SettledAmount),
+		nullableInvoiceMoneyCurrency(invoice.SettledAmount),
+		nullableString(invoice.PDFAsset),
+	))
+}
+
+func (s Store) UpdateDraftInvoice(ctx context.Context, tx db.Tx, invoice Invoice) (Invoice, error) {
+	updated, err := scanInvoiceRow(tx.QueryRow(ctx, `
+UPDATE invoices
+SET issue_date = $2,
+	due_date = $3,
+	currency = $4,
+	vat_treatment = $5,
+	pdf_asset = $6,
+	updated_at = now()
+WHERE id = $1
+	AND status = 'draft'
+RETURNING `+invoiceColumnsSQL(),
+		invoice.ID,
+		invoice.IssueDate,
+		invoice.DueDate,
+		string(invoice.Currency),
+		string(invoice.VATTreatment),
+		nullableString(invoice.PDFAsset),
+	))
+	if errors.Is(err, ErrInvoiceNotFound) {
+		exists, existsErr := s.invoiceExists(ctx, tx, invoice.ID)
+		if existsErr != nil {
+			return Invoice{}, existsErr
+		}
+		if exists {
+			return Invoice{}, ErrInvoiceImmutable
+		}
+	}
+	return updated, err
+}
+
+func (Store) ReplaceInvoiceLines(ctx context.Context, tx db.Tx, invoiceID string, lines []InvoiceLine) error {
+	if _, err := tx.Exec(ctx, `DELETE FROM invoice_lines WHERE invoice_id = $1`, invoiceID); err != nil {
+		return fmt.Errorf("invoicing: delete invoice lines: %w", err)
+	}
+	for _, line := range lines {
+		if _, err := tx.Exec(ctx, `
+INSERT INTO invoice_lines (
+	id,
+	invoice_id,
+	position,
+	description,
+	qty,
+	unit_price_amount_minor,
+	unit_price_currency
+) VALUES (
+	$1,
+	$2,
+	$3,
+	$4,
+	$5::numeric,
+	$6,
+	$7
+)`,
+			line.ID,
+			invoiceID,
+			line.Position,
+			line.Description,
+			string(line.Qty),
+			line.UnitPrice.Amount,
+			line.UnitPrice.Currency,
+		); err != nil {
+			return fmt.Errorf("invoicing: insert invoice line: %w", err)
+		}
+	}
+	return nil
+}
+
+func (s Store) DeleteDraft(ctx context.Context, tx db.Tx, id string) error {
+	tag, err := tx.Exec(ctx, `
+DELETE FROM invoices
+WHERE id = $1
+	AND status = 'draft'`, id)
+	if err != nil {
+		return fmt.Errorf("invoicing: delete draft invoice: %w", err)
+	}
+	if tag.RowsAffected() > 0 {
+		return nil
+	}
+	exists, err := s.invoiceExists(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return ErrInvoiceImmutable
+	}
+	return ErrInvoiceNotFound
+}
+
+func (s Store) SetInvoiceSettlement(ctx context.Context, tx db.Tx, id string, settlement InvoiceSettlement) (Invoice, error) {
+	amount, currency := nullableInvoiceMoney(settlement.SettledAmount)
+	updated, err := scanInvoiceRow(tx.QueryRow(ctx, `
+UPDATE invoices
+SET settlement_txn_ref = $2,
+	settled_date = $3,
+	settled_amount_minor = $4,
+	settled_amount_currency = $5,
+	status = CASE WHEN $2::text IS NOT NULL OR $3::date IS NOT NULL OR $4::bigint IS NOT NULL THEN 'paid' ELSE status END,
+	updated_at = now()
+WHERE id = $1
+	AND status IN ('sent', 'paid')
+RETURNING `+invoiceColumnsSQL(),
+		id,
+		nullableString(settlement.TxnRef),
+		nullableTime(settlement.SettledDate),
+		amount,
+		currency,
+	))
+	if errors.Is(err, ErrInvoiceNotFound) {
+		exists, existsErr := s.invoiceExists(ctx, tx, id)
+		if existsErr != nil {
+			return Invoice{}, existsErr
+		}
+		if exists {
+			return Invoice{}, ErrInvoiceImmutable
+		}
+	}
+	return updated, err
+}
+
+func (Store) NextNumber(ctx context.Context, tx db.Tx, year int) (string, error) {
+	if year < 1 || year > 9999 {
+		return "", fmt.Errorf("invoicing: invoice number year %d out of range", year)
+	}
+	if _, err := tx.Exec(ctx, `
+INSERT INTO invoice_numbering (year, last_seq)
+VALUES ($1, 0)
+ON CONFLICT (year) DO NOTHING`, year); err != nil {
+		return "", fmt.Errorf("invoicing: initialize invoice numbering: %w", err)
+	}
+
+	var lastSeq int
+	if err := tx.QueryRow(ctx, `
+SELECT last_seq
+FROM invoice_numbering
+WHERE year = $1
+FOR UPDATE`, year).Scan(&lastSeq); err != nil {
+		return "", fmt.Errorf("invoicing: lock invoice numbering: %w", err)
+	}
+	nextSeq := lastSeq + 1
+	tag, err := tx.Exec(ctx, `
+UPDATE invoice_numbering
+SET last_seq = $2
+WHERE year = $1`, year, nextSeq)
+	if err != nil {
+		return "", fmt.Errorf("invoicing: advance invoice numbering: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return "", fmt.Errorf("invoicing: invoice numbering row disappeared for %d", year)
+	}
+	return fmt.Sprintf("INV-%04d-%02d", year, nextSeq), nil
+}
+
+func (Store) invoiceExists(ctx context.Context, tx db.Tx, id string) (bool, error) {
+	var exists bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM invoices WHERE id = $1)`, id).Scan(&exists); err != nil {
+		return false, fmt.Errorf("invoicing: check invoice exists: %w", err)
+	}
+	return exists, nil
+}
+
+func selectInvoiceSQL() string {
+	return "SELECT " + invoiceColumnsSQL() + "\nFROM invoices"
+}
+
+func invoiceColumnsSQL() string {
+	return `id,
+	number,
+	client_id,
+	status,
+	issue_date,
+	due_date,
+	currency,
+	lock_id,
+	vat_treatment,
+	settlement_txn_ref,
+	settled_date,
+	settled_amount_minor,
+	settled_amount_currency,
+	pdf_asset,
+	created_at,
+	updated_at`
+}
+
+func scanInvoiceRow(row clientRow) (Invoice, error) {
+	var (
+		invoice          Invoice
+		number           sql.NullString
+		status           string
+		currency         string
+		lockID           sql.NullString
+		vatTreatment     string
+		settlementTxnRef sql.NullString
+		settledDate      sql.NullTime
+		settledAmount    sql.NullInt64
+		settledCurrency  sql.NullString
+		pdfAsset         sql.NullString
+	)
+	err := row.Scan(
+		&invoice.ID,
+		&number,
+		&invoice.ClientID,
+		&status,
+		&invoice.IssueDate,
+		&invoice.DueDate,
+		&currency,
+		&lockID,
+		&vatTreatment,
+		&settlementTxnRef,
+		&settledDate,
+		&settledAmount,
+		&settledCurrency,
+		&pdfAsset,
+		&invoice.CreatedAt,
+		&invoice.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Invoice{}, ErrInvoiceNotFound
+	}
+	if err != nil {
+		return Invoice{}, fmt.Errorf("invoicing: scan invoice: %w", err)
+	}
+	if number.Valid {
+		invoice.Number = &number.String
+	}
+	invoice.Status = InvoiceStatus(status)
+	invoice.Currency = Currency(currency)
+	if lockID.Valid {
+		invoice.LockID = &lockID.String
+	}
+	invoice.VATTreatment = VATTreatment(vatTreatment)
+	if settlementTxnRef.Valid {
+		invoice.SettlementTxnRef = &settlementTxnRef.String
+	}
+	if settledDate.Valid {
+		settled := dateOnly(settledDate.Time)
+		invoice.SettledDate = &settled
+	}
+	invoice.SettledAmount = invoiceMoneyFromNullable(settledAmount, settledCurrency)
+	if pdfAsset.Valid {
+		invoice.PDFAsset = &pdfAsset.String
+	}
+	invoice.IssueDate = dateOnly(invoice.IssueDate)
+	invoice.DueDate = dateOnly(invoice.DueDate)
+	invoice.CreatedAt = invoice.CreatedAt.UTC()
+	invoice.UpdatedAt = invoice.UpdatedAt.UTC()
+	return invoice, nil
+}
+
+func scanInvoiceLine(row pgx.CollectableRow) (InvoiceLine, error) {
+	var (
+		line     InvoiceLine
+		qty      string
+		currency string
+	)
+	if err := row.Scan(
+		&line.ID,
+		&line.InvoiceID,
+		&line.Position,
+		&line.Description,
+		&qty,
+		&line.UnitPrice.Amount,
+		&currency,
+	); err != nil {
+		return InvoiceLine{}, fmt.Errorf("invoicing: scan invoice line: %w", err)
+	}
+	line.Qty = Quantity(qty)
+	line.UnitPrice.Currency = currency
+	return line, nil
+}
+
+func nullableTime(value *time.Time) sql.NullTime {
+	if value == nil {
+		return sql.NullTime{}
+	}
+	return sql.NullTime{Time: dateOnly(*value), Valid: true}
+}
+
+func nullableInvoiceMoney(amount *Money) (sql.NullInt64, sql.NullString) {
+	if amount == nil {
+		return sql.NullInt64{}, sql.NullString{}
+	}
+	return sql.NullInt64{Int64: amount.Amount, Valid: true},
+		sql.NullString{String: amount.Currency, Valid: true}
+}
+
+func nullableInvoiceMoneyAmount(amount *Money) sql.NullInt64 {
+	value, _ := nullableInvoiceMoney(amount)
+	return value
+}
+
+func nullableInvoiceMoneyCurrency(amount *Money) sql.NullString {
+	_, value := nullableInvoiceMoney(amount)
+	return value
+}
+
+func invoiceMoneyFromNullable(amount sql.NullInt64, currency sql.NullString) *Money {
+	if !amount.Valid || !currency.Valid {
+		return nil
+	}
+	return &Money{
+		Amount:   amount.Int64,
+		Currency: currency.String,
+	}
+}
+
+func dateOnly(value time.Time) time.Time {
+	year, month, day := value.UTC().Date()
+	return time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
 }
