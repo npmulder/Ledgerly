@@ -224,7 +224,11 @@ func normalizeAccountInput(input AccountInput) (AccountInput, error) {
 }
 
 func ledgerAccountCode(account AccountInput) ledger.AccountCode {
-	return ledger.AccountCode("1000-cash-" + string(account.Provider) + "-" + slug(account.Name) + "-" + strings.ToLower(account.Currency))
+	return ledger.AccountCode("1000-cash-" +
+		string(account.Provider) + "-" +
+		slug(account.Name) + "-" +
+		strings.ToLower(account.Currency) + "-" +
+		accountCodeHash(account))
 }
 
 func ledgerAccountName(account AccountInput) string {
@@ -250,6 +254,11 @@ func slug(value string) string {
 		return "account"
 	}
 	return result
+}
+
+func accountCodeHash(account AccountInput) string {
+	sum := sha256.Sum256([]byte(string(account.Provider) + "\x00" + account.Name + "\x00" + account.Currency))
+	return hex.EncodeToString(sum[:4])
 }
 
 func normalizeMoney(value money.Money) money.Money {

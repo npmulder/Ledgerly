@@ -21,9 +21,11 @@ type RevolutParser struct{}
 type revolutHeader struct {
 	date      int
 	amount    int
+	fee       int
 	currency  int
 	payee     int
 	reference int
+	state     int
 }
 
 var (
@@ -32,9 +34,11 @@ var (
 		{"date started (utc)", "started date", "started at"},
 	}
 	revolutAmountColumns    = []string{"amount"}
-	revolutCurrencyColumns  = []string{"currency"}
+	revolutFeeColumns       = []string{"fee"}
+	revolutCurrencyColumns  = []string{"currency", "payment currency"}
 	revolutPayeeColumns     = []string{"description", "payee", "counterparty", "name"}
 	revolutReferenceColumns = []string{"reference", "description", "id"}
+	revolutStateColumns     = []string{"state"}
 	revolutDateLayouts      = []string{
 		time.RFC3339,
 		"2006-01-02 15:04:05",
@@ -90,9 +94,12 @@ func (RevolutParser) Parse(r io.Reader) ([]RawTxn, error) {
 				Err: fmt.Errorf("got %d fields, want %d: %w", len(record), len(header), ErrInvalidImport),
 			}
 		}
-		txn, err := parseRevolutRecord(header, columns, record)
+		txn, include, err := parseRevolutRecord(header, columns, record)
 		if err != nil {
 			return nil, &ParseRowError{Row: row, Err: err}
+		}
+		if !include {
+			continue
 		}
 		txns = append(txns, txn)
 	}
@@ -114,9 +121,11 @@ func parseRevolutHeader(header []string) (revolutHeader, error) {
 	columns := revolutHeader{
 		date:      dateColumn,
 		amount:    revolutColumn(index, revolutAmountColumns),
+		fee:       revolutColumn(index, revolutFeeColumns),
 		currency:  revolutColumn(index, revolutCurrencyColumns),
 		payee:     revolutColumn(index, revolutPayeeColumns),
 		reference: revolutColumn(index, revolutReferenceColumns),
+		state:     revolutColumn(index, revolutStateColumns),
 	}
 	missing := []string{}
 	if columns.date < 0 {
@@ -137,23 +146,38 @@ func parseRevolutHeader(header []string) (revolutHeader, error) {
 	return columns, nil
 }
 
-func parseRevolutRecord(header []string, columns revolutHeader, record []string) (RawTxn, error) {
+func parseRevolutRecord(header []string, columns revolutHeader, record []string) (RawTxn, bool, error) {
+	if columns.state >= 0 && !revolutStateCompleted(record[columns.state]) {
+		return RawTxn{}, false, nil
+	}
 	date, err := parseRevolutDate(record[columns.date])
 	if err != nil {
-		return RawTxn{}, err
+		return RawTxn{}, false, err
 	}
 	currency := strings.ToUpper(strings.TrimSpace(record[columns.currency]))
 	amount, err := money.ParseAmount(record[columns.amount], currency)
 	if err != nil {
-		return RawTxn{}, err
+		return RawTxn{}, false, err
+	}
+	if columns.fee >= 0 && strings.TrimSpace(record[columns.fee]) != "" {
+		fee, err := money.ParseAmount(record[columns.fee], currency)
+		if err != nil {
+			return RawTxn{}, false, err
+		}
+		amount, err = amount.Add(fee)
+		if err != nil {
+			return RawTxn{}, false, err
+		}
 	}
 	payee := strings.TrimSpace(record[columns.payee])
 	if payee == "" {
-		return RawTxn{}, fmt.Errorf("payee is required: %w", ErrInvalidImport)
+		return RawTxn{}, false, fmt.Errorf("payee is required: %w", ErrInvalidImport)
 	}
 	reference := payee
 	if columns.reference >= 0 {
-		reference = strings.TrimSpace(record[columns.reference])
+		if value := strings.TrimSpace(record[columns.reference]); value != "" {
+			reference = value
+		}
 	}
 	providerMeta := make(map[string]string, len(header))
 	for i, name := range header {
@@ -165,7 +189,7 @@ func parseRevolutRecord(header []string, columns revolutHeader, record []string)
 		Payee:        payee,
 		Reference:    reference,
 		ProviderMeta: providerMeta,
-	}, nil
+	}, true, nil
 }
 
 func revolutColumn(index map[string]int, aliases []string) int {
@@ -194,6 +218,10 @@ func parseRevolutDate(value string) (time.Time, error) {
 		}
 	}
 	return time.Time{}, fmt.Errorf("date %q is not a supported Revolut date: %w", value, ErrInvalidImport)
+}
+
+func revolutStateCompleted(value string) bool {
+	return strings.EqualFold(strings.TrimSpace(value), "completed")
 }
 
 func blankCSVRecord(record []string) bool {

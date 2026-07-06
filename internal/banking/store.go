@@ -57,20 +57,31 @@ WHERE id = $1`, int64(id)))
 	return account, nil
 }
 
-func (Store) InsertAccount(ctx context.Context, tx db.Tx, input AccountInput, code ledger.AccountCode) (BankAccount, error) {
+func (s Store) InsertAccount(ctx context.Context, tx db.Tx, input AccountInput, code ledger.AccountCode) (BankAccount, error) {
 	account, err := scanAccountRow(tx.QueryRow(ctx, `
 INSERT INTO bank_accounts (name, provider, currency, ledger_account_code)
 VALUES ($1, $2, $3, $4)
+ON CONFLICT DO NOTHING
 RETURNING id, name, provider, currency, ledger_account_code, created_at`,
 		input.Name,
 		string(input.Provider),
 		input.Currency,
 		string(code),
 	))
-	if err != nil {
-		return BankAccount{}, fmt.Errorf("banking: insert account: %w", err)
+	if err == nil {
+		return account, nil
 	}
-	return account, nil
+	if errors.Is(err, pgx.ErrNoRows) {
+		account, found, loadErr := s.AccountByNaturalKey(ctx, tx, input)
+		if loadErr != nil {
+			return BankAccount{}, loadErr
+		}
+		if found {
+			return account, nil
+		}
+		return BankAccount{}, fmt.Errorf("banking: insert account conflict without matching natural key: %w", ErrInvalidAccount)
+	}
+	return BankAccount{}, fmt.Errorf("banking: insert account: %w", err)
 }
 
 func (Store) InsertImportBatch(ctx context.Context, tx db.Tx, accountID AccountID, filename string, totalRows int) (BatchSummary, error) {

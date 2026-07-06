@@ -43,6 +43,33 @@ func TestRevolutParserGolden(t *testing.T) {
 	})
 }
 
+func TestRevolutParserBusinessStateFeeAndReferenceFallback(t *testing.T) {
+	t.Parallel()
+
+	sample := strings.NewReader(`Date completed (UTC),ID,Description,Reference,Amount,Fee,Payment currency,State
+2026-06-01 10:00:00,rev-completed,Card merchant,,-10.00,-0.50,GBP,COMPLETED
+,rev-pending,Pending merchant,Pending reference,not-money,0.00,GBP,PENDING
+2026-06-02 10:00:00,rev-reverted,Reverted merchant,Reverted reference,-3.00,0.00,GBP,REVERTED
+`)
+
+	got, err := (RevolutParser{}).Parse(sample)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("len(Parse) = %d, want only completed rows", len(got))
+	}
+	assertRawTxn(t, got[0], RawTxn{
+		Date:      time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+		Amount:    money.Money{Amount: -1050, Currency: "GBP"},
+		Payee:     "Card merchant",
+		Reference: "Card merchant",
+	})
+	if got[0].ProviderMeta["Payment currency"] != "GBP" || got[0].ProviderMeta["Fee"] != "-0.50" {
+		t.Fatalf("ProviderMeta = %#v, want raw business currency and fee fields", got[0].ProviderMeta)
+	}
+}
+
 func TestRevolutParserMalformedRowReportsRowNumber(t *testing.T) {
 	t.Parallel()
 

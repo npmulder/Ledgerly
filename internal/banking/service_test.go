@@ -84,6 +84,95 @@ func TestCreateAccountEnsuresLedgerOnceAndRetryIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestCreateAccountConcurrentDuplicateReturnsExistingAccount(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	pool, _ := temporaryMigratedBankingDatabase(t)
+	ensurer := newBlockingEnsurer()
+	t.Cleanup(ensurer.Release)
+	service := NewService(pool, ensurer)
+
+	results := make(chan accountCreateResult, 2)
+	for range 2 {
+		go func() {
+			account, err := service.CreateAccount(ctx, AccountInput{
+				Name:     "Revolut Race",
+				Provider: ProviderRevolut,
+				Currency: "GBP",
+			})
+			results <- accountCreateResult{account: account, err: err}
+		}()
+	}
+
+	for i := 0; i < 2; i++ {
+		select {
+		case <-ensurer.arrived:
+		case <-ctx.Done():
+			t.Fatalf("waiting for concurrent EnsureAccount calls: %v", ctx.Err())
+		}
+	}
+	ensurer.Release()
+
+	first := <-results
+	second := <-results
+	if first.err != nil {
+		t.Fatalf("first CreateAccount() error = %v", first.err)
+	}
+	if second.err != nil {
+		t.Fatalf("second CreateAccount() error = %v", second.err)
+	}
+	if first.account.ID != second.account.ID {
+		t.Fatalf("concurrent IDs = %d and %d, want same account", first.account.ID, second.account.ID)
+	}
+
+	var accounts int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM bank_accounts`).Scan(&accounts); err != nil {
+		t.Fatalf("count bank accounts: %v", err)
+	}
+	if accounts != 1 {
+		t.Fatalf("bank account count = %d, want 1", accounts)
+	}
+	if ensurer.Calls() != 2 {
+		t.Fatalf("EnsureAccount calls = %d, want 2 concurrent attempts", ensurer.Calls())
+	}
+}
+
+func TestCreateAccountDisambiguatesLedgerCodesForSlugCollisions(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	pool, _ := temporaryMigratedBankingDatabase(t)
+	ensurer := &recordingEnsurer{}
+	service := NewService(pool, ensurer)
+
+	first, err := service.CreateAccount(ctx, AccountInput{
+		Name:     "Revolut Main",
+		Provider: ProviderRevolut,
+		Currency: "GBP",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount() first error = %v", err)
+	}
+	second, err := service.CreateAccount(ctx, AccountInput{
+		Name:     "revolut-main",
+		Provider: ProviderRevolut,
+		Currency: "GBP",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount() second error = %v", err)
+	}
+	if first.ID == second.ID {
+		t.Fatalf("account IDs both = %d, want distinct accounts", first.ID)
+	}
+	if first.LedgerAccountCode == second.LedgerAccountCode {
+		t.Fatalf("ledger account code collision = %q", first.LedgerAccountCode)
+	}
+	if ensurer.calls != 2 {
+		t.Fatalf("EnsureAccount calls = %d, want 2", ensurer.calls)
+	}
+}
+
 func TestImportCSVDedupesOverlappingExportsAndReferenceWhitespace(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -156,6 +245,73 @@ LIMIT 1`, int64(account.ID)).Scan(&state); err != nil {
 	}
 	if state != string(TransactionStateUnreconciled) {
 		t.Fatalf("state = %q, want unreconciled", state)
+	}
+}
+
+func TestImportCSVBlankReferenceFallsBackToPayeeForDedupe(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	bankingPool, ledgerPool := temporaryMigratedBankingDatabase(t)
+	service := NewService(bankingPool, ledger.New(ledgerPool))
+
+	account, err := service.CreateAccount(ctx, AccountInput{
+		Name:     "Revolut GBP",
+		Provider: ProviderRevolut,
+		Currency: "GBP",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount() error = %v", err)
+	}
+
+	date := time.Date(2026, 4, 3, 9, 0, 0, 0, time.UTC)
+	summary, err := service.ImportCSV(ctx, account.ID, ImportFile{
+		Filename: "blank-reference.csv",
+		Reader: bytes.NewReader(revolutTestCSV(
+			revolutTestTxn{
+				Date:           date,
+				ID:             "blank-ref-a",
+				Payee:          "Alpha Ltd",
+				BlankReference: true,
+				Amount:         money.Money{Amount: -2500, Currency: "GBP"},
+			},
+			revolutTestTxn{
+				Date:           date,
+				ID:             "blank-ref-b",
+				Payee:          "Beta Ltd",
+				BlankReference: true,
+				Amount:         money.Money{Amount: -2500, Currency: "GBP"},
+			},
+		)),
+	})
+	if err != nil {
+		t.Fatalf("ImportCSV() error = %v", err)
+	}
+	assertBatchCounts(t, summary, 2, 2, 0)
+
+	rows, err := bankingPool.Query(ctx, `
+SELECT payee, reference
+FROM transactions
+WHERE account_id = $1
+ORDER BY payee`, int64(account.ID))
+	if err != nil {
+		t.Fatalf("query transactions: %v", err)
+	}
+	defer rows.Close()
+
+	got := map[string]string{}
+	for rows.Next() {
+		var payee, reference string
+		if err := rows.Scan(&payee, &reference); err != nil {
+			t.Fatalf("scan transaction: %v", err)
+		}
+		got[payee] = reference
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate transactions: %v", err)
+	}
+	if len(got) != 2 || got["Alpha Ltd"] != "Alpha Ltd" || got["Beta Ltd"] != "Beta Ltd" {
+		t.Fatalf("transaction references = %#v, want payee fallbacks", got)
 	}
 }
 
@@ -241,6 +397,50 @@ func (r *recordingEnsurer) EnsureAccount(_ context.Context, _ db.Tx, spec ledger
 	return spec.Code, nil
 }
 
+type accountCreateResult struct {
+	account BankAccount
+	err     error
+}
+
+type blockingEnsurer struct {
+	mu      sync.Mutex
+	once    sync.Once
+	arrived chan struct{}
+	release chan struct{}
+	calls   int
+	specs   []ledger.AccountSpec
+}
+
+func newBlockingEnsurer() *blockingEnsurer {
+	return &blockingEnsurer{
+		arrived: make(chan struct{}, 2),
+		release: make(chan struct{}),
+	}
+}
+
+func (b *blockingEnsurer) EnsureAccount(_ context.Context, _ db.Tx, spec ledger.AccountSpec) (ledger.AccountCode, error) {
+	b.mu.Lock()
+	b.calls++
+	b.specs = append(b.specs, spec)
+	b.mu.Unlock()
+
+	b.arrived <- struct{}{}
+	<-b.release
+	return spec.Code, nil
+}
+
+func (b *blockingEnsurer) Release() {
+	b.once.Do(func() {
+		close(b.release)
+	})
+}
+
+func (b *blockingEnsurer) Calls() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.calls
+}
+
 func assertBatchCounts(t *testing.T, summary BatchSummary, total int, newRows int, duplicateRows int) {
 	t.Helper()
 	if summary.TotalRows != total || summary.NewRows != newRows || summary.DuplicateRows != duplicateRows {
@@ -278,12 +478,15 @@ type queryRower interface {
 }
 
 type revolutTestTxn struct {
-	Date      time.Time
-	ID        string
-	Payee     string
-	Reference string
-	Amount    money.Money
-	Balance   money.Money
+	Date           time.Time
+	ID             string
+	Payee          string
+	Reference      string
+	BlankReference bool
+	Amount         money.Money
+	Fee            money.Money
+	State          string
+	Balance        money.Money
 }
 
 func revolutTestCSV(txns ...revolutTestTxn) []byte {
@@ -314,8 +517,17 @@ func revolutTestCSV(txns ...revolutTestTxn) []byte {
 		if txn.Payee == "" {
 			txn.Payee = fmt.Sprintf("Test payee %d", i+1)
 		}
-		if txn.Reference == "" {
-			txn.Reference = txn.Payee
+		reference := txn.Reference
+		if reference == "" && !txn.BlankReference {
+			reference = txn.Payee
+		}
+		fee := txn.Fee
+		if fee.Currency == "" {
+			fee = money.Money{Amount: 0, Currency: txn.Amount.Currency}
+		}
+		state := txn.State
+		if state == "" {
+			state = "COMPLETED"
 		}
 		if txn.Balance.Currency == "" {
 			txn.Balance = money.Money{Amount: txn.Amount.Amount, Currency: txn.Amount.Currency}
@@ -326,11 +538,11 @@ func revolutTestCSV(txns ...revolutTestTxn) []byte {
 			txn.ID,
 			"CARD_PAYMENT",
 			txn.Payee,
-			txn.Reference,
+			reference,
 			formatTestAmount(txn.Amount),
-			"0.00",
+			formatTestAmount(fee),
 			txn.Amount.Currency,
-			"COMPLETED",
+			state,
 			formatTestAmount(txn.Balance),
 		}); err != nil {
 			panic(err)
