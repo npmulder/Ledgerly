@@ -7,6 +7,8 @@ import (
 	"io"
 	"time"
 
+	"github.com/npmulder/ledgerly/internal/dla"
+	"github.com/npmulder/ledgerly/internal/invoicing"
 	"github.com/npmulder/ledgerly/internal/ledger"
 	"github.com/npmulder/ledgerly/internal/moneyfx/money"
 	"github.com/npmulder/ledgerly/internal/platform/db"
@@ -79,12 +81,40 @@ var (
 	ErrInvalidTransactionFilter = errors.New("banking: invalid transaction filter")
 	ErrSuggestionNotFound       = errors.New("banking: suggestion not found")
 	ErrPayeeRuleNotFound        = errors.New("banking: payee rule not found")
+	ErrInvalidReconciliation    = errors.New("banking: invalid reconciliation")
+	ErrAlreadyReconciled        = errors.New("banking: already reconciled")
 )
 
 // LedgerAccountEnsurer is the ledger capability banking needs when creating
 // cash accounts. ledger.Service satisfies this interface.
 type LedgerAccountEnsurer interface {
 	EnsureAccount(context.Context, db.Tx, ledger.AccountSpec) (ledger.AccountCode, error)
+}
+
+// LedgerJournal is the ledger posting capability used by reconciliation
+// commands. ledger.Service satisfies this interface.
+type LedgerJournal interface {
+	Post(context.Context, db.Tx, ledger.NewJournalEntry) (ledger.EntryID, error)
+}
+
+// MoneyFX supplies transaction-date GBP conversion and same-transaction
+// realised-FX lookup for reconciliation commands. moneyfx.Service and
+// moneyfx.Module satisfy this interface.
+type MoneyFX interface {
+	ToGBP(context.Context, money.Money, time.Time) (money.Money, error)
+	RealisedFXAmount(context.Context, db.Tx, string) (money.Money, error)
+}
+
+// InvoiceSettler is the invoicing command banking calls when confirming an
+// invoice match. invoicing.Service satisfies this interface.
+type InvoiceSettler interface {
+	MarkSettled(context.Context, db.Tx, string, string, time.Time, invoicing.Money) (invoicing.Invoice, error)
+}
+
+// DLAFileDrawer is the DLA command banking calls when filing a bank
+// transaction as a director drawing. dla.Service satisfies this interface.
+type DLAFileDrawer interface {
+	FileDrawing(context.Context, db.Tx, dla.TxnRef) error
 }
 
 type BankAccount struct {
@@ -194,6 +224,47 @@ type ReconciledTransaction struct {
 	Transaction  Transaction
 	ReconciledAt time.Time
 	Actor        string
+}
+
+type ConfirmMatchResult struct {
+	Transaction   Transaction
+	Kind          SuggestionKind
+	InvoiceID     string
+	RealisedFXGBP money.Money
+}
+
+type FileToDLAResult struct {
+	Transaction Transaction
+	Kind        SuggestionKind
+	AmountGBP   money.Money
+}
+
+type RecodeResult struct {
+	Transaction Transaction
+	Kind        SuggestionKind
+	Rule        PayeeRule
+}
+
+type AlreadyReconciledError struct {
+	TransactionID TransactionID
+	State         TransactionState
+}
+
+func (e *AlreadyReconciledError) Error() string {
+	if e == nil {
+		return ErrAlreadyReconciled.Error()
+	}
+	if e.TransactionID <= 0 {
+		return ErrAlreadyReconciled.Error()
+	}
+	if e.State == "" {
+		return fmt.Sprintf("banking: transaction %d is already reconciled", e.TransactionID)
+	}
+	return fmt.Sprintf("banking: transaction %d is already %s", e.TransactionID, e.State)
+}
+
+func (e *AlreadyReconciledError) Unwrap() error {
+	return ErrAlreadyReconciled
 }
 
 type ImportFile struct {

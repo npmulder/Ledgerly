@@ -73,6 +73,11 @@ func (m *Module) ToGBP(ctx context.Context, amount money.Money, date time.Time) 
 	return m.service.ToGBP(ctx, amount, date)
 }
 
+// RealisedFXAmount reads the realised-FX dedupe amount for invoiceID inside tx.
+func (m *Module) RealisedFXAmount(ctx context.Context, tx db.Tx, invoiceID string) (money.Money, error) {
+	return m.service.RealisedFXAmount(ctx, tx, invoiceID)
+}
+
 // HTTPModule returns the platform route mount for this module.
 func (m *Module) HTTPModule() httpserver.Module {
 	return httpserver.Module{
