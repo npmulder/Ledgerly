@@ -3,30 +3,39 @@ package banking
 import (
 	"bytes"
 	"context"
+	"encoding/csv"
 	"errors"
+	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/modules/postgres"
 
-	"github.com/npmulder/ledgerly/internal/it/fixtures"
-	"github.com/npmulder/ledgerly/internal/it/testdb"
 	"github.com/npmulder/ledgerly/internal/ledger"
 	"github.com/npmulder/ledgerly/internal/moneyfx/money"
 	"github.com/npmulder/ledgerly/internal/platform/db"
 )
 
 func TestMain(m *testing.M) {
-	os.Exit(testdb.Main(m))
+	code := m.Run()
+	if bankingPostgres.container != nil {
+		_ = testcontainers.TerminateContainer(bankingPostgres.container)
+	}
+	os.Exit(code)
 }
 
 func TestCreateAccountEnsuresLedgerOnceAndRetryIsIdempotent(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	pool := testdb.AsModule(t, ModuleName)
+	pool, _ := temporaryMigratedBankingDatabase(t)
 	ensurer := &recordingEnsurer{}
 	service := NewService(pool, ensurer)
 
@@ -79,8 +88,7 @@ func TestImportCSVDedupesOverlappingExportsAndReferenceWhitespace(t *testing.T) 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	bankingPool := testdb.AsModule(t, ModuleName)
-	ledgerPool := testdb.AsModule(t, ledger.ModuleName)
+	bankingPool, ledgerPool := temporaryMigratedBankingDatabase(t)
 	service := NewService(bankingPool, ledger.New(ledgerPool))
 
 	account, err := service.CreateAccount(ctx, AccountInput{
@@ -92,7 +100,7 @@ func TestImportCSVDedupesOverlappingExportsAndReferenceWhitespace(t *testing.T) 
 		t.Fatalf("CreateAccount() error = %v", err)
 	}
 
-	txnA := fixtures.RevolutTxn{
+	txnA := revolutTestTxn{
 		Date:      time.Date(2026, 4, 1, 8, 30, 0, 0, time.UTC),
 		ID:        "rev-a-1",
 		Payee:     "ACME & Sons",
@@ -102,7 +110,7 @@ func TestImportCSVDedupesOverlappingExportsAndReferenceWhitespace(t *testing.T) 
 	}
 	first, err := service.ImportCSV(ctx, account.ID, ImportFile{
 		Filename: "statement-a.csv",
-		Reader:   bytes.NewReader(fixtures.RevolutCSV(txnA)),
+		Reader:   bytes.NewReader(revolutTestCSV(txnA)),
 	})
 	if err != nil {
 		t.Fatalf("ImportCSV() first error = %v", err)
@@ -112,7 +120,7 @@ func TestImportCSVDedupesOverlappingExportsAndReferenceWhitespace(t *testing.T) 
 	txnADuplicate := txnA
 	txnADuplicate.ID = "rev-a-1-export-2"
 	txnADuplicate.Reference = " Invoice 1001 "
-	txnB := fixtures.RevolutTxn{
+	txnB := revolutTestTxn{
 		Date:      time.Date(2026, 4, 2, 9, 0, 0, 0, time.UTC),
 		ID:        "rev-b-1",
 		Payee:     "Beta Ltd",
@@ -122,7 +130,7 @@ func TestImportCSVDedupesOverlappingExportsAndReferenceWhitespace(t *testing.T) 
 	}
 	second, err := service.ImportCSV(ctx, account.ID, ImportFile{
 		Filename: "statement-a-plus-b.csv",
-		Reader:   bytes.NewReader(fixtures.RevolutCSV(txnADuplicate, txnB)),
+		Reader:   bytes.NewReader(revolutTestCSV(txnADuplicate, txnB)),
 	})
 	if err != nil {
 		t.Fatalf("ImportCSV() second error = %v", err)
@@ -155,7 +163,7 @@ func TestImportCSVRejectsMalformedRowsWithoutBatch(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	pool := testdb.AsModule(t, ModuleName)
+	pool, _ := temporaryMigratedBankingDatabase(t)
 	service := NewService(pool, &recordingEnsurer{})
 	account, err := service.CreateAccount(ctx, AccountInput{
 		Name:     "Revolut GBP",
@@ -187,7 +195,7 @@ func TestImportCSVRejectsCurrencyMismatchWithoutWrites(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	pool := testdb.AsModule(t, ModuleName)
+	pool, _ := temporaryMigratedBankingDatabase(t)
 	service := NewService(pool, &recordingEnsurer{})
 	account, err := service.CreateAccount(ctx, AccountInput{
 		Name:     "Revolut GBP",
@@ -197,7 +205,7 @@ func TestImportCSVRejectsCurrencyMismatchWithoutWrites(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateAccount() error = %v", err)
 	}
-	csvBytes := fixtures.RevolutCSV(fixtures.RevolutTxn{
+	csvBytes := revolutTestCSV(revolutTestTxn{
 		Date:      time.Date(2026, 5, 1, 10, 0, 0, 0, time.UTC),
 		ID:        "rev-eur-1",
 		Payee:     "EUR payer",
@@ -267,4 +275,204 @@ func assertNoImportRows(t *testing.T, ctx context.Context, pool queryRower, acco
 
 type queryRower interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+type revolutTestTxn struct {
+	Date      time.Time
+	ID        string
+	Payee     string
+	Reference string
+	Amount    money.Money
+	Balance   money.Money
+}
+
+func revolutTestCSV(txns ...revolutTestTxn) []byte {
+	var buf bytes.Buffer
+	writer := csv.NewWriter(&buf)
+	if err := writer.Write([]string{
+		"Date started (UTC)",
+		"Date completed (UTC)",
+		"ID",
+		"Type",
+		"Description",
+		"Reference",
+		"Amount",
+		"Fee",
+		"Currency",
+		"State",
+		"Balance",
+	}); err != nil {
+		panic(err)
+	}
+	for i, txn := range txns {
+		if txn.Date.IsZero() {
+			txn.Date = time.Date(2030, 1, 2+i, 12, 0, 0, 0, time.UTC)
+		}
+		if txn.ID == "" {
+			txn.ID = fmt.Sprintf("rev-test-%03d", i+1)
+		}
+		if txn.Payee == "" {
+			txn.Payee = fmt.Sprintf("Test payee %d", i+1)
+		}
+		if txn.Reference == "" {
+			txn.Reference = txn.Payee
+		}
+		if txn.Balance.Currency == "" {
+			txn.Balance = money.Money{Amount: txn.Amount.Amount, Currency: txn.Amount.Currency}
+		}
+		if err := writer.Write([]string{
+			txn.Date.Format("2006-01-02 15:04:05"),
+			txn.Date.Format("2006-01-02 15:04:05"),
+			txn.ID,
+			"CARD_PAYMENT",
+			txn.Payee,
+			txn.Reference,
+			formatTestAmount(txn.Amount),
+			"0.00",
+			txn.Amount.Currency,
+			"COMPLETED",
+			formatTestAmount(txn.Balance),
+		}); err != nil {
+			panic(err)
+		}
+	}
+	writer.Flush()
+	if err := writer.Error(); err != nil {
+		panic(err)
+	}
+	return buf.Bytes()
+}
+
+func formatTestAmount(amount money.Money) string {
+	sign := ""
+	value := amount.Amount
+	if value < 0 {
+		sign = "-"
+		value = -value
+	}
+	return fmt.Sprintf("%s%d.%02d", sign, value/100, value%100)
+}
+
+var bankingPostgres struct {
+	once      sync.Once
+	url       string
+	container *postgres.PostgresContainer
+	err       error
+}
+
+func temporaryMigratedBankingDatabase(t testing.TB) (*pgxpool.Pool, *pgxpool.Pool) {
+	t.Helper()
+
+	databaseURL := bankingTestDatabaseURL(t)
+	adminPool, err := db.OpenURL(context.Background(), databaseURL)
+	if err != nil {
+		t.Fatalf("OpenURL() admin error = %v", err)
+	}
+	t.Cleanup(adminPool.Close)
+
+	dbName := fmt.Sprintf("ledgerly_test_banking_%d", time.Now().UnixNano())
+	if _, err := adminPool.Exec(context.Background(), "CREATE DATABASE "+pgx.Identifier{dbName}.Sanitize()); err != nil {
+		t.Skipf("CREATE DATABASE unavailable for banking migration test: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = adminPool.Exec(context.Background(), "DROP DATABASE IF EXISTS "+pgx.Identifier{dbName}.Sanitize()+" WITH (FORCE)")
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	t.Cleanup(cancel)
+
+	migrationPool := openBankingTestPool(t, ctx, databaseURL, dbName)
+	if _, err := db.MigrateDir(ctx, migrationPool, filepath.Join(findRepoRoot(t), "db", "migrations")); err != nil {
+		t.Fatalf("MigrateDir() error = %v", err)
+	}
+	migrationPool.Close()
+
+	bankingPool := openBankingTestPool(t, ctx, databaseURL, dbName, db.WithModule(ModuleName))
+	ledgerPool := openBankingTestPool(t, ctx, databaseURL, dbName, db.WithModule(ledger.ModuleName))
+	t.Cleanup(bankingPool.Close)
+	t.Cleanup(ledgerPool.Close)
+
+	return bankingPool, ledgerPool
+}
+
+func bankingTestDatabaseURL(t testing.TB) string {
+	t.Helper()
+
+	if databaseURL := strings.TrimSpace(os.Getenv("LEDGERLY_TEST_DB")); databaseURL != "" {
+		return databaseURL
+	}
+
+	bankingPostgres.once.Do(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+
+		container, err := postgres.Run(
+			ctx,
+			"postgres:16-alpine",
+			postgres.WithDatabase("ledgerly_admin"),
+			postgres.WithUsername("postgres"),
+			postgres.WithPassword("postgres"),
+			postgres.BasicWaitStrategies(),
+		)
+		if err != nil {
+			bankingPostgres.err = err
+			return
+		}
+		url, err := container.ConnectionString(ctx, "sslmode=disable")
+		if err != nil {
+			_ = testcontainers.TerminateContainer(container)
+			bankingPostgres.err = err
+			return
+		}
+		bankingPostgres.container = container
+		bankingPostgres.url = url
+	})
+	if bankingPostgres.err != nil {
+		t.Skipf("banking Postgres tests require Docker or LEDGERLY_TEST_DB: %v", bankingPostgres.err)
+	}
+	return bankingPostgres.url
+}
+
+func openBankingTestPool(t testing.TB, ctx context.Context, databaseURL string, dbName string, opts ...db.PoolOption) *pgxpool.Pool {
+	t.Helper()
+
+	cfg, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		t.Fatalf("ParseConfig() error = %v", err)
+	}
+	cfg.ConnConfig.Database = dbName
+	for _, opt := range opts {
+		if err := opt(cfg); err != nil {
+			t.Fatalf("pool option error = %v", err)
+		}
+	}
+
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatalf("NewWithConfig() error = %v", err)
+	}
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		t.Fatalf("Ping() error = %v", err)
+	}
+	return pool
+}
+
+func findRepoRoot(t testing.TB) string {
+	t.Helper()
+
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatal("could not find repository root containing go.mod")
+		}
+		dir = parent
+	}
 }
