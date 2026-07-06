@@ -34,6 +34,7 @@ type Service struct {
 	clock              clock.Clock
 	todayRate          TodayRateFunc
 	rateLocker         RateLocker
+	rateLocks          RateLockReader
 	ledger             LedgerJournal
 	eventBus           *bus.Bus
 	invoiceUsage       InvoiceUsageChecker
@@ -77,6 +78,19 @@ func WithRateLocker(locker RateLocker) ServiceOption {
 	return func(s *Service) {
 		if locker != nil {
 			s.rateLocker = locker
+			if reader, ok := locker.(RateLockReader); ok && s.rateLocks == nil {
+				s.rateLocks = reader
+			}
+		}
+	}
+}
+
+// WithRateLockReader installs the moneyfx lock read dependency used by list
+// totals for sent and paid invoices.
+func WithRateLockReader(reader RateLockReader) ServiceOption {
+	return func(s *Service) {
+		if reader != nil {
+			s.rateLocks = reader
 		}
 	}
 }
@@ -179,6 +193,15 @@ func (s *Service) CreateDraft(ctx context.Context, clientID string) (_ Invoice, 
 // Invoice returns an invoice with computed line totals and invoice totals.
 func (s *Service) Invoice(ctx context.Context, id string) (Invoice, error) {
 	invoice, err := s.store.Invoice(ctx, s.pool, strings.TrimSpace(id))
+	if err != nil {
+		return Invoice{}, err
+	}
+	return s.withComputedTotals(ctx, invoice)
+}
+
+// InvoiceByNumber returns an invoice by its immutable sent invoice number.
+func (s *Service) InvoiceByNumber(ctx context.Context, number string) (Invoice, error) {
+	invoice, err := s.store.InvoiceByNumber(ctx, s.pool, strings.TrimSpace(number))
 	if err != nil {
 		return Invoice{}, err
 	}

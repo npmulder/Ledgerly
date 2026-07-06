@@ -161,6 +161,136 @@ func (s *PostgresStore) DeleteExpiredSessions(ctx context.Context, now time.Time
 	return nil
 }
 
+func (s *PostgresStore) CreatePAT(ctx context.Context, userID int64, tokenHash []byte, name string, scope PATScope, expiresAt *time.Time) (PersonalAccessToken, error) {
+	var token PersonalAccessToken
+	var lastUsed pgtype.Timestamptz
+	var expires pgtype.Timestamptz
+	err := s.pool.QueryRow(
+		ctx,
+		`INSERT INTO identity.pats (token_sha256, user_id, name, scope, expires_at)
+		 VALUES ($1, $2, $3, $4, $5)
+		 RETURNING id, name, scope, created_at, last_used_at, expires_at`,
+		tokenHash,
+		userID,
+		name,
+		string(scope),
+		expiresAt,
+	).Scan(&token.ID, &token.Name, &token.Scope, &token.CreatedAt, &lastUsed, &expires)
+	if err != nil {
+		return PersonalAccessToken{}, fmt.Errorf("create PAT: %w", err)
+	}
+	token.LastUsedAt = timeFromTimestamptz(lastUsed)
+	token.ExpiresAt = timeFromTimestamptz(expires)
+	return token, nil
+}
+
+func (s *PostgresStore) ListPATs(ctx context.Context, userID int64) ([]PersonalAccessToken, error) {
+	rows, err := s.pool.Query(
+		ctx,
+		`SELECT id, name, scope, created_at, last_used_at, expires_at
+		 FROM identity.pats
+		 WHERE user_id = $1
+		 ORDER BY created_at DESC, id DESC`,
+		userID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list PATs: %w", err)
+	}
+	defer rows.Close()
+
+	var tokens []PersonalAccessToken
+	for rows.Next() {
+		var token PersonalAccessToken
+		var lastUsed pgtype.Timestamptz
+		var expires pgtype.Timestamptz
+		if err := rows.Scan(&token.ID, &token.Name, &token.Scope, &token.CreatedAt, &lastUsed, &expires); err != nil {
+			return nil, fmt.Errorf("scan PAT: %w", err)
+		}
+		token.LastUsedAt = timeFromTimestamptz(lastUsed)
+		token.ExpiresAt = timeFromTimestamptz(expires)
+		tokens = append(tokens, token)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate PATs: %w", err)
+	}
+	return tokens, nil
+}
+
+func (s *PostgresStore) DeletePAT(ctx context.Context, userID int64, id int64) error {
+	if _, err := s.pool.Exec(ctx, "DELETE FROM identity.pats WHERE user_id = $1 AND id = $2", userID, id); err != nil {
+		return fmt.Errorf("delete PAT: %w", err)
+	}
+	return nil
+}
+
+func (s *PostgresStore) DeletePATByTokenHash(ctx context.Context, tokenHash []byte) error {
+	if _, err := s.pool.Exec(ctx, "DELETE FROM identity.pats WHERE token_sha256 = $1", tokenHash); err != nil {
+		return fmt.Errorf("delete PAT by token hash: %w", err)
+	}
+	return nil
+}
+
+func (s *PostgresStore) FindPATByTokenHash(ctx context.Context, tokenHash []byte) (storedPAT, error) {
+	var record storedPAT
+	var lastUsed pgtype.Timestamptz
+	var expires pgtype.Timestamptz
+	err := s.pool.QueryRow(
+		ctx,
+		`SELECT p.id, p.name, p.scope, p.created_at, p.last_used_at, p.expires_at,
+		        u.id, u.email, u.name, u.created_at
+		 FROM identity.pats p
+		 JOIN identity.users u ON u.id = p.user_id
+		 WHERE p.token_sha256 = $1`,
+		tokenHash,
+	).Scan(
+		&record.ID,
+		&record.Name,
+		&record.Scope,
+		&record.CreatedAt,
+		&lastUsed,
+		&expires,
+		&record.User.ID,
+		&record.User.Email,
+		&record.User.Name,
+		&record.User.CreatedAt,
+	)
+	if err == nil {
+		record.LastUsedAt = timeFromTimestamptz(lastUsed)
+		record.ExpiresAt = timeFromTimestamptz(expires)
+		return record, nil
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return storedPAT{}, ErrUnauthenticated
+	}
+	return storedPAT{}, fmt.Errorf("find PAT: %w", err)
+}
+
+func (s *PostgresStore) MarkPATUsed(ctx context.Context, tokenHash []byte, usedAt time.Time) error {
+	tag, err := s.pool.Exec(
+		ctx,
+		`UPDATE identity.pats
+		 SET last_used_at = $2
+		 WHERE token_sha256 = $1`,
+		tokenHash,
+		usedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("mark PAT used: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrUnauthenticated
+	}
+	return nil
+}
+
+func timeFromTimestamptz(value pgtype.Timestamptz) *time.Time {
+	if !value.Valid {
+		return nil
+	}
+	t := value.Time
+	return &t
+}
+
 type profileStore struct{}
 
 type assetRecord struct {

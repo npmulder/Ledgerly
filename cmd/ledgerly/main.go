@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/npmulder/ledgerly/internal/app"
+	"github.com/npmulder/ledgerly/internal/cli"
 	"github.com/npmulder/ledgerly/internal/identity"
 	"github.com/npmulder/ledgerly/internal/jurisdiction"
 	"github.com/npmulder/ledgerly/internal/ledger"
@@ -42,17 +43,25 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if err := run(ctx, os.Args[1:], os.Stdout); err != nil {
+	if err := runWithIO(ctx, os.Args[1:], os.Stdout, os.Stderr); err != nil {
 		if _, writeErr := fmt.Fprintln(os.Stderr, err); writeErr != nil {
 			os.Exit(1)
 		}
-		os.Exit(1)
+		os.Exit(exitCode(err))
 	}
 }
 
 func run(ctx context.Context, args []string, stdout io.Writer) error {
+	return runWithIO(ctx, args, stdout, io.Discard)
+}
+
+func runWithIO(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		return printVersion(stdout)
+	}
+
+	if !isOperatorCommand(args[0]) {
+		return cli.Execute(ctx, args, stdout, stderr)
 	}
 
 	switch args[0] {
@@ -92,6 +101,23 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 	default:
 		return fmt.Errorf("unknown command %q", args[0])
 	}
+}
+
+func isOperatorCommand(command string) bool {
+	switch command {
+	case "migrate", "serve", "chrome-smoke", "openapi", "check", "fetch-rates", "version", "--version", "-v":
+		return true
+	default:
+		return false
+	}
+}
+
+func exitCode(err error) int {
+	var coded interface{ ExitCode() int }
+	if errors.As(err, &coded) {
+		return coded.ExitCode()
+	}
+	return 1
 }
 
 func printVersion(stdout io.Writer) error {

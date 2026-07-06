@@ -77,6 +77,9 @@ func (h *HTTPHandler) RegisterRoutes(r chi.Router) {
 	r.Post("/login", h.login)
 	r.Post("/logout", h.logout)
 	r.Get("/me", h.me)
+	r.Get("/pats", h.listPATs)
+	r.Post("/pats", h.createPAT)
+	r.Delete("/pats/{id}", h.revokePAT)
 	r.Get("/profile", h.getProfile)
 	r.Patch("/profile", h.patchProfile)
 	r.Put("/logo", h.putLogo)
@@ -95,10 +98,12 @@ type loginRequest struct {
 }
 
 type userResponse struct {
-	ID        int64  `json:"id"`
-	Email     string `json:"email"`
-	Name      string `json:"name"`
-	CreatedAt string `json:"created_at"`
+	ID         int64     `json:"id"`
+	Email      string    `json:"email"`
+	Name       string    `json:"name"`
+	CreatedAt  string    `json:"created_at"`
+	TokenName  *string   `json:"token_name,omitempty"`
+	TokenScope *PATScope `json:"token_scope,omitempty"`
 }
 
 type profileResponse struct {
@@ -123,6 +128,30 @@ type yearEndResponse struct {
 type logoResponse struct {
 	AssetID  AssetID `json:"asset_id"`
 	AssetURL string  `json:"asset_url"`
+}
+
+type createPATRequest struct {
+	Name      string   `json:"name"`
+	Scope     PATScope `json:"scope"`
+	ExpiresAt *string  `json:"expires_at"`
+}
+
+type patResponse struct {
+	ID         int64    `json:"id"`
+	Name       string   `json:"name"`
+	Scope      PATScope `json:"scope"`
+	CreatedAt  string   `json:"created_at"`
+	LastUsedAt *string  `json:"last_used_at"`
+	ExpiresAt  *string  `json:"expires_at"`
+}
+
+type createPATResponse struct {
+	PersonalAccessToken patResponse `json:"personal_access_token"`
+	Token               string      `json:"token"`
+}
+
+type listPATsResponse struct {
+	Tokens []patResponse `json:"tokens"`
 }
 
 type fieldError struct {
@@ -222,7 +251,88 @@ func (h *HTTPHandler) me(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 
-	writeJSON(w, nethttp.StatusOK, userToResponse(principal.User))
+	writeJSON(w, nethttp.StatusOK, principalToUserResponse(principal))
+}
+
+func (h *HTTPHandler) listPATs(w nethttp.ResponseWriter, r *nethttp.Request) {
+	principal, ok := PrincipalFromContext(r.Context())
+	if !ok {
+		writeUnauthenticated(w, r)
+		return
+	}
+
+	tokens, err := h.service.ListPATs(r.Context(), principal)
+	if err != nil {
+		httpserver.WriteError(w, r, err)
+		return
+	}
+
+	response := listPATsResponse{Tokens: make([]patResponse, 0, len(tokens))}
+	for _, token := range tokens {
+		response.Tokens = append(response.Tokens, patToResponse(token))
+	}
+	writeJSON(w, nethttp.StatusOK, response)
+}
+
+func (h *HTTPHandler) createPAT(w nethttp.ResponseWriter, r *nethttp.Request) {
+	principal, ok := PrincipalFromContext(r.Context())
+	if !ok {
+		writeUnauthenticated(w, r)
+		return
+	}
+
+	var request createPATRequest
+	if err := decodeJSON(w, r, &request); err != nil {
+		if errors.Is(err, errRequestBodyTooLarge) {
+			writePayloadTooLarge(w, r)
+			return
+		}
+		writeBadRequest(w, r, err)
+		return
+	}
+
+	expiresAt, err := parseOptionalTime(request.ExpiresAt)
+	if err != nil {
+		writeBadRequest(w, r, err)
+		return
+	}
+	result, err := h.service.CreatePAT(r.Context(), principal, CreatePATInput{
+		Name:      request.Name,
+		Scope:     request.Scope,
+		ExpiresAt: expiresAt,
+	})
+	if err != nil {
+		if isValidationError(err) {
+			writeBadRequest(w, r, err)
+			return
+		}
+		httpserver.WriteError(w, r, err)
+		return
+	}
+
+	writeJSON(w, nethttp.StatusCreated, createPATResponse{
+		PersonalAccessToken: patToResponse(result.PersonalAccessToken),
+		Token:               result.Token,
+	})
+}
+
+func (h *HTTPHandler) revokePAT(w nethttp.ResponseWriter, r *nethttp.Request) {
+	principal, ok := PrincipalFromContext(r.Context())
+	if !ok {
+		writeUnauthenticated(w, r)
+		return
+	}
+
+	id, err := strconv.ParseInt(strings.TrimSpace(chi.URLParam(r, "id")), 10, 64)
+	if err != nil || id <= 0 {
+		writeBadRequest(w, r, fmt.Errorf("PAT id is required"))
+		return
+	}
+	if err := h.service.RevokePAT(r.Context(), principal, id); err != nil {
+		httpserver.WriteError(w, r, err)
+		return
+	}
+	w.WriteHeader(nethttp.StatusNoContent)
 }
 
 func (h *HTTPHandler) getProfile(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -635,7 +745,7 @@ func writeIdentityError(w nethttp.ResponseWriter, r *nethttp.Request, err error)
 
 func isValidationError(err error) bool {
 	detail := err.Error()
-	return strings.Contains(detail, "required") || strings.Contains(detail, "invalid")
+	return strings.Contains(detail, "required") || strings.Contains(detail, "invalid") || strings.Contains(detail, "must be")
 }
 
 func profileFieldErrorsFromError(err error) []fieldError {
@@ -667,6 +777,51 @@ func userToResponse(user User) userResponse {
 		Name:      user.Name,
 		CreatedAt: user.CreatedAt.UTC().Format(time.RFC3339),
 	}
+}
+
+func principalToUserResponse(principal Principal) userResponse {
+	response := userToResponse(principal.User)
+	if principal.PAT != nil {
+		name := principal.PAT.Name
+		scope := principal.PAT.Scope
+		response.TokenName = &name
+		response.TokenScope = &scope
+	}
+	return response
+}
+
+func patToResponse(token PersonalAccessToken) patResponse {
+	return patResponse{
+		ID:         token.ID,
+		Name:       token.Name,
+		Scope:      token.Scope,
+		CreatedAt:  token.CreatedAt.UTC().Format(time.RFC3339),
+		LastUsedAt: formatOptionalTime(token.LastUsedAt),
+		ExpiresAt:  formatOptionalTime(token.ExpiresAt),
+	}
+}
+
+func formatOptionalTime(value *time.Time) *string {
+	if value == nil {
+		return nil
+	}
+	formatted := value.UTC().Format(time.RFC3339)
+	return &formatted
+}
+
+func parseOptionalTime(value *string) (*time.Time, error) {
+	if value == nil || strings.TrimSpace(*value) == "" {
+		return nil, nil
+	}
+	trimmed := strings.TrimSpace(*value)
+	for _, layout := range []string{time.RFC3339, dateLayout} {
+		parsed, err := time.Parse(layout, trimmed)
+		if err == nil {
+			utc := parsed.UTC()
+			return &utc, nil
+		}
+	}
+	return nil, fmt.Errorf("expires_at must be an RFC3339 timestamp or date")
 }
 
 func profileToResponse(profile CompanyProfile) profileResponse {

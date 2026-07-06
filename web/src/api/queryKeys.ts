@@ -16,6 +16,7 @@ export const queryKeys = {
   },
   identity: {
     me: (): ApiQueryKey => ["identity", "me", {}],
+    pats: (): ApiQueryKey => ["identity", "pats", {}],
     profile: (): ApiQueryKey => ["identity", "profile", {}],
   },
   invoicing: {

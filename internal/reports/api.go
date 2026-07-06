@@ -2,61 +2,64 @@ package reports
 
 import (
 	"context"
-	"fmt"
-	"regexp"
-	"sort"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/npmulder/ledgerly/internal/identity"
+	"github.com/npmulder/ledgerly/internal/invoicing"
 	"github.com/npmulder/ledgerly/internal/jurisdiction"
-	"github.com/npmulder/ledgerly/internal/platform/clock"
+	"github.com/npmulder/ledgerly/internal/ledger"
+	"github.com/npmulder/ledgerly/internal/moneyfx/money"
 )
 
-const filingDeadlineRuleID = "filing_deadline_window"
-
-var filingDeadlineWindowPattern = regexp.MustCompile(`\Adue_date\s*-\s*today\s*<=\s*([0-9]+)\z`)
-
-// CompanyFactsProvider is the identity fact surface reports needs to compose
-// the filing calendar. Implementations must return fresh facts on each call.
-type CompanyFactsProvider interface {
-	CompanyFacts(context.Context) (identity.CompanyFacts, error)
+// Period is an inclusive posting-date window.
+type Period struct {
+	From time.Time
+	To   time.Time
 }
 
-// Service composes reports read models from leaf modules.
-type Service struct {
-	identity CompanyFactsProvider
-	clock    clock.Clock
+// PL is the derived profit-and-loss read model.
+type PL struct {
+	Period          Period
+	TaxYear         string
+	Income          []IncomeLine
+	IncomeTotal     money.Money
+	RealisedFXGains LineItem
+	Expenses        []ExpenseLine
+	ExpenseTotal    money.Money
+	ProfitBeforeTax money.Money
+	CorporateTax    TaxLine
+	NetProfit       money.Money
 }
 
-// Option customizes a reports service.
-type Option func(*Service)
-
-// WithClock injects the time source used for deadline status calculations.
-func WithClock(clk clock.Clock) Option {
-	return func(s *Service) {
-		s.clock = clk
-	}
+// IncomeLine is a GBP-presentational income row, grouped by client/currency or
+// by the Other income fallback for non-invoice income.
+type IncomeLine struct {
+	Label      string
+	ClientID   string
+	ClientName string
+	Currency   string
+	Amount     money.Money
 }
 
-// NewService returns a reports service. Filing calendar data is informational
-// in v1: reports does not store filing state or track filed/completed actions.
-func NewService(identity CompanyFactsProvider, opts ...Option) (*Service, error) {
-	if identity == nil {
-		return nil, fmt.Errorf("reports: identity facts provider is required")
-	}
-	service := &Service{
-		identity: identity,
-		clock:    clock.New(),
-	}
-	for _, opt := range opts {
-		opt(service)
-	}
-	if service.clock == nil {
-		service.clock = clock.New()
-	}
-	return service, nil
+// ExpenseLine is a GBP-presentational expense row grouped by chart account.
+type ExpenseLine struct {
+	AccountCode ledger.AccountCode
+	AccountName string
+	Amount      money.Money
+}
+
+// LineItem is a named GBP-presentational P&L row.
+type LineItem struct {
+	Label  string
+	Amount money.Money
+}
+
+// TaxLine is a data-driven corporate tax row sourced from jurisdiction packs.
+type TaxLine struct {
+	Label   string
+	TaxYear string
+	Rate    jurisdiction.Rate
+	Amount  money.Money
 }
 
 // FilingStatus is the deadline state displayed by reports and consumed by
@@ -79,125 +82,28 @@ type Filing struct {
 	Status    FilingStatus
 }
 
-// FilingCalendar returns the current filing calendar using fresh identity
-// facts. No filed/completed tracking is included in v1.
-func (s *Service) FilingCalendar() ([]Filing, error) {
-	return s.FilingCalendarContext(context.Background())
+// Reports is the v1 reports read API.
+type Reports interface {
+	ProfitAndLoss(context.Context, Period) (PL, error)
+	ProfitYTD(context.Context, string) (money.Money, error)
 }
 
-// FilingCalendarContext is the context-aware form for internal callers.
-func (s *Service) FilingCalendarContext(ctx context.Context) ([]Filing, error) {
-	if s == nil {
-		return nil, fmt.Errorf("reports: service is nil")
-	}
-	if s.identity == nil {
-		return nil, fmt.Errorf("reports: identity facts provider is required")
-	}
-	clk := s.clock
-	if clk == nil {
-		clk = clock.New()
-	}
-
-	facts, err := s.identity.CompanyFacts(ctx)
-	if err != nil {
-		return nil, err
-	}
-	warningWindowDays, err := filingDeadlineWarningWindowDays()
-	if err != nil {
-		return nil, err
-	}
-	jurisdictionFacts := toJurisdictionFacts(facts)
-	today := dateOnly(clk.Now())
-	deadlines, err := jurisdiction.FilingDeadlinesWithClock(jurisdictionFacts, fixedClock{now: today})
-	if err != nil {
-		return nil, err
-	}
-	lookback := today.AddDate(0, 0, -(warningWindowDays + 1))
-	candidates, err := jurisdiction.FilingDeadlinesWithClock(jurisdictionFacts, fixedClock{now: lookback})
-	if err != nil {
-		return nil, err
-	}
-	candidatesByKey := make(map[string]jurisdiction.Deadline, len(candidates))
-	for _, candidate := range candidates {
-		candidatesByKey[candidate.Key] = candidate
-	}
-
-	filings := make([]Filing, 0, len(deadlines))
-	for _, deadline := range deadlines {
-		if candidate, ok := candidatesByKey[deadline.Key]; ok && candidate.DueDate.Before(today) {
-			deadline = candidate
-		}
-		daysUntil := wholeDaysBetween(today, deadline.DueDate)
-		filings = append(filings, Filing{
-			Key:       deadline.Key,
-			Label:     deadline.Label,
-			Authority: deadline.Authority,
-			DueDate:   deadline.DueDate,
-			DaysUntil: daysUntil,
-			Status:    filingStatus(daysUntil, warningWindowDays),
-		})
-	}
-	sort.Slice(filings, func(i, j int) bool {
-		if filings[i].DueDate.Equal(filings[j].DueDate) {
-			return filings[i].Key < filings[j].Key
-		}
-		return filings[i].DueDate.Before(filings[j].DueDate)
-	})
-	return filings, nil
+type Ledger interface {
+	BalancesByType(context.Context, time.Time, time.Time) ([]ledger.AccountBalance, error)
+	Entries(context.Context, ledger.EntryFilter) ([]ledger.JournalEntry, error)
+	Accounts(context.Context) ([]ledger.Account, error)
 }
 
-func toJurisdictionFacts(facts identity.CompanyFacts) jurisdiction.CompanyFacts {
-	return jurisdiction.CompanyFacts{
-		IncorporationDate: facts.IncorporationDate,
-		YearEnd: jurisdiction.YearEnd{
-			Month: facts.YearEnd.Month,
-			Day:   facts.YearEnd.Day,
-		},
-	}
+type Identity interface {
+	CompanyFacts(context.Context) (identity.CompanyFacts, error)
 }
 
-func filingDeadlineWarningWindowDays() (int, error) {
-	for _, rule := range jurisdiction.AdvisorRules() {
-		if strings.TrimSpace(rule.ID) != filingDeadlineRuleID {
-			continue
-		}
-		condition := strings.TrimSpace(rule.Condition)
-		matches := filingDeadlineWindowPattern.FindStringSubmatch(condition)
-		if matches == nil {
-			return 0, fmt.Errorf("reports: unsupported filing deadline advisor condition %q", rule.Condition)
-		}
-		days, err := strconv.Atoi(matches[1])
-		if err != nil {
-			return 0, fmt.Errorf("reports: filing deadline advisor window %q: %w", matches[1], err)
-		}
-		return days, nil
-	}
-	return 0, fmt.Errorf("reports: filing deadline advisor rule is not configured")
-}
+// CompanyFactsProvider is the identity fact surface reports needs to compose
+// the filing calendar. Implementations must return fresh facts on each call.
+type CompanyFactsProvider = Identity
 
-func filingStatus(daysUntil int, warningWindowDays int) FilingStatus {
-	if daysUntil < 0 {
-		return FilingStatusOverdue
-	}
-	if daysUntil <= warningWindowDays {
-		return FilingStatusDueSoon
-	}
-	return FilingStatusUpcoming
-}
-
-func wholeDaysBetween(start time.Time, end time.Time) int {
-	return int(dateOnly(end).Sub(dateOnly(start)) / (24 * time.Hour))
-}
-
-func dateOnly(value time.Time) time.Time {
-	year, month, day := value.Date()
-	return time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
-}
-
-type fixedClock struct {
-	now time.Time
-}
-
-func (c fixedClock) Now() time.Time {
-	return c.now
+type Invoicing interface {
+	Invoice(context.Context, string) (invoicing.Invoice, error)
+	InvoiceByNumber(context.Context, string) (invoicing.Invoice, error)
+	Client(context.Context, string) (invoicing.Client, error)
 }
