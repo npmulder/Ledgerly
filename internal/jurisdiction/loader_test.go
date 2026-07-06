@@ -251,6 +251,42 @@ func TestValidationFailuresNameFilePathAndField(t *testing.T) {
 			wantField: "reverse-charge-eu-b2b",
 			wantText:  "required",
 		},
+		{
+			name: "domestic VAT treatment must report output VAT",
+			pack: strings.Replace(
+				valid,
+				"      domestic:\n        output_vat: true\n        vat_return_net_sales: true\n",
+				"      domestic: {}\n",
+				1,
+			),
+			wantPath:  "tax.vat.treatments.domestic.output_vat",
+			wantField: "output_vat",
+			wantText:  "must be true",
+		},
+		{
+			name: "reverse-charge VAT treatment must report net sales",
+			pack: strings.Replace(
+				valid,
+				"      reverse-charge-eu-b2b:\n        output_vat: false\n        vat_return_net_sales: true\n        reverse_charge_kind: b2b_services_eu\n",
+				"      reverse-charge-eu-b2b:\n        output_vat: false\n        reverse_charge_kind: b2b_services_eu\n",
+				1,
+			),
+			wantPath:  "tax.vat.treatments.reverse-charge-eu-b2b.vat_return_net_sales",
+			wantField: "vat_return_net_sales",
+			wantText:  "must be true",
+		},
+		{
+			name: "reverse-charge VAT treatment must reference wording",
+			pack: strings.Replace(
+				valid,
+				"      reverse-charge-eu-b2b:\n        output_vat: false\n        vat_return_net_sales: true\n        reverse_charge_kind: b2b_services_eu\n",
+				"      reverse-charge-eu-b2b:\n        output_vat: false\n        vat_return_net_sales: true\n",
+				1,
+			),
+			wantPath:  "tax.vat.treatments.reverse-charge-eu-b2b.reverse_charge_kind",
+			wantField: "reverse_charge_kind",
+			wantText:  "must not be empty",
+		},
 	}
 
 	for _, tt := range tests {

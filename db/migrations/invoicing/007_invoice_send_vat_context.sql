@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS invoicing.invoice_send_vat_context (
 	send_ledger_entry_id bigint PRIMARY KEY,
-	invoice_id text NOT NULL REFERENCES invoicing.invoices(id) ON DELETE RESTRICT,
+	invoice_id text NOT NULL,
 	vat_treatment text NOT NULL,
 	created_at timestamptz NOT NULL DEFAULT now(),
 	CONSTRAINT invoice_send_vat_context_invoice_id_nonempty CHECK (btrim(invoice_id) <> ''),
@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS invoicing.invoice_send_vat_context (
 );
 
 COMMENT ON TABLE invoicing.invoice_send_vat_context IS
-	'Immutable VAT treatment context for invoice send ledger entries, retained after same-day unsends clear invoices.send_ledger_entry_id.';
+	'Immutable VAT treatment context for invoice send ledger entries, retained after same-day unsends clear invoices.send_ledger_entry_id and after reverted drafts are deleted.';
 
 CREATE INDEX IF NOT EXISTS invoice_send_vat_context_invoice_id_idx
 	ON invoicing.invoice_send_vat_context (invoice_id, created_at);
