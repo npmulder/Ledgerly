@@ -389,11 +389,11 @@ func (s *Service) ReviewQueue(ctx context.Context) (ReviewQueue, error) {
 	return s.store.ReviewQueue(ctx, s.pool)
 }
 
-func (s *Service) RecentlyReconciled(ctx context.Context, limit int) ([]ReconciledTransaction, error) {
+func (s *Service) RecentlyReconciled(ctx context.Context, accountID AccountID, limit int) ([]ReconciledTransaction, error) {
 	if s.pool == nil {
 		return nil, fmt.Errorf("banking: recently reconciled requires pool")
 	}
-	return s.store.RecentlyReconciled(ctx, s.pool, normalizeRecentlyReconciledLimit(limit))
+	return s.store.RecentlyReconciled(ctx, s.pool, accountID, normalizeRecentlyReconciledLimit(limit))
 }
 
 func (s *Service) Accounts(ctx context.Context) ([]BankAccount, error) {

@@ -111,6 +111,7 @@ func OpenAPIFragment() httpserver.OpenAPIFragment {
 					"operationId": "bankingGetRecent",
 					"security":    bankingSessionSecurity(),
 					"parameters": []map[string]any{
+						bankingQueryParameter("account", "Filter by bank account ID.", map[string]any{"type": "integer", "format": "int64"}),
 						bankingQueryParameter("limit", "Maximum recently reconciled rows.", map[string]any{"type": "integer", "minimum": 1, "maximum": MaxRecentlyReconciledLimit}),
 					},
 					"responses": map[string]any{
