@@ -32,7 +32,7 @@ var (
 		"it":           dependencySet("app", "identity", "invoicing", "ledger", "moneyfx", "dla"),
 		"jurisdiction": dependencySet(),
 		"ledger":       dependencySet(),
-		"moneyfx":      dependencySet("ledger"),
+		"moneyfx":      dependencySet("ledger", "invoicing"),
 		"platform":     dependencySet(),
 		"reports":      dependencySet("ledger", "jurisdiction", "identity", "invoicing"),
 	}

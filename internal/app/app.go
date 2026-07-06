@@ -252,12 +252,14 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 	}
 
 	moneyFXModule, err := moneyfx.New(moneyfx.Config{
-		Pool:  moneyFXPool,
-		Clock: clk,
+		Pool:   moneyFXPool,
+		Clock:  clk,
+		Ledger: ledgerService,
 	})
 	if err != nil {
 		return nil, err
 	}
+	moneyFXModule.SubscribeEvents(eventBus)
 	modules = append(modules, moneyFXModule.HTTPModule())
 	fragments = append(fragments, moneyFXModule.OpenAPIFragment())
 
@@ -291,7 +293,7 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		Bus:           eventBus,
 		MoneyFXPool:   moneyFXPool,
 		InvoicingPool: invoicingPool,
-		TodayRate:     moneyFXModule.TodayRate,
+		TodayRate:     invoicingTodayRate(moneyFXModule),
 		LedgerPool:    ledgerPool,
 	})
 	if err != nil {
@@ -401,6 +403,25 @@ func buildInvoicingModule(_ context.Context, deps ModuleDeps) (Module, error) {
 		HTTPModule:      invoicingModule.HTTPModule(),
 		OpenAPIFragment: invoicingModule.OpenAPIFragment(),
 	}, nil
+}
+
+func invoicingTodayRate(m *moneyfx.Module) invoicing.TodayRateFunc {
+	return func(ctx context.Context, from string, to string) (invoicing.FXRate, time.Time, error) {
+		rate, asOf, err := m.TodayRate(ctx, from, to)
+		if err != nil {
+			if errors.Is(err, moneyfx.ErrRateUnavailable) {
+				return invoicing.FXRate{}, time.Time{}, invoicing.ErrRateUnavailable
+			}
+			return invoicing.FXRate{}, time.Time{}, err
+		}
+		return invoicing.FXRate{
+			From:     rate.From,
+			To:       rate.To,
+			Value:    rate.Value,
+			RateDate: rate.RateDate,
+			Source:   rate.Source,
+		}, asOf, nil
+	}
 }
 
 func loadStaticAssets(deps Dependencies) (fs.FS, error) {

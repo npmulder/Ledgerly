@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/npmulder/ledgerly/internal/ledger"
 	"github.com/npmulder/ledgerly/internal/moneyfx/money"
 	"github.com/npmulder/ledgerly/internal/platform/clock"
 	"github.com/npmulder/ledgerly/internal/platform/db"
@@ -15,13 +16,15 @@ import (
 
 // Config contains the platform dependencies required by moneyfx.
 type Config struct {
-	Pool  *pgxpool.Pool
-	Clock clock.Clock
+	Pool   *pgxpool.Pool
+	Clock  clock.Clock
+	Ledger ledger.Ledger
 }
 
 // Module is the moneyfx module wiring surface used by the app builder.
 type Module struct {
 	service *Service
+	ledger  ledger.Ledger
 }
 
 // New assembles the moneyfx module without registering side effects globally.
@@ -31,6 +34,7 @@ func New(cfg Config) (*Module, error) {
 	}
 	return &Module{
 		service: NewService(NewStore(cfg.Pool), cfg.Clock),
+		ledger:  cfg.Ledger,
 	}, nil
 }
 
