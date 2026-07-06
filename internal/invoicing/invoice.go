@@ -124,6 +124,7 @@ type InvoiceLineInput struct {
 // DraftPatch updates mutable draft fields. Nil fields are left unchanged.
 // Lines, when set, replace the draft's lines as one ordered list.
 type DraftPatch struct {
+	ClientID     *string
 	IssueDate    *time.Time
 	DueDate      *time.Time
 	Currency     *Currency

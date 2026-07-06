@@ -453,16 +453,18 @@ RETURNING `+invoiceColumnsSQL(),
 func (s Store) UpdateDraftInvoice(ctx context.Context, tx db.Tx, invoice Invoice) (Invoice, error) {
 	updated, err := scanInvoiceRow(tx.QueryRow(ctx, `
 UPDATE invoices
-SET issue_date = $2,
-	due_date = $3,
-	currency = $4,
-	vat_treatment = $5,
-	pdf_asset = $6,
+SET client_id = $2,
+	issue_date = $3,
+	due_date = $4,
+	currency = $5,
+	vat_treatment = $6,
+	pdf_asset = $7,
 	updated_at = now()
 WHERE id = $1
 	AND status = 'draft'
 RETURNING `+invoiceColumnsSQL(),
 		invoice.ID,
+		invoice.ClientID,
 		invoice.IssueDate,
 		invoice.DueDate,
 		string(invoice.Currency),

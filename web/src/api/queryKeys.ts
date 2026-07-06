@@ -25,6 +25,8 @@ export const queryKeys = {
       "clients",
       { includeArchived },
     ],
+    invoice: (id: string): ApiQueryKey => ["invoicing", "invoice", { id }],
+    invoices: (): ApiQueryKey => ["invoicing", "invoices", {}],
   },
   jurisdiction: {
     pack: (): ApiQueryKey => ["jurisdiction", "pack", {}],

@@ -324,8 +324,12 @@ type RateLockRef struct {
 
 // RateLock is the subset of a moneyfx lock that invoicing needs for posting.
 type RateLock struct {
-	ID   int64
-	Rate string
+	ID       int64
+	From     string
+	To       string
+	Rate     string
+	RateDate time.Time
+	Source   string
 }
 
 // RateLocker is the moneyfx capability invoicing needs for send-time locks.
