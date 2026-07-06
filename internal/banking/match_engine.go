@@ -2,6 +2,7 @@ package banking
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -117,6 +118,13 @@ func (s *Service) runMatchEngineTx(ctx context.Context, tx db.Tx, trigger MatchE
 			continue
 		}
 		input := decision.input
+		canWrite, err := s.canWriteMatchEngineSuggestion(ctx, tx, txn.ID)
+		if err != nil {
+			return MatchEngineRun{}, err
+		}
+		if !canWrite {
+			continue
+		}
 		if decision.payeeRule != nil {
 			rule := *decision.payeeRule
 			recorded, err := s.store.PayeeRuleSuggestionRecorded(ctx, tx, txn.ID, rule.AccountCode)
@@ -139,6 +147,20 @@ func (s *Service) runMatchEngineTx(ctx context.Context, tx db.Tx, trigger MatchE
 		run.Suggestions = append(run.Suggestions, suggestion)
 	}
 	return run, nil
+}
+
+func (s *Service) canWriteMatchEngineSuggestion(ctx context.Context, tx db.Tx, txnID TransactionID) (bool, error) {
+	if _, err := s.store.TransactionForUpdate(ctx, tx, txnID); err != nil {
+		return false, err
+	}
+	active, err := s.store.ActiveSuggestion(ctx, tx, txnID)
+	if err != nil {
+		if errors.Is(err, ErrSuggestionNotFound) {
+			return true, nil
+		}
+		return false, err
+	}
+	return strings.HasPrefix(active.CreatedBy, matchEngineCreatedByPrefix), nil
 }
 
 func normalizeMatchEngineTrigger(trigger MatchEngineTrigger) (MatchEngineTrigger, error) {

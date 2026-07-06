@@ -365,23 +365,27 @@ func normalizedSimilarity(a string, b string) float64 {
 }
 
 func tokenOverlap(a string, b string) float64 {
-	left := strings.Fields(a)
-	right := strings.Fields(b)
+	left := uniqueTokenSet(strings.Fields(a))
+	right := uniqueTokenSet(strings.Fields(b))
 	if len(left) == 0 || len(right) == 0 {
 		return 0
 	}
-	rightSet := make(map[string]bool, len(right))
-	for _, token := range right {
-		rightSet[token] = true
-	}
 	common := 0
-	for _, token := range left {
-		if rightSet[token] {
+	for token := range left {
+		if right[token] {
 			common++
 		}
 	}
 	denominator := max(len(left), len(right))
 	return float64(common) / float64(denominator)
+}
+
+func uniqueTokenSet(tokens []string) map[string]bool {
+	set := make(map[string]bool, len(tokens))
+	for _, token := range tokens {
+		set[token] = true
+	}
+	return set
 }
 
 func editSimilarity(a string, b string) float64 {

@@ -49,6 +49,12 @@ func TestInvoiceScorerTable(t *testing.T) {
 	if !referenceContainsInvoiceNumber("Payment INV-1", "INV-1") {
 		t.Fatal("referenceContainsInvoiceNumber() did not match exact invoice token sequence")
 	}
+	if score := tokenOverlap("john john", "john smith"); score != 0.5 {
+		t.Fatalf("tokenOverlap() duplicate partial score = %.3f, want 0.500", score)
+	}
+	if score := normalizedSimilarity("John John", "John Smith"); score >= 0.70 {
+		t.Fatalf("normalizedSimilarity() duplicate partial score = %.3f, want below match threshold", score)
+	}
 
 	amountOnly := base
 	amountOnly.InvoiceID = "amount-only"
@@ -213,6 +219,125 @@ func TestPayeeRuleAutoPostThresholdZeroDisablesAutoPost(t *testing.T) {
 	}, service.payeeRuleAutoPostThreshold)
 	if input.AutoPostable {
 		t.Fatalf("auto_postable = true, want false when threshold is disabled")
+	}
+}
+
+func TestPayeeRuleApplicationCountSerializedByTransactionLock(t *testing.T) {
+	pool, ledgerPool := temporaryMigratedBankingDatabase(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	service := NewService(pool, ledger.New(ledgerPool))
+	account, err := service.CreateAccount(ctx, AccountInput{
+		Name:     "Revolut GBP",
+		Provider: ProviderRevolut,
+		Currency: "GBP",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount() error = %v", err)
+	}
+	txnID := importSingleBankingTxn(t, ctx, pool, service, account.ID, revolutTestTxn{
+		Date:      time.Date(2026, 7, 3, 9, 0, 0, 0, time.UTC),
+		ID:        "payee-rule-lock",
+		Payee:     "Race Vendor Ltd",
+		Reference: "subscription race",
+		Amount:    money.Money{Amount: -2400, Currency: "GBP"},
+	})
+	rule, err := service.CreatePayeeRule(ctx, PayeeRuleInput{
+		Matcher:     "Race Vendor Ltd",
+		MatchMode:   PayeeRuleMatchExact,
+		AccountCode: "6200-software",
+		CreatedFrom: PayeeRuleCreatedFromManual,
+	})
+	if err != nil {
+		t.Fatalf("CreatePayeeRule() error = %v", err)
+	}
+
+	tx1, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin tx1: %v", err)
+	}
+	defer func() {
+		_ = tx1.Rollback(ctx)
+	}()
+	tx2, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin tx2: %v", err)
+	}
+	defer func() {
+		_ = tx2.Rollback(ctx)
+	}()
+
+	canWrite, err := service.canWriteMatchEngineSuggestion(ctx, tx1, txnID)
+	if err != nil {
+		t.Fatalf("canWriteMatchEngineSuggestion(tx1) error = %v", err)
+	}
+	if !canWrite {
+		t.Fatal("canWriteMatchEngineSuggestion(tx1) = false, want true")
+	}
+	recorded, err := service.store.PayeeRuleSuggestionRecorded(ctx, tx1, txnID, rule.AccountCode)
+	if err != nil {
+		t.Fatalf("PayeeRuleSuggestionRecorded(tx1) error = %v", err)
+	}
+	if recorded {
+		t.Fatal("PayeeRuleSuggestionRecorded(tx1) = true, want false before first suggestion")
+	}
+	applied, err := service.store.RecordPayeeRuleApplied(ctx, tx1, rule.ID)
+	if err != nil {
+		t.Fatalf("RecordPayeeRuleApplied(tx1) error = %v", err)
+	}
+	input := payeeRuleSuggestionInput(txnID, applied, service.payeeRuleAutoPostThreshold)
+	input.CreatedBy = matchEngineCreatedBy(1)
+	if _, err := service.store.InsertSuggestion(ctx, tx1, input); err != nil {
+		t.Fatalf("InsertSuggestion(tx1) error = %v", err)
+	}
+
+	started := make(chan struct{})
+	errCh := make(chan error, 1)
+	go func() {
+		close(started)
+		canWrite, err := service.canWriteMatchEngineSuggestion(ctx, tx2, txnID)
+		if err != nil {
+			errCh <- err
+			return
+		}
+		if !canWrite {
+			errCh <- fmt.Errorf("canWriteMatchEngineSuggestion(tx2) = false, want true for engine-owned active suggestion")
+			return
+		}
+		recorded, err := service.store.PayeeRuleSuggestionRecorded(ctx, tx2, txnID, rule.AccountCode)
+		if err != nil {
+			errCh <- err
+			return
+		}
+		if !recorded {
+			errCh <- fmt.Errorf("PayeeRuleSuggestionRecorded(tx2) = false, want true after tx1 commits")
+			return
+		}
+		errCh <- nil
+	}()
+	<-started
+
+	if err := tx1.Commit(ctx); err != nil {
+		t.Fatalf("commit tx1: %v", err)
+	}
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("tx2 recorded check error = %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatalf("tx2 recorded check timed out: %v", ctx.Err())
+	}
+	if err := tx2.Rollback(ctx); err != nil {
+		t.Fatalf("rollback tx2: %v", err)
+	}
+	rules, err := service.MatchingPayeeRules(ctx, "Race Vendor Ltd")
+	if err != nil {
+		t.Fatalf("MatchingPayeeRules() error = %v", err)
+	}
+	if len(rules) != 1 || rules[0].TimesApplied != 1 {
+		t.Fatalf("matching rules = %#v, want one recorded application", rules)
 	}
 }
 
@@ -453,6 +578,43 @@ func TestManualRefreshClearsStaleSuggestionWhenDecisionDisappears(t *testing.T) 
 		t.Fatalf("active manual suggestion ID = %d, want preserved %d", active.ID, manualSuggestion.ID)
 	}
 	assertStoredTransactionState(t, ctx, pool, manualTxn, TransactionStateSuggested)
+
+	manualDecisionTxn := importSingleBankingTxn(t, ctx, pool, service, account.ID, revolutTestTxn{
+		Date:      time.Date(2026, 7, 24, 9, 0, 0, 0, time.UTC),
+		ID:        "manual-suggestion-decision-preserve",
+		Payee:     "ACME Consulting",
+		Reference: "Payment INV-2026-24",
+		Amount:    money.Money{Amount: 240000, Currency: "GBP"},
+	})
+	manualDecisionSuggestion, err := service.RecordSuggestion(ctx, SuggestionInput{
+		TransactionID: manualDecisionTxn,
+		Kind:          SuggestionKindPayeeRule,
+		Confidence:    0.72,
+		Target:        "6200-software",
+		Explanation:   "advisor-created suggestion",
+		CreatedBy:     "advisor",
+	})
+	if err != nil {
+		t.Fatalf("RecordSuggestion() manual decision error = %v", err)
+	}
+	candidates.items = []InvoiceMatchCandidate{{
+		InvoiceID:  "invoice-24",
+		Number:     "INV-2026-24",
+		ClientName: "ACME Consulting",
+		IssueDate:  time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC),
+		DueDate:    time.Date(2026, 7, 31, 0, 0, 0, 0, time.UTC),
+		TermsDays:  30,
+		Amount:     money.Money{Amount: 240000, Currency: "GBP"},
+		Status:     "sent",
+	}}
+	if _, err := service.ManualRefresh(ctx); err != nil {
+		t.Fatalf("ManualRefresh() with manual suggestion and invoice decision error = %v", err)
+	}
+	active = activeSuggestion(t, mustSuggestions(t, ctx, service, manualDecisionTxn))
+	if active.ID != manualDecisionSuggestion.ID {
+		t.Fatalf("active manual suggestion ID = %d, want preserved %d despite match-engine decision", active.ID, manualDecisionSuggestion.ID)
+	}
+	assertStoredTransactionState(t, ctx, pool, manualDecisionTxn, TransactionStateSuggested)
 }
 
 type staticDirectorNames []string
