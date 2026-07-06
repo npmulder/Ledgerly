@@ -156,7 +156,7 @@ func clonePack(in *Pack) *Pack {
 	out.Tax.VAT.Years = cloneMap(in.Tax.VAT.Years)
 	out.Tax.VAT.ReverseCharge = cloneMap(in.Tax.VAT.ReverseCharge)
 	out.Filings = cloneMap(in.Filings)
-	out.AdvisorRules = append([]AdvisorRule(nil), in.AdvisorRules...)
+	out.AdvisorRules = cloneAdvisorRules(in.AdvisorRules)
 	return &out
 }
 
@@ -182,4 +182,44 @@ func cloneMap[K comparable, V any](in map[K]V) map[K]V {
 		out[key] = value
 	}
 	return out
+}
+
+func cloneAdvisorRules(in []AdvisorRule) []AdvisorRule {
+	if in == nil {
+		return nil
+	}
+	out := make([]AdvisorRule, len(in))
+	for index, rule := range in {
+		out[index] = rule
+		out[index].Surfaces = append([]string(nil), rule.Surfaces...)
+		out[index].FactQuery = append([]string(nil), rule.FactQuery...)
+		out[index].CTA.Params = cloneAnyMap(rule.CTA.Params)
+	}
+	return out
+}
+
+func cloneAnyMap(in map[string]any) map[string]any {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]any, len(in))
+	for key, value := range in {
+		out[key] = cloneAnyValue(value)
+	}
+	return out
+}
+
+func cloneAnyValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		return cloneAnyMap(typed)
+	case []any:
+		out := make([]any, len(typed))
+		for index, nested := range typed {
+			out[index] = cloneAnyValue(nested)
+		}
+		return out
+	default:
+		return value
+	}
 }
