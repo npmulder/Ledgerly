@@ -4,6 +4,26 @@
  */
 
 export interface paths {
+    "/api/dashboard/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Return the dashboard summary
+         * @description Composes existing read APIs into the screen-01 dashboard payload. Individual section failures return null sections plus errors; the endpoint only fails when every section is unavailable.
+         */
+        get: operations["dashboardGetSummary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/dla/balance": {
         parameters: {
             query?: never;
@@ -678,6 +698,94 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        DashboardCash: {
+            accounts: components["schemas"]["DashboardCashAccount"][];
+            total_gbp: components["schemas"]["DashboardMoney"];
+        };
+        DashboardCashAccount: {
+            currency: string;
+            gbp_balance: components["schemas"]["DashboardMoney"];
+            /** Format: int64 */
+            id: number;
+            ledger_account_code: string;
+            name: string;
+            native_balance: components["schemas"]["DashboardMoney"];
+            provider: string;
+        };
+        DashboardDLA: {
+            balance: components["schemas"]["DashboardMoney"];
+            status: string;
+        };
+        DashboardDividendHeadroom: {
+            available: components["schemas"]["DashboardMoney"];
+            distributable: boolean;
+        };
+        DashboardGreeting: {
+            trading_name: string;
+            user_name: string;
+        };
+        DashboardMoney: {
+            /** Format: int64 */
+            amount: number;
+            currency: string;
+        };
+        DashboardOutstanding: {
+            /** Format: date */
+            earliest_due_date: string | null;
+            total_gbp: components["schemas"]["DashboardMoney"];
+            totals: components["schemas"]["DashboardMoney"][];
+        };
+        DashboardRate: {
+            /** Format: date-time */
+            fetched_at: string;
+            from: string;
+            rate: string;
+            /** Format: date */
+            rate_date: string;
+            source: string;
+            to: string;
+        };
+        DashboardRecentInvoice: {
+            amount: components["schemas"]["DashboardMoney"];
+            client: string;
+            days_overdue?: number | null;
+            number: string | null;
+            status: string;
+        };
+        DashboardReconcileAccount: {
+            currency: string;
+            /** Format: int64 */
+            id: number;
+            ledger_account_code: string;
+            name: string;
+            unreconciled_count: number;
+        };
+        DashboardReviewQueueItem: {
+            amount: components["schemas"]["DashboardMoney"];
+            /** Format: double */
+            confidence: number;
+            kind: string;
+            payee: string;
+        };
+        DashboardSectionError: {
+            detail: string;
+            section: string;
+        };
+        DashboardSummary: {
+            cash: components["schemas"]["DashboardCash"] | null;
+            dividendHeadroom: components["schemas"]["DashboardDividendHeadroom"] | null;
+            dla: components["schemas"]["DashboardDLA"] | null;
+            errors: components["schemas"]["DashboardSectionError"][];
+            greeting: components["schemas"]["DashboardGreeting"] | null;
+            outstanding: components["schemas"]["DashboardOutstanding"] | null;
+            rate: components["schemas"]["DashboardRate"] | null;
+            recentInvoices: components["schemas"]["DashboardRecentInvoice"][] | null;
+            toReconcile: components["schemas"]["DashboardToReconcile"] | null;
+        };
+        DashboardToReconcile: {
+            accounts: components["schemas"]["DashboardReconcileAccount"][];
+            review_queue: components["schemas"]["DashboardReviewQueueItem"][];
+        };
         FieldError: {
             detail: string;
             pointer: string;
@@ -1120,6 +1228,44 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    dashboardGetSummary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Dashboard summary */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DashboardSummary"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description All dashboard sections failed */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     dlaGetBalance: {
         parameters: {
             query?: never;
