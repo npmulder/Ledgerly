@@ -23,9 +23,11 @@ import (
 	"github.com/npmulder/ledgerly/internal/identity"
 	"github.com/npmulder/ledgerly/internal/invoicing"
 	"github.com/npmulder/ledgerly/internal/jurisdiction"
+	"github.com/npmulder/ledgerly/internal/ledger"
 	"github.com/npmulder/ledgerly/internal/platform/bus"
 	"github.com/npmulder/ledgerly/internal/platform/clock"
 	"github.com/npmulder/ledgerly/internal/platform/config"
+	platformcron "github.com/npmulder/ledgerly/internal/platform/cron"
 	"github.com/npmulder/ledgerly/internal/platform/db"
 	httpserver "github.com/npmulder/ledgerly/internal/platform/http"
 	"github.com/npmulder/ledgerly/web"
@@ -33,6 +35,8 @@ import (
 
 // MigrationsDirEnv overrides automatic migration-directory discovery.
 const MigrationsDirEnv = "LEDGERLY_MIGRATIONS_DIR"
+
+const cronStopTimeout = 10 * time.Second
 
 // Config is the runtime input required to build the in-process application.
 type Config struct {
@@ -73,6 +77,7 @@ type Dependencies struct {
 	HealthCloser io.Closer
 
 	IdentityPool  *pgxpool.Pool
+	LedgerPool    *pgxpool.Pool
 	DemoPool      *pgxpool.Pool
 	InvoicingPool *pgxpool.Pool
 
@@ -107,10 +112,12 @@ type App struct {
 
 	HealthDB        httpserver.Pinger
 	IdentityPool    *pgxpool.Pool
+	LedgerPool      *pgxpool.Pool
 	DemoPool        *pgxpool.Pool
 	InvoicingPool   *pgxpool.Pool
 	IdentityService *identity.Service
 
+	cron   *platformcron.Runner
 	jobs   map[string]Job
 	closer func() error
 }
@@ -159,6 +166,10 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 	if err != nil {
 		return nil, err
 	}
+	ledgerPool, err := modulePool(ctx, cfg.Runtime.DatabaseURL, ledger.ModuleName, deps.LedgerPool, openPool, &closeFuncs)
+	if err != nil {
+		return nil, err
+	}
 	demoPool, err := modulePool(ctx, cfg.Runtime.DatabaseURL, demo.ModuleName, deps.DemoPool, openPool, &closeFuncs)
 	if err != nil {
 		return nil, err
@@ -175,6 +186,18 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		eventBus = bus.New(busOptions...)
 	}
 
+	ledgerService := ledger.New(ledgerPool, eventBus)
+	trialBalanceStatus := ledger.NewTrialBalanceStatus()
+	cronRunner := platformcron.New(platformcron.Config{
+		Logger: logger,
+		Clock:  clk,
+	})
+	if err := cronRunner.Register(ledger.TrialBalanceJobName, "0 2 * * *", func(ctx context.Context) error {
+		_, err := ledgerService.RunTrialBalanceInvariant(ctx, clk.Now(), logger, trialBalanceStatus)
+		return err
+	}); err != nil {
+		return nil, err
+	}
 	identityService := identity.NewService(
 		identity.NewPostgresStore(identityPool),
 		clk,
@@ -267,7 +290,17 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		StaticAssets:     staticAssets,
 		Modules:          modules,
 		OpenAPIFragments: fragments,
+		HealthChecks: []httpserver.HealthCheck{
+			{
+				Name:  ledger.TrialBalanceJobName,
+				Check: trialBalanceStatus.Check,
+			},
+		},
 	})
+
+	if deps.CronAutostart {
+		cronRunner.Start()
+	}
 
 	return &App{
 		Handler:         router,
@@ -275,12 +308,24 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		Clock:           clk,
 		HealthDB:        healthDB,
 		IdentityPool:    identityPool,
+		LedgerPool:      ledgerPool,
 		DemoPool:        demoPool,
 		InvoicingPool:   invoicingPool,
 		IdentityService: identityService,
+		cron:            cronRunner,
 		jobs:            copyJobs(deps.Jobs),
 		closer: func() error {
 			var err error
+			if cronRunner != nil {
+				stopCtx := cronRunner.Stop()
+				waitCtx, cancel := context.WithTimeout(context.Background(), cronStopTimeout)
+				select {
+				case <-stopCtx.Done():
+				case <-waitCtx.Done():
+					err = errors.Join(err, fmt.Errorf("stop cron: %w", waitCtx.Err()))
+				}
+				cancel()
+			}
 			for i := len(closeFuncs) - 1; i >= 0; i-- {
 				err = errors.Join(err, closeFuncs[i]())
 			}
@@ -414,6 +459,9 @@ func (a *App) Close() error {
 func (a *App) RunJob(ctx context.Context, name string) error {
 	if a == nil {
 		return fmt.Errorf("app: nil app")
+	}
+	if a.cron != nil && a.cron.HasJob(name) {
+		return a.cron.RunNow(ctx, name)
 	}
 	job := a.jobs[strings.TrimSpace(name)]
 	if job == nil {
