@@ -579,6 +579,7 @@ type InvoicingClient struct {
 	CreatedAt       time.Time                      `json:"created_at"`
 	DayRate         *InvoicingMoneyAmount          `json:"day_rate"`
 	DefaultCurrency InvoicingClientDefaultCurrency `json:"default_currency"`
+	Email           *openapi_types.Email           `json:"email"`
 	Id              string                         `json:"id"`
 	Name            string                         `json:"name"`
 	RetainerAmount  *InvoicingMoneyAmount          `json:"retainer_amount"`
@@ -599,12 +600,13 @@ type InvoicingClientVatTreatment string
 // InvoicingClientPatch defines model for InvoicingClientPatch.
 type InvoicingClientPatch struct {
 	Address         *InvoicingAddress                    `json:"address,omitempty"`
-	DayRate         *InvoicingMoneyAmount                `json:"day_rate"`
+	DayRate         *InvoicingMoneyAmount                `json:"day_rate,omitempty"`
 	DefaultCurrency *InvoicingClientPatchDefaultCurrency `json:"default_currency,omitempty"`
+	Email           *openapi_types.Email                 `json:"email,omitempty"`
 	Name            *string                              `json:"name,omitempty"`
-	RetainerAmount  *InvoicingMoneyAmount                `json:"retainer_amount"`
+	RetainerAmount  *InvoicingMoneyAmount                `json:"retainer_amount,omitempty"`
 	TermsDays       *InvoicingClientPatchTermsDays       `json:"terms_days,omitempty"`
-	VatNumber       *string                              `json:"vat_number"`
+	VatNumber       *string                              `json:"vat_number,omitempty"`
 	VatTreatment    *InvoicingClientPatchVatTreatment    `json:"vat_treatment,omitempty"`
 }
 
@@ -622,6 +624,7 @@ type InvoicingClientRequest struct {
 	Address         InvoicingAddress                      `json:"address"`
 	DayRate         *InvoicingMoneyAmount                 `json:"day_rate"`
 	DefaultCurrency InvoicingClientRequestDefaultCurrency `json:"default_currency"`
+	Email           *openapi_types.Email                  `json:"email"`
 	Name            string                                `json:"name"`
 	RetainerAmount  *InvoicingMoneyAmount                 `json:"retainer_amount"`
 	TermsDays       InvoicingClientRequestTermsDays       `json:"terms_days"`
@@ -683,6 +686,7 @@ type InvoicingInvoice struct {
 	LockId           *string                      `json:"lock_id"`
 	Number           *string                      `json:"number"`
 	PdfAsset         *string                      `json:"pdf_asset"`
+	Reminders        *[]InvoicingReminder         `json:"reminders,omitempty"`
 	SentAt           *time.Time                   `json:"sent_at"`
 	SettledAmount    *InvoicingMoney              `json:"settled_amount"`
 	SettledDate      *time.Time                   `json:"settled_date"`
@@ -851,6 +855,18 @@ type InvoicingMoneyAmount struct {
 
 // InvoicingMoneyAmountCurrency defines model for InvoicingMoneyAmount.Currency.
 type InvoicingMoneyAmountCurrency string
+
+// InvoicingReminder defines model for InvoicingReminder.
+type InvoicingReminder struct {
+	InvoiceId string    `json:"invoice_id"`
+	SentAt    time.Time `json:"sent_at"`
+}
+
+// InvoicingReminderResult defines model for InvoicingReminderResult.
+type InvoicingReminderResult struct {
+	Invoice  InvoicingInvoice  `json:"invoice"`
+	Reminder InvoicingReminder `json:"reminder"`
+}
 
 // InvoicingSendInvoiceResult defines model for InvoicingSendInvoiceResult.
 type InvoicingSendInvoiceResult struct {
@@ -1793,6 +1809,9 @@ type ClientInterface interface {
 	// InvoicingGetInvoicePrintPayload request
 	InvoicingGetInvoicePrintPayload(ctx context.Context, id string, params *InvoicingGetInvoicePrintPayloadParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// InvoicingSendInvoiceReminder request
+	InvoicingSendInvoiceReminder(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// InvoicingRevertInvoice request
 	InvoicingRevertInvoice(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -2273,6 +2292,18 @@ func (c *Client) InvoicingRenderInvoicePDF(ctx context.Context, id string, reqEd
 
 func (c *Client) InvoicingGetInvoicePrintPayload(ctx context.Context, id string, params *InvoicingGetInvoicePrintPayloadParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewInvoicingGetInvoicePrintPayloadRequest(c.Server, id, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) InvoicingSendInvoiceReminder(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewInvoicingSendInvoiceReminderRequest(c.Server, id)
 	if err != nil {
 		return nil, err
 	}
@@ -3583,6 +3614,40 @@ func NewInvoicingGetInvoicePrintPayloadRequest(server string, id string, params 
 	return req, nil
 }
 
+// NewInvoicingSendInvoiceReminderRequest generates requests for InvoicingSendInvoiceReminder
+func NewInvoicingSendInvoiceReminderRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/invoicing/invoices/%s/remind", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewInvoicingRevertInvoiceRequest generates requests for InvoicingRevertInvoice
 func NewInvoicingRevertInvoiceRequest(server string, id string) (*http.Request, error) {
 	var err error
@@ -4371,6 +4436,9 @@ type ClientWithResponsesInterface interface {
 	// InvoicingGetInvoicePrintPayloadWithResponse request
 	InvoicingGetInvoicePrintPayloadWithResponse(ctx context.Context, id string, params *InvoicingGetInvoicePrintPayloadParams, reqEditors ...RequestEditorFn) (*InvoicingGetInvoicePrintPayloadResponse, error)
 
+	// InvoicingSendInvoiceReminderWithResponse request
+	InvoicingSendInvoiceReminderWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*InvoicingSendInvoiceReminderResponse, error)
+
 	// InvoicingRevertInvoiceWithResponse request
 	InvoicingRevertInvoiceWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*InvoicingRevertInvoiceResponse, error)
 
@@ -5107,6 +5175,31 @@ func (r InvoicingGetInvoicePrintPayloadResponse) StatusCode() int {
 	return 0
 }
 
+type InvoicingSendInvoiceReminderResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON200                   *InvoicingReminderResult
+	ApplicationproblemJSON401 *Problem
+	ApplicationproblemJSON404 *Problem
+	ApplicationproblemJSON409 *ValidationProblem
+}
+
+// Status returns HTTPResponse.Status
+func (r InvoicingSendInvoiceReminderResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r InvoicingSendInvoiceReminderResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type InvoicingRevertInvoiceResponse struct {
 	Body                      []byte
 	HTTPResponse              *http.Response
@@ -5790,6 +5883,15 @@ func (c *ClientWithResponses) InvoicingGetInvoicePrintPayloadWithResponse(ctx co
 		return nil, err
 	}
 	return ParseInvoicingGetInvoicePrintPayloadResponse(rsp)
+}
+
+// InvoicingSendInvoiceReminderWithResponse request returning *InvoicingSendInvoiceReminderResponse
+func (c *ClientWithResponses) InvoicingSendInvoiceReminderWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*InvoicingSendInvoiceReminderResponse, error) {
+	rsp, err := c.InvoicingSendInvoiceReminder(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseInvoicingSendInvoiceReminderResponse(rsp)
 }
 
 // InvoicingRevertInvoiceWithResponse request returning *InvoicingRevertInvoiceResponse
@@ -7167,6 +7269,53 @@ func ParseInvoicingGetInvoicePrintPayloadResponse(rsp *http.Response) (*Invoicin
 			return nil, err
 		}
 		response.ApplicationproblemJSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseInvoicingSendInvoiceReminderResponse parses an HTTP response from a InvoicingSendInvoiceReminderWithResponse call
+func ParseInvoicingSendInvoiceReminderResponse(rsp *http.Response) (*InvoicingSendInvoiceReminderResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &InvoicingSendInvoiceReminderResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest InvoicingReminderResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ValidationProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
 
 	}
 

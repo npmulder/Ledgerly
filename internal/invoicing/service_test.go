@@ -83,6 +83,20 @@ func TestNormalizeClientAcceptsContosoVATNumber(t *testing.T) {
 	}
 }
 
+func TestNormalizeClientNormalizesOptionalEmail(t *testing.T) {
+	email := " Accounts@Example.COM "
+	client := validContosoClient()
+	client.Email = &email
+
+	normalized, err := normalizeClient(client)
+	if err != nil {
+		t.Fatalf("normalizeClient(email) error = %v", err)
+	}
+	if normalized.Email == nil || *normalized.Email != "accounts@example.com" {
+		t.Fatalf("Email = %v, want normalized accounts@example.com", normalized.Email)
+	}
+}
+
 func TestEnsureCurrencyMutableBlocksWhenInvoicesExist(t *testing.T) {
 	service := &Service{
 		invoiceUsage: fakeInvoiceUsageChecker{hasInvoices: true},

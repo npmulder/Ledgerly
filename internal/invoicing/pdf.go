@@ -24,10 +24,11 @@ type InvoicePDFEngine interface {
 	RenderInvoicePDF(context.Context, InvoicePrintPayload) ([]byte, error)
 }
 
-// InvoicePDFAssetStore persists immutable PDF bytes and returns the asset URL
-// stored on invoices.pdf_asset.
+// InvoicePDFAssetStore persists immutable PDF bytes and reloads them by the
+// asset URL stored on invoices.pdf_asset.
 type InvoicePDFAssetStore interface {
 	StoreInvoicePDF(context.Context, []byte) (string, error)
+	LoadInvoicePDF(context.Context, string) ([]byte, error)
 }
 
 // InvoicePrintPayload is the single data contract consumed by the React print
