@@ -157,6 +157,42 @@ func (h invoiceHandler) revertInvoice(w nethttp.ResponseWriter, r *nethttp.Reque
 	writeInvoiceJSON(w, nethttp.StatusOK, invoiceForResponse(invoice))
 }
 
+func (h invoiceHandler) getInvoicePrintPayload(w nethttp.ResponseWriter, r *nethttp.Request) {
+	draftWatermark, err := parseInvoiceDraftWatermark(r)
+	if err != nil {
+		writeInvoiceBadRequest(w, r, err)
+		return
+	}
+	payload, err := h.service.InvoicePrintPayload(r.Context(), invoiceIDParam(r), draftWatermark)
+	if err != nil {
+		writeInvoiceError(w, r, err)
+		return
+	}
+	writeInvoiceJSON(w, nethttp.StatusOK, payload)
+}
+
+func (h invoiceHandler) previewInvoicePDF(w nethttp.ResponseWriter, r *nethttp.Request) {
+	pdfBytes, err := h.service.PreviewDraftInvoicePDF(r.Context(), invoiceIDParam(r))
+	if err != nil {
+		writeInvoiceError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", invoicePDFMIME)
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Length", strconv.Itoa(len(pdfBytes)))
+	w.WriteHeader(nethttp.StatusOK)
+	_, _ = w.Write(pdfBytes)
+}
+
+func (h invoiceHandler) renderInvoicePDF(w nethttp.ResponseWriter, r *nethttp.Request) {
+	invoice, err := h.service.RenderInvoicePDFNow(r.Context(), invoiceIDParam(r))
+	if err != nil {
+		writeInvoiceError(w, r, err)
+		return
+	}
+	writeInvoiceJSON(w, nethttp.StatusOK, invoiceForResponse(invoice))
+}
+
 func (h invoiceHandler) getInvoicePDF(w nethttp.ResponseWriter, r *nethttp.Request) {
 	invoice, err := h.service.Invoice(r.Context(), invoiceIDParam(r))
 	if err != nil {
@@ -176,6 +212,18 @@ func (h invoiceHandler) getInvoicePDF(w nethttp.ResponseWriter, r *nethttp.Reque
 		return
 	}
 	nethttp.Redirect(w, r, strings.TrimSpace(*invoice.PDFAsset), nethttp.StatusFound)
+}
+
+func parseInvoiceDraftWatermark(r *nethttp.Request) (bool, error) {
+	value := strings.TrimSpace(r.URL.Query().Get("draft"))
+	if value == "" {
+		return false, nil
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return false, fmt.Errorf("draft must be true or false")
+	}
+	return parsed, nil
 }
 
 func lockedRateForSentInvoice(invoice Invoice) (lockedRateResponse, error) {

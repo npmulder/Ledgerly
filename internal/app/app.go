@@ -65,6 +65,10 @@ type ModuleDeps struct {
 	TodayRate      invoicing.TodayRateFunc
 	Ledger         ledger.Ledger
 	LedgerPool     *pgxpool.Pool
+	Identity       identity.Identity
+	PDFAssetStore  invoicing.InvoicePDFAssetStore
+	PDFEngine      invoicing.InvoicePDFEngine
+	PDFBaseURL     string
 }
 
 // Module is a module contribution to the HTTP router and in-process bus.
@@ -109,6 +113,10 @@ type Dependencies struct {
 	IdentityServiceOptions []identity.ServiceOption
 	IdentityHTTPOptions    []identity.HTTPOption
 	IdentityProfileOptions []identity.ProfileOption
+
+	InvoicingPDFAssetStore invoicing.InvoicePDFAssetStore
+	InvoicingPDFEngine     invoicing.InvoicePDFEngine
+	InvoicingPDFBaseURL    string
 
 	JurisdictionLoader func(string) error
 
@@ -254,6 +262,16 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 	identityHTTPOptions := []identity.HTTPOption{identity.WithProfileAPI(identityProfile)}
 	identityHTTPOptions = append(identityHTTPOptions, deps.IdentityHTTPOptions...)
 	identityHandler := identity.NewHTTPHandler(identityService, identityHTTPOptions...)
+	pdfAssetStore := deps.InvoicingPDFAssetStore
+	if pdfAssetStore == nil && strings.TrimSpace(cfg.Runtime.DataDir) != "" {
+		pdfAssetStore = identityInvoicePDFAssetStore{
+			writer: identity.NewAssetWriter(identityPool, cfg.Runtime.DataDir),
+		}
+	}
+	pdfBaseURL := strings.TrimSpace(deps.InvoicingPDFBaseURL)
+	if pdfBaseURL == "" {
+		pdfBaseURL = localHTTPBaseURL(cfg.Runtime.HTTPAddr)
+	}
 
 	jurisdictionFacts := func(ctx context.Context) (jurisdiction.CompanyFacts, error) {
 		facts, err := identityProfile.CompanyFacts(ctx)
@@ -345,6 +363,10 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		TodayRate:      invoicingTodayRate(moneyFXModule),
 		Ledger:         ledgerService,
 		LedgerPool:     ledgerPool,
+		Identity:       identityProfile,
+		PDFAssetStore:  pdfAssetStore,
+		PDFEngine:      deps.InvoicingPDFEngine,
+		PDFBaseURL:     pdfBaseURL,
 	})
 	if err != nil {
 		return nil, err
@@ -474,6 +496,11 @@ func buildInvoicingModule(_ context.Context, deps ModuleDeps) (Module, error) {
 		RateLockReader: deps.RateLockReader,
 		Ledger:         deps.Ledger,
 		Bus:            deps.Bus,
+		Identity:       deps.Identity,
+		PDFAssetStore:  deps.PDFAssetStore,
+		PDFEngine:      deps.PDFEngine,
+		PDFBaseURL:     deps.PDFBaseURL,
+		Logger:         deps.Logger,
 	})
 	if err != nil {
 		return Module{}, err
@@ -551,6 +578,44 @@ func invoicingTodayRate(m *moneyfx.Module) invoicing.TodayRateFunc {
 			Source:   rate.Source,
 		}, asOf, nil
 	}
+}
+
+type identityInvoicePDFAssetStore struct {
+	writer *identity.AssetWriter
+}
+
+func (s identityInvoicePDFAssetStore) StoreInvoicePDF(ctx context.Context, pdf []byte) (string, error) {
+	if s.writer == nil {
+		return "", fmt.Errorf("app: identity asset writer is required for invoice PDFs")
+	}
+	id, err := s.writer.StoreAsset(ctx, identity.AssetUpload{
+		MIME:  "application/pdf",
+		Bytes: pdf,
+	})
+	if err != nil {
+		return "", err
+	}
+	return "/api/identity/assets/" + string(id), nil
+}
+
+func localHTTPBaseURL(addr string) string {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return ""
+	}
+	if strings.HasPrefix(addr, "http://") || strings.HasPrefix(addr, "https://") {
+		return strings.TrimRight(addr, "/")
+	}
+	if strings.HasPrefix(addr, ":") {
+		return "http://127.0.0.1" + addr
+	}
+	if strings.HasPrefix(addr, "0.0.0.0:") {
+		return "http://127.0.0.1:" + strings.TrimPrefix(addr, "0.0.0.0:")
+	}
+	if strings.HasPrefix(addr, "[::]:") {
+		return "http://127.0.0.1:" + strings.TrimPrefix(addr, "[::]:")
+	}
+	return "http://" + addr
 }
 
 func loadStaticAssets(deps Dependencies) (fs.FS, error) {
