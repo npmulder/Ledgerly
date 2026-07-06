@@ -125,6 +125,15 @@ func (s *Service) BalancesByType(ctx context.Context, from time.Time, to time.Ti
 	if s.pool == nil {
 		return nil, fmt.Errorf("ledger: balances by type requires pool")
 	}
+	return s.BalancesByTypeInTx(ctx, s.pool, from, to)
+}
+
+// BalancesByTypeInTx returns aggregate balances using the caller's transaction
+// or snapshot.
+func (s *Service) BalancesByTypeInTx(ctx context.Context, tx db.Tx, from time.Time, to time.Time) ([]AccountBalance, error) {
+	if tx == nil {
+		return nil, fmt.Errorf("ledger: balances by type requires transaction")
+	}
 	normalizedFrom, err := normalizeEntryDate(from)
 	if err != nil {
 		return nil, err
@@ -140,7 +149,7 @@ func (s *Service) BalancesByType(ctx context.Context, from time.Time, to time.Ti
 			ErrInvalidEntryFilter,
 		)
 	}
-	return s.store.BalancesByType(ctx, s.pool, normalizedFrom, normalizedTo)
+	return s.store.BalancesByType(ctx, tx, normalizedFrom, normalizedTo)
 }
 
 // Entries returns journal entries with postings for browse/export. Filters use
@@ -150,11 +159,20 @@ func (s *Service) Entries(ctx context.Context, filter EntryFilter) ([]JournalEnt
 	if s.pool == nil {
 		return nil, fmt.Errorf("ledger: entries requires pool")
 	}
+	return s.EntriesInTx(ctx, s.pool, filter)
+}
+
+// EntriesInTx returns journal entries using the caller's transaction or
+// snapshot.
+func (s *Service) EntriesInTx(ctx context.Context, tx db.Tx, filter EntryFilter) ([]JournalEntry, error) {
+	if tx == nil {
+		return nil, fmt.Errorf("ledger: entries requires transaction")
+	}
 	normalized, err := normalizeEntryFilter(filter)
 	if err != nil {
 		return nil, err
 	}
-	return s.store.Entries(ctx, s.pool, normalized)
+	return s.store.Entries(ctx, tx, normalized)
 }
 
 // EnsureAccount creates spec.Code or returns the existing account code when it is consistent.
@@ -170,7 +188,15 @@ func (s *Service) Accounts(ctx context.Context) ([]Account, error) {
 	if s.pool == nil {
 		return nil, fmt.Errorf("ledger: list accounts requires pool")
 	}
-	return s.store.ListAccounts(ctx, s.pool)
+	return s.AccountsInTx(ctx, s.pool)
+}
+
+// AccountsInTx lists chart accounts using the caller's transaction or snapshot.
+func (s *Service) AccountsInTx(ctx context.Context, tx db.Tx) ([]Account, error) {
+	if tx == nil {
+		return nil, fmt.Errorf("ledger: list accounts requires transaction")
+	}
+	return s.store.ListAccounts(ctx, tx)
 }
 
 func (s *Service) post(ctx context.Context, tx db.Tx, entry NewJournalEntry, reversalOf *EntryID) (EntryID, error) {

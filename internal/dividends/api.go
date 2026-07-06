@@ -7,8 +7,10 @@ import (
 	"time"
 
 	"github.com/npmulder/ledgerly/internal/identity"
+	"github.com/npmulder/ledgerly/internal/jurisdiction"
 	"github.com/npmulder/ledgerly/internal/ledger"
 	"github.com/npmulder/ledgerly/internal/moneyfx/money"
+	"github.com/npmulder/ledgerly/internal/platform/db"
 )
 
 // ModuleName is the database schema and app wiring key for dividends.
@@ -39,6 +41,38 @@ type HeadroomBreakdown struct {
 	Distributable bool        `json:"distributable"`
 }
 
+// WithholdingValidation is the informational dividend withholding rule for a
+// validation strip.
+type WithholdingValidation struct {
+	TaxYear       string `json:"tax_year"`
+	Policy        string `json:"policy"`
+	Applies       bool   `json:"applies"`
+	Informational bool   `json:"informational"`
+}
+
+// PersonalTaxValidation is the marginal personal tax set-aside for this
+// dividend amount, including before/after estimate breakdowns.
+type PersonalTaxValidation struct {
+	TaxYear       string                `json:"tax_year"`
+	PriorYTD      money.Money           `json:"prior_ytd"`
+	WithDividend  money.Money           `json:"with_dividend"`
+	PriorEstimate jurisdiction.Estimate `json:"prior_estimate"`
+	TotalEstimate jurisdiction.Estimate `json:"total_estimate"`
+	Marginal      money.Money           `json:"marginal"`
+	Message       string                `json:"message"`
+}
+
+// ValidationResult is the validation-strip payload shown before declaration.
+type ValidationResult struct {
+	Amount             money.Money           `json:"amount"`
+	Headroom           HeadroomBreakdown     `json:"headroom"`
+	WithinHeadroom     bool                  `json:"within_headroom"`
+	Distributable      bool                  `json:"distributable"`
+	DistributableTotal money.Money           `json:"distributable_total"`
+	Withholding        WithholdingValidation `json:"withholding"`
+	PersonalTax        PersonalTaxValidation `json:"personal_tax"`
+}
+
 // DeclarationID identifies an immutable dividend declaration.
 type DeclarationID string
 
@@ -58,18 +92,29 @@ type Declaration struct {
 // Dividends exposes the dividend read API for advisor/UI consumers.
 type Dividends interface {
 	Headroom(context.Context) (HeadroomBreakdown, error)
+	Validate(context.Context, money.Money) (ValidationResult, error)
+	Declare(context.Context, money.Money) (Declaration, error)
 	DeclaredInYear(context.Context, string) (money.Money, error)
 	History(context.Context) ([]Declaration, error)
 }
 
 // Ledger is the ledger read surface dividends needs for retained earnings.
 type Ledger interface {
+	Post(context.Context, db.Tx, ledger.NewJournalEntry) (ledger.EntryID, error)
 	AccountBalance(context.Context, ledger.AccountCode, time.Time) (ledger.AccountBalance, error)
+	AccountBalanceInTx(context.Context, db.Tx, ledger.AccountCode, time.Time) (ledger.AccountBalance, error)
 }
 
 // Identity is the identity fact surface dividends needs for financial years.
 type Identity interface {
+	Profile(context.Context) (identity.CompanyProfile, error)
 	CompanyFacts(context.Context) (identity.CompanyFacts, error)
+}
+
+// DLA is the presentation-ledger append surface dividends needs after posting
+// the authoritative ledger entry.
+type DLA interface {
+	RecordExternalCredit(context.Context, db.Tx, string, time.Time, money.Money, string) error
 }
 
 var (
@@ -81,7 +126,52 @@ var (
 
 	// ErrMissingProvider reports a missing module dependency.
 	ErrMissingProvider = errors.New("dividends: missing provider")
+
+	// ErrNonPositiveAmount rejects a zero or negative declaration amount.
+	ErrNonPositiveAmount = errors.New("dividends: non-positive amount")
+
+	// ErrOverHeadroom rejects a declaration above distributable headroom.
+	ErrOverHeadroom = errors.New("dividends: over headroom")
+
+	// ErrNonDistributableYear rejects declarations in a non-distributable year.
+	ErrNonDistributableYear = errors.New("dividends: non-distributable year")
 )
+
+// OverHeadroomError carries the available distributable figure.
+type OverHeadroomError struct {
+	Amount        money.Money
+	Distributable money.Money
+}
+
+func (e *OverHeadroomError) Error() string {
+	return fmt.Sprintf(
+		"dividends: declaration %s exceeds distributable reserves %s",
+		e.Amount.Format(),
+		e.Distributable.Format(),
+	)
+}
+
+func (e *OverHeadroomError) Unwrap() error {
+	return ErrOverHeadroom
+}
+
+// NonDistributableYearError carries the current distributable-reserves figure.
+type NonDistributableYearError struct {
+	FinancialYear string
+	Distributable money.Money
+}
+
+func (e *NonDistributableYearError) Error() string {
+	return fmt.Sprintf(
+		"dividends: financial year %s is not distributable; distributable reserves %s",
+		e.FinancialYear,
+		e.Distributable.Format(),
+	)
+}
+
+func (e *NonDistributableYearError) Unwrap() error {
+	return ErrNonDistributableYear
+}
 
 func corporationTaxLabel(rate string) string {
 	return fmt.Sprintf("Corporation tax provision at %s", rate)
