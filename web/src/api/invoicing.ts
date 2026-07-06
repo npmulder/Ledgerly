@@ -15,6 +15,8 @@ export type InvoicingInvoiceLineInput =
   components["schemas"]["InvoicingInvoiceLineInput"];
 export type InvoicingInvoicePatch =
   components["schemas"]["InvoicingInvoicePatch"];
+export type InvoicingInvoicePrintPayload =
+  components["schemas"]["InvoicingInvoicePrintPayload"];
 export type InvoicingInvoicesResponse =
   components["schemas"]["InvoicingInvoicesResponse"];
 export type InvoicingMoneyAmount =
@@ -78,6 +80,12 @@ export function invoicePDFPath(id: string) {
   )}/pdf` as "/api/invoicing/invoices/{id}/pdf";
 }
 
+export function getInvoicePrintPayload(id: string, draft = false) {
+  return apiClient.get(invoicePrintPath(id), {
+    query: draft ? { draft: true } : undefined,
+  });
+}
+
 function clientPath(id: string) {
   return `/api/invoicing/clients/${encodeURIComponent(
     id,
@@ -106,4 +114,10 @@ function invoiceRevertPath(id: string) {
   return `/api/invoicing/invoices/${encodeURIComponent(
     id,
   )}/revert` as "/api/invoicing/invoices/{id}/revert";
+}
+
+function invoicePrintPath(id: string) {
+  return `/api/invoicing/invoices/${encodeURIComponent(
+    id,
+  )}/print` as "/api/invoicing/invoices/{id}/print";
 }

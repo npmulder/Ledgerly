@@ -38,6 +38,8 @@ tasks:
 
   golden:docker:
     desc: Run document golden tests inside the deterministic Chromium image
+    deps:
+      - web:build
     cmds:
       - mkdir -p .task/golden-artifacts
       - docker build --target golden-test -t ledgerly-golden-test:local .

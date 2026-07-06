@@ -40,6 +40,13 @@ type validatedLogoAsset struct {
 	bytes  []byte
 }
 
+type validatedAsset struct {
+	sha256 string
+	mime   string
+	size   int64
+	bytes  []byte
+}
+
 type fileAssetStore struct {
 	dataDir string
 }
@@ -164,6 +171,23 @@ func validateLogoUpload(upload LogoUpload) (validatedLogoAsset, error) {
 	}, nil
 }
 
+func validateAssetUpload(upload AssetUpload) (validatedAsset, error) {
+	mediaType, err := normalizeDocumentAssetMIME(upload.MIME)
+	if err != nil {
+		return validatedAsset{}, err
+	}
+	data := append([]byte{}, upload.Bytes...)
+	if len(data) == 0 || !bytes.HasPrefix(bytes.TrimSpace(data), []byte("%PDF-")) {
+		return validatedAsset{}, fmt.Errorf("%w: %s", ErrUnsupportedAsset, mediaType)
+	}
+	return validatedAsset{
+		sha256: sha256Hex(data),
+		mime:   mediaType,
+		size:   int64(len(data)),
+		bytes:  data,
+	}, nil
+}
+
 func normalizeAssetMIME(value string) (string, error) {
 	mediaType, _, err := mime.ParseMediaType(strings.TrimSpace(value))
 	if err != nil {
@@ -172,6 +196,20 @@ func normalizeAssetMIME(value string) (string, error) {
 	mediaType = strings.ToLower(mediaType)
 	switch mediaType {
 	case "image/png", "image/jpeg":
+		return mediaType, nil
+	default:
+		return "", fmt.Errorf("%w: %s", ErrUnsupportedAsset, mediaType)
+	}
+}
+
+func normalizeDocumentAssetMIME(value string) (string, error) {
+	mediaType, _, err := mime.ParseMediaType(strings.TrimSpace(value))
+	if err != nil {
+		mediaType = strings.TrimSpace(value)
+	}
+	mediaType = strings.ToLower(mediaType)
+	switch mediaType {
+	case "application/pdf":
 		return mediaType, nil
 	default:
 		return "", fmt.Errorf("%w: %s", ErrUnsupportedAsset, mediaType)

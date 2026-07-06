@@ -120,6 +120,64 @@ func WithDataDir(dataDir string) ProfileOption {
 	}
 }
 
+// AssetWriter stores immutable non-logo assets using the same
+// content-addressed file store and identity.assets metadata table as logo
+// uploads.
+type AssetWriter struct {
+	pool   *pgxpool.Pool
+	assets fileAssetStore
+	store  profileStore
+}
+
+// NewAssetWriter returns a process-level immutable asset writer.
+func NewAssetWriter(pool *pgxpool.Pool, dataDir string) *AssetWriter {
+	return &AssetWriter{
+		pool:   pool,
+		assets: fileAssetStore{dataDir: dataDir},
+	}
+}
+
+// StoreAsset stores an immutable document asset and returns a fresh asset id.
+func (w *AssetWriter) StoreAsset(ctx context.Context, upload AssetUpload) (_ AssetID, err error) {
+	if w == nil || w.pool == nil {
+		return "", fmt.Errorf("identity: asset writer requires pool")
+	}
+	validated, err := validateAssetUpload(upload)
+	if err != nil {
+		return "", err
+	}
+	if err := w.assets.write(validated.sha256, validated.bytes); err != nil {
+		return "", err
+	}
+
+	tx, err := w.pool.Begin(ctx)
+	if err != nil {
+		return "", fmt.Errorf("identity: begin asset transaction: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	id, err := newAssetID()
+	if err != nil {
+		return "", err
+	}
+	if err := w.store.createAsset(ctx, tx, assetRecord{
+		ID:     id,
+		SHA256: validated.sha256,
+		MIME:   validated.mime,
+		Size:   validated.size,
+	}); err != nil {
+		return "", err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return "", fmt.Errorf("identity: commit asset transaction: %w", err)
+	}
+	return id, nil
+}
+
 // New returns a profile API bound to tx. The caller owns the transaction
 // lifetime; UpdateProfile publishes its event on the supplied transaction.
 func New(tx db.Tx, eventBus *bus.Bus, opts ...ProfileOption) *ProfileService {

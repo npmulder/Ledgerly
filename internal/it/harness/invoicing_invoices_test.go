@@ -3,16 +3,20 @@
 package harness_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"reflect"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/npmulder/ledgerly/internal/banking"
+	"github.com/npmulder/ledgerly/internal/identity"
 	"github.com/npmulder/ledgerly/internal/invoicing"
 	it "github.com/npmulder/ledgerly/internal/it"
 	"github.com/npmulder/ledgerly/internal/it/fixtures"
@@ -205,6 +209,153 @@ func TestInvoicingSendHappyPathLocksPostsAndPublishes(t *testing.T) {
 		t.Fatalf("InvoiceSent events = %#v, want %#v", sentEvents, wantEvents)
 	}
 	it.AssertLedgerBalanced(t, h)
+}
+
+func TestInvoicingSendSchedulesPDFRenderAfterCommitWithRetry(t *testing.T) {
+	h := harness.New(t, harness.Options{ClockStart: time.Date(2025, 5, 1, 9, 0, 0, 0, time.UTC)})
+	fixtures.Rates(t, h)
+	var logs bytes.Buffer
+	engine := newRecordingPDFEngine(1, []byte("%PDF-1.4\nretry-ok\n%%EOF\n"))
+	assets := &recordingPDFAssetStore{}
+	profile := testIdentityProfile(t, h)
+	service := newInvoiceService(
+		t,
+		h,
+		invoicing.WithIdentity(profile),
+		invoicing.WithInvoicePDFEngine(engine),
+		invoicing.WithInvoicePDFAssetStore(assets),
+		invoicing.WithInvoicePDFRetryBackoff(0),
+		invoicing.WithLogger(slog.New(slog.NewTextHandler(&logs, nil))),
+	)
+
+	sent, err := service.Send(context.Background(), createEURInvoiceDraft(t, h, service, 450_000).ID)
+	if err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	if sent.PDFAsset != nil {
+		t.Fatalf("Send() returned PDFAsset = %v, want async render after response", sent.PDFAsset)
+	}
+
+	waitForPDFAsset(t, service, sent.ID, "/api/identity/assets/test-pdf-1", func() string {
+		return fmt.Sprintf("attempts=%d asset_calls=%d logs=%q", engine.attemptCount(), assets.callCount(), logs.String())
+	})
+	if got := engine.attemptCount(); got != 2 {
+		t.Fatalf("PDF render attempts = %d, want 2", got)
+	}
+	if got := assets.callCount(); got != 1 {
+		t.Fatalf("PDF asset store calls = %d, want 1", got)
+	}
+	if !strings.Contains(logs.String(), "invoice PDF render failed") {
+		t.Fatalf("logs = %q, want render failure log", logs.String())
+	}
+}
+
+func TestInvoicingPDFAssetIsImmutableAfterIdentityChange(t *testing.T) {
+	h := harness.New(t, harness.Options{ClockStart: time.Date(2025, 5, 1, 9, 0, 0, 0, time.UTC)})
+	fixtures.Rates(t, h)
+	profile := testIdentityProfile(t, h)
+	engine := newRecordingPDFEngine(0, []byte("%PDF-1.4\nfirst-render\n%%EOF\n"))
+	assets := &recordingPDFAssetStore{}
+	service := newInvoiceService(
+		t,
+		h,
+		invoicing.WithIdentity(profile),
+		invoicing.WithInvoicePDFEngine(engine),
+		invoicing.WithInvoicePDFAssetStore(assets),
+		invoicing.WithInvoicePDFRetryBackoff(0),
+	)
+
+	sent, err := service.Send(context.Background(), createEURInvoiceDraft(t, h, service, 450_000).ID)
+	if err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	waitForPDFAsset(t, service, sent.ID, "/api/identity/assets/test-pdf-1", func() string {
+		return fmt.Sprintf("attempts=%d asset_calls=%d", engine.attemptCount(), assets.callCount())
+	})
+	firstBytes := assets.bytesAt(0)
+
+	tradingName := "Renamed Ledgerly Limited"
+	if err := profile.UpdateProfile(context.Background(), identity.UpdateProfilePatch{TradingName: &tradingName}); err != nil {
+		t.Fatalf("UpdateProfile() error = %v", err)
+	}
+	engine.setPDF([]byte("%PDF-1.4\nsecond-render\n%%EOF\n"))
+	after, err := service.RenderInvoicePDFNow(context.Background(), sent.ID)
+	if err != nil {
+		t.Fatalf("RenderInvoicePDFNow() after identity change error = %v", err)
+	}
+
+	if after.PDFAsset == nil || *after.PDFAsset != "/api/identity/assets/test-pdf-1" {
+		t.Fatalf("PDFAsset after re-render = %v, want original URL", after.PDFAsset)
+	}
+	if got := assets.callCount(); got != 1 {
+		t.Fatalf("PDF asset store calls after recovery render = %d, want 1", got)
+	}
+	if !bytes.Equal(assets.bytesAt(0), firstBytes) {
+		t.Fatal("stored PDF bytes changed after identity update and recovery render")
+	}
+}
+
+func TestInvoicingInvoicePrintPayloadReverseChargeFacts(t *testing.T) {
+	h := harness.New(t, harness.Options{ClockStart: time.Date(2025, 5, 1, 9, 0, 0, 0, time.UTC)})
+	fixtures.Rates(t, h)
+	service := newInvoiceService(t, h, invoicing.WithIdentity(testIdentityProfile(t, h)))
+
+	sent, err := service.Send(context.Background(), createEURInvoiceDraft(t, h, service, 450_000).ID)
+	if err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	payload, err := service.InvoicePrintPayload(context.Background(), sent.ID, false)
+	if err != nil {
+		t.Fatalf("InvoicePrintPayload() error = %v", err)
+	}
+
+	if payload.ReverseChargeNote == nil || !strings.Contains(*payload.ReverseChargeNote, "Article 196") {
+		t.Fatalf("ReverseChargeNote = %v, want Article 196 wording", payload.ReverseChargeNote)
+	}
+	assertMoney(t, payload.Invoice.Totals.VAT, 0, "EUR")
+	if payload.LockedRate == nil || payload.LockedRate.Rate != "0.85" {
+		t.Fatalf("LockedRate = %+v, want locked 0.85", payload.LockedRate)
+	}
+	if payload.Identity.IBAN != "GB82 WEST 1234 5698 7654 32" || payload.Identity.BIC != "WESTGB2L" {
+		t.Fatalf("SEPA details = %s/%s, want fixture bank details", payload.Identity.IBAN, payload.Identity.BIC)
+	}
+}
+
+func TestInvoicingInvoicePrintPayloadDomesticVATFromPack(t *testing.T) {
+	h := harness.New(t, harness.Options{ClockStart: time.Date(2025, 5, 1, 9, 0, 0, 0, time.UTC)})
+	fixtures.Rates(t, h)
+	service := newInvoiceService(t, h, invoicing.WithIdentity(testIdentityProfile(t, h)))
+
+	fabrikam := fixtures.Fabrikam(t, h)
+	draft, err := service.CreateDraft(context.Background(), fabrikam.ID)
+	if err != nil {
+		t.Fatalf("CreateDraft() error = %v", err)
+	}
+	lines := []invoicing.InvoiceLineInput{{
+		Description: "Domestic support",
+		Qty:         invoicing.MustQuantity("1"),
+		UnitPrice:   invoicing.Money{Amount: 60_000, Currency: string(invoicing.CurrencyGBP)},
+	}}
+	updated, err := service.UpdateDraft(context.Background(), draft.ID, invoicing.DraftPatch{Lines: &lines})
+	if err != nil {
+		t.Fatalf("UpdateDraft(lines) error = %v", err)
+	}
+	sent, err := service.Send(context.Background(), updated.ID)
+	if err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	payload, err := service.InvoicePrintPayload(context.Background(), sent.ID, false)
+	if err != nil {
+		t.Fatalf("InvoicePrintPayload() error = %v", err)
+	}
+
+	if payload.VATRate != "0.20" || payload.VATTaxYear != "2025-26" {
+		t.Fatalf("VAT rate/year = %s/%s, want 0.20 from 2025-26 pack", payload.VATRate, payload.VATTaxYear)
+	}
+	assertMoney(t, payload.Invoice.Totals.VAT, 12_000, "GBP")
+	if payload.ReverseChargeNote != nil {
+		t.Fatalf("ReverseChargeNote = %q, want nil for domestic invoice", *payload.ReverseChargeNote)
+	}
 }
 
 func TestInvoicingOverdueReadQueriesSweepFactsAndTotals(t *testing.T) {
@@ -744,21 +895,151 @@ func TestInvoicingNumberingConcurrentGapFree(t *testing.T) {
 	}
 }
 
-func newInvoiceService(t testing.TB, h *harness.Harness) *invoicing.Service {
+func newInvoiceService(t testing.TB, h *harness.Harness, opts ...invoicing.ServiceOption) *invoicing.Service {
 	t.Helper()
 	modulePool := testdb.AsModule(t, invoicing.ModuleName)
 	moneyFXPool := testdb.AsModule(t, moneyfx.ModuleName)
 	rateLocks := testRateLocker{service: moneyfx.NewService(moneyfx.NewStore(moneyFXPool), h.Clock)}
-	return invoicing.NewService(
-		modulePool,
-		invoicing.Store{},
+	serviceOpts := []invoicing.ServiceOption{
 		invoicing.WithClock(h.Clock),
 		invoicing.WithTodayRate(fakeTodayRate),
 		invoicing.WithRateLocker(rateLocks),
 		invoicing.WithRateLockReader(rateLocks),
 		invoicing.WithLedger(ledger.New(h.LedgerPool, h.Bus)),
 		invoicing.WithEventBus(h.Bus),
-	)
+	}
+	serviceOpts = append(serviceOpts, opts...)
+	return invoicing.NewService(modulePool, invoicing.Store{}, serviceOpts...)
+}
+
+func testIdentityProfile(t testing.TB, h *harness.Harness) *identity.TransactionalProfileService {
+	t.Helper()
+	profile := identity.NewTransactionalProfileService(testdb.AsModule(t, "identity"), h.Bus, identity.WithDataDir(t.TempDir()))
+	incorporationDate := "2020-07-14"
+	yearEnd, err := identity.NewYearEnd(3, 31)
+	if err != nil {
+		t.Fatalf("NewYearEnd() error = %v", err)
+	}
+	office := identity.RegisteredOffice{
+		Line1:      "18 Athol St",
+		Line2:      "",
+		Locality:   "Douglas",
+		Region:     "",
+		PostalCode: "IM1 1JA",
+		Country:    "IM",
+	}
+	vatNumber := "GB 123 4567 89"
+	bankDetails := identity.BankDetails{
+		IBAN:     "GB82 WEST 1234 5698 7654 32",
+		BIC:      "WESTGB2L",
+		BankName: "Example Bank",
+	}
+	shareholders := []identity.Shareholder{{
+		Name:   "N. Meyer",
+		Shares: 100,
+		Class:  "ordinary GBP 1",
+	}}
+	if err := profile.UpdateProfile(context.Background(), identity.UpdateProfilePatch{
+		TradingName:       stringPtrForTest("NPM Limited"),
+		LegalName:         stringPtrForTest("NPM Limited"),
+		CompanyNumber:     stringPtrForTest("137792C"),
+		RegisteredOffice:  &office,
+		IncorporationDate: &incorporationDate,
+		YearEnd:           &yearEnd,
+		VATNumber:         &vatNumber,
+		BankDetails:       &bankDetails,
+		Shareholders:      &shareholders,
+	}); err != nil {
+		t.Fatalf("UpdateProfile(seed) error = %v", err)
+	}
+	return profile
+}
+
+func stringPtrForTest(value string) *string {
+	return &value
+}
+
+type recordingPDFEngine struct {
+	mu       sync.Mutex
+	failures int
+	attempts int
+	pdf      []byte
+	payloads []invoicing.InvoicePrintPayload
+}
+
+func newRecordingPDFEngine(failures int, pdf []byte) *recordingPDFEngine {
+	return &recordingPDFEngine{
+		failures: failures,
+		pdf:      append([]byte{}, pdf...),
+	}
+}
+
+func (e *recordingPDFEngine) RenderInvoicePDF(_ context.Context, payload invoicing.InvoicePrintPayload) ([]byte, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.attempts++
+	e.payloads = append(e.payloads, payload)
+	if e.attempts <= e.failures {
+		return nil, errors.New("forced PDF render failure")
+	}
+	return append([]byte{}, e.pdf...), nil
+}
+
+func (e *recordingPDFEngine) attemptCount() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.attempts
+}
+
+func (e *recordingPDFEngine) setPDF(pdf []byte) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.pdf = append([]byte{}, pdf...)
+}
+
+type recordingPDFAssetStore struct {
+	mu    sync.Mutex
+	bytes [][]byte
+}
+
+func (s *recordingPDFAssetStore) StoreInvoicePDF(_ context.Context, pdf []byte) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.bytes = append(s.bytes, append([]byte{}, pdf...))
+	return fmt.Sprintf("/api/identity/assets/test-pdf-%d", len(s.bytes)), nil
+}
+
+func (s *recordingPDFAssetStore) callCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.bytes)
+}
+
+func (s *recordingPDFAssetStore) bytesAt(i int) []byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]byte{}, s.bytes[i]...)
+}
+
+func waitForPDFAsset(t testing.TB, service *invoicing.Service, id string, want string, debug func() string) {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		invoice, err := service.Invoice(context.Background(), id)
+		if err != nil {
+			t.Fatalf("Invoice(%s) while waiting for PDF: %v", id, err)
+		}
+		if invoice.PDFAsset != nil && *invoice.PDFAsset == want {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("timed out waiting for PDF asset %q; invoice asset = %v; %s", want, invoice.PDFAsset, debug())
+		case <-tick.C:
+		}
+	}
 }
 
 type testRateLocker struct {

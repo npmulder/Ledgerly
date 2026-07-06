@@ -80,6 +80,9 @@ func (m *Module) RegisterRoutes(r chi.Router) {
 	r.Patch("/invoices/{id}", invoices.patchInvoice)
 	r.Post("/invoices/{id}/send", invoices.sendInvoice)
 	r.Post("/invoices/{id}/revert", invoices.revertInvoice)
+	r.Get("/invoices/{id}/print", invoices.getInvoicePrintPayload)
+	r.Get("/invoices/{id}/pdf/preview", invoices.previewInvoicePDF)
+	r.Post("/invoices/{id}/pdf/render", invoices.renderInvoicePDF)
 	r.Get("/invoices/{id}/pdf", invoices.getInvoicePDF)
 }
 
