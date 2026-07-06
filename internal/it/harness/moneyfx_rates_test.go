@@ -42,6 +42,16 @@ func TestMoneyFXStoreRoundTripsExactDecimal(t *testing.T) {
 	if _, err := stored.Rat(); err != nil {
 		t.Fatalf("stored.Rat() error = %v", err)
 	}
+	actualDate, ok, err := store.ECBRateDateOnOrBefore(ctx, date.AddDate(0, 0, 3), date.AddDate(0, 0, -4))
+	if err != nil {
+		t.Fatalf("ECBRateDateOnOrBefore() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("ECBRateDateOnOrBefore() ok = false, want true")
+	}
+	if !actualDate.Equal(date) {
+		t.Fatalf("ECBRateDateOnOrBefore() = %s, want %s", actualDate.Format(time.DateOnly), date.Format(time.DateOnly))
+	}
 	count, err := store.CountECBRates(ctx)
 	if err != nil {
 		t.Fatalf("CountECBRates() error = %v", err)

@@ -131,6 +131,39 @@ WHERE date = $1 AND currency = $2`,
 	return row, nil
 }
 
+// ECBRateDateOnOrBefore returns the newest stored ECB rate date in the inclusive
+// window. Rate lookups issue direct indexed queries; request-scope caching is
+// unnecessary for the small per-request read surface.
+func (s Store) ECBRateDateOnOrBefore(ctx context.Context, date time.Time, minDate time.Time) (time.Time, bool, error) {
+	if s.pool == nil {
+		return time.Time{}, false, fmt.Errorf("moneyfx: load rate date requires pool")
+	}
+	normalizedDate := normalizeRateDate(date)
+	normalizedMinDate := normalizeRateDate(minDate)
+	if normalizedDate.IsZero() || normalizedMinDate.IsZero() {
+		return time.Time{}, false, fmt.Errorf("moneyfx: rate date window is required")
+	}
+
+	var rateDate time.Time
+	err := s.pool.QueryRow(ctx, `
+SELECT date
+FROM moneyfx.ecb_rates
+WHERE date <= $1 AND date >= $2
+GROUP BY date
+ORDER BY date DESC
+LIMIT 1`,
+		normalizedDate,
+		normalizedMinDate,
+	).Scan(&rateDate)
+	if err == pgx.ErrNoRows {
+		return time.Time{}, false, nil
+	}
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("moneyfx: load ECB rate date: %w", err)
+	}
+	return normalizeRateDate(rateDate), true, nil
+}
+
 // CountECBRates returns the number of stored ECB rate rows.
 func (s Store) CountECBRates(ctx context.Context) (int, error) {
 	if s.pool == nil {
