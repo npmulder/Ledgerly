@@ -3,6 +3,7 @@ package banking
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -330,10 +331,20 @@ func TestInvoiceSentUsesPublisherTransactionRollback(t *testing.T) {
 	eventBus := bus.New()
 	service.SubscribeEvents(eventBus)
 	forced := errors.New("force rollback")
-	eventBus.Subscribe(invoicing.InvoiceSentName, func(context.Context, db.Tx, bus.Event) error {
+	eventBus.Subscribe(invoicing.InvoiceSentName, func(ctx context.Context, tx db.Tx, _ bus.Event) error {
+		var role string
+		var searchPath string
+		if err := tx.QueryRow(ctx, "SELECT current_role, current_setting('search_path')").Scan(&role, &searchPath); err != nil {
+			return err
+		}
+		if role != "ledgerly_invoicing" || searchPath != "invoicing" {
+			return fmt.Errorf("subscriber transaction scope = role %q path %q, want invoicing scope", role, searchPath)
+		}
 		return forced
 	})
-	tx, err := pool.Begin(ctx)
+	invoicingPool := openBankingTestPool(t, ctx, bankingTestDatabaseURL(t), pool.Config().ConnConfig.Database, db.WithModule(invoicing.ModuleName))
+	t.Cleanup(invoicingPool.Close)
+	tx, err := invoicingPool.Begin(ctx)
 	if err != nil {
 		t.Fatalf("begin publisher transaction: %v", err)
 	}
@@ -415,6 +426,33 @@ func TestManualRefreshClearsStaleSuggestionWhenDecisionDisappears(t *testing.T) 
 		}
 	}
 	assertStoredTransactionState(t, ctx, pool, txnID, TransactionStateUnreconciled)
+
+	manualTxn := importSingleBankingTxn(t, ctx, pool, service, account.ID, revolutTestTxn{
+		Date:      time.Date(2026, 7, 23, 9, 0, 0, 0, time.UTC),
+		ID:        "manual-suggestion-preserve",
+		Payee:     "Manual Advisor Payee",
+		Reference: "manual suggestion",
+		Amount:    money.Money{Amount: 230000, Currency: "GBP"},
+	})
+	manualSuggestion, err := service.RecordSuggestion(ctx, SuggestionInput{
+		TransactionID: manualTxn,
+		Kind:          SuggestionKindPayeeRule,
+		Confidence:    0.72,
+		Target:        "6200-software",
+		Explanation:   "advisor-created suggestion",
+		CreatedBy:     "advisor",
+	})
+	if err != nil {
+		t.Fatalf("RecordSuggestion() manual error = %v", err)
+	}
+	if _, err := service.ManualRefresh(ctx); err != nil {
+		t.Fatalf("ManualRefresh() with manual suggestion error = %v", err)
+	}
+	active := activeSuggestion(t, mustSuggestions(t, ctx, service, manualTxn))
+	if active.ID != manualSuggestion.ID {
+		t.Fatalf("active manual suggestion ID = %d, want preserved %d", active.ID, manualSuggestion.ID)
+	}
+	assertStoredTransactionState(t, ctx, pool, manualTxn, TransactionStateSuggested)
 }
 
 type staticDirectorNames []string

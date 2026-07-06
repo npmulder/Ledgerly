@@ -397,12 +397,21 @@ func (s Store) ClearActiveSuggestion(ctx context.Context, tx db.Tx, txnID Transa
 	if err != nil {
 		return err
 	}
+	active, err := s.ActiveSuggestion(ctx, tx, txnID)
+	if err != nil {
+		if errors.Is(err, ErrSuggestionNotFound) {
+			return nil
+		}
+		return err
+	}
+	if !strings.HasPrefix(active.CreatedBy, matchEngineCreatedByPrefix) {
+		return nil
+	}
 	if _, err := tx.Exec(ctx, `
 UPDATE suggestions
 SET superseded_at = now()
-WHERE txn_id = $1
-	AND superseded_at IS NULL`,
-		int64(txnID),
+WHERE id = $1`,
+		int64(active.ID),
 	); err != nil {
 		return fmt.Errorf("banking: clear active suggestion for transaction %d: %w", txnID, err)
 	}
