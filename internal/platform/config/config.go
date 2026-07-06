@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"time"
 )
 
 const (
@@ -16,6 +17,8 @@ const (
 	DefaultHTTPAddr = ":8080"
 
 	DefaultJurisdiction = "isle-of-man@1.0"
+
+	DefaultECBHTTPTimeout = 10 * time.Second
 )
 
 const (
@@ -25,6 +28,7 @@ const (
 	keyEnv          = Prefix + "ENV"
 	keyLogLevel     = Prefix + "LOG_LEVEL"
 	keyJurisdiction = Prefix + "JURISDICTION"
+	keyECBTimeout   = Prefix + "ECB_HTTP_TIMEOUT"
 )
 
 // Env describes the runtime environment.
@@ -43,6 +47,8 @@ type Config struct {
 	Env          Env
 	LogLevel     slog.Level
 	Jurisdiction string
+
+	ECBHTTPTimeout time.Duration
 }
 
 // Load reads configuration from process environment variables.
@@ -99,13 +105,22 @@ func LoadFrom(lookup func(string) (string, bool)) (Config, error) {
 		jurisdiction = DefaultJurisdiction
 	}
 
+	ecbHTTPTimeout := DefaultECBHTTPTimeout
+	if value, ok := nonEmptyEnv(lookup, keyECBTimeout); ok {
+		ecbHTTPTimeout, err = time.ParseDuration(value)
+		if err != nil || ecbHTTPTimeout <= 0 {
+			return Config{}, errors.Join(fmt.Errorf("invalid %s %q", keyECBTimeout, value), err)
+		}
+	}
+
 	return Config{
-		DatabaseURL:  databaseURL,
-		DataDir:      dataDir,
-		HTTPAddr:     httpAddr,
-		Env:          env,
-		LogLevel:     logLevel,
-		Jurisdiction: jurisdiction,
+		DatabaseURL:    databaseURL,
+		DataDir:        dataDir,
+		HTTPAddr:       httpAddr,
+		Env:            env,
+		LogLevel:       logLevel,
+		Jurisdiction:   jurisdiction,
+		ECBHTTPTimeout: ecbHTTPTimeout,
 	}, nil
 }
 

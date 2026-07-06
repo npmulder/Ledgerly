@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -68,6 +70,33 @@ func TestRunRejectsInvalidCheckArguments(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "usage: ledgerly check trial-balance") {
 		t.Fatalf("run() error = %q, want check usage error", err)
+	}
+}
+
+func TestRunRejectsInvalidFetchRatesArguments(t *testing.T) {
+	var stdout bytes.Buffer
+	err := run(context.Background(), []string{"fetch-rates", "extra"}, &stdout)
+	if err == nil {
+		t.Fatal("run() error = nil, want fetch-rates usage error")
+	}
+	if !strings.Contains(err.Error(), "usage: ledgerly fetch-rates") {
+		t.Fatalf("run() error = %q, want fetch-rates usage error", err)
+	}
+}
+
+func TestRunFetchRatesDispatchesRunner(t *testing.T) {
+	restore := setFetchRatesRunnerForTest(func(ctx context.Context, stdout io.Writer) error {
+		_, err := fmt.Fprintln(stdout, "stub fetch")
+		return err
+	})
+	defer restore()
+
+	var stdout bytes.Buffer
+	if err := run(context.Background(), []string{"fetch-rates"}, &stdout); err != nil {
+		t.Fatalf("run() error = %v", err)
+	}
+	if got, want := stdout.String(), "stub fetch\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 }
 
@@ -196,6 +225,14 @@ func setJurisdictionLoaderForTest(loader func(string) error) func() {
 	loadActiveJurisdiction = loader
 	return func() {
 		loadActiveJurisdiction = original
+	}
+}
+
+func setFetchRatesRunnerForTest(runner func(context.Context, io.Writer) error) func() {
+	original := fetchRatesRunner
+	fetchRatesRunner = runner
+	return func() {
+		fetchRatesRunner = original
 	}
 }
 
