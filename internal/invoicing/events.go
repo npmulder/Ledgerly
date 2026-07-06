@@ -8,6 +8,10 @@ const InvoiceSentName = "invoicing.InvoiceSent"
 // InvoiceSettledName is the bus event name for invoice settlement facts.
 const InvoiceSettledName = "invoicing.InvoiceSettled"
 
+// InvoiceOverdueName is the bus event name for invoices that cross the
+// overdue boundary.
+const InvoiceOverdueName = "invoicing.InvoiceOverdue"
+
 // InvoiceSent is published after a draft invoice is numbered, FX-locked, and
 // posted to the ledger inside the send transaction.
 type InvoiceSent struct {
@@ -40,4 +44,16 @@ type InvoiceSettled struct {
 // Name implements bus.Event.
 func (InvoiceSettled) Name() string {
 	return InvoiceSettledName
+}
+
+// InvoiceOverdue is published once per invoice per due-date crossing by the
+// overdue sweep.
+type InvoiceOverdue struct {
+	InvoiceID   string
+	DaysOverdue int
+}
+
+// Name implements bus.Event.
+func (InvoiceOverdue) Name() string {
+	return InvoiceOverdueName
 }

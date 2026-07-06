@@ -34,6 +34,7 @@ type Service struct {
 	clock              clock.Clock
 	todayRate          TodayRateFunc
 	rateLocker         RateLocker
+	rateLocks          RateLockReader
 	ledger             LedgerJournal
 	eventBus           *bus.Bus
 	invoiceUsage       InvoiceUsageChecker
@@ -77,6 +78,19 @@ func WithRateLocker(locker RateLocker) ServiceOption {
 	return func(s *Service) {
 		if locker != nil {
 			s.rateLocker = locker
+			if reader, ok := locker.(RateLockReader); ok && s.rateLocks == nil {
+				s.rateLocks = reader
+			}
+		}
+	}
+}
+
+// WithRateLockReader installs the moneyfx lock read dependency used by list
+// totals for sent and paid invoices.
+func WithRateLockReader(reader RateLockReader) ServiceOption {
+	return func(s *Service) {
+		if reader != nil {
+			s.rateLocks = reader
 		}
 	}
 }
