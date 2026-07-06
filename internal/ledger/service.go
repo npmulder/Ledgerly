@@ -96,6 +96,15 @@ func (s *Service) AccountBalance(ctx context.Context, code AccountCode, asOf tim
 	if s.pool == nil {
 		return AccountBalance{}, fmt.Errorf("ledger: account balance requires pool")
 	}
+	return s.AccountBalanceInTx(ctx, s.pool, code, asOf)
+}
+
+// AccountBalanceInTx returns AccountBalance using the caller's transaction or
+// snapshot.
+func (s *Service) AccountBalanceInTx(ctx context.Context, tx db.Tx, code AccountCode, asOf time.Time) (AccountBalance, error) {
+	if tx == nil {
+		return AccountBalance{}, fmt.Errorf("ledger: account balance requires transaction")
+	}
 	normalizedCode, err := normalizeAccountCode(code)
 	if err != nil {
 		return AccountBalance{}, err
@@ -104,7 +113,7 @@ func (s *Service) AccountBalance(ctx context.Context, code AccountCode, asOf tim
 	if err != nil {
 		return AccountBalance{}, err
 	}
-	return s.store.AccountBalance(ctx, s.pool, normalizedCode, normalizedAsOf)
+	return s.store.AccountBalance(ctx, tx, normalizedCode, normalizedAsOf)
 }
 
 // BalancesByType returns one aggregate row per account type. Income and expense

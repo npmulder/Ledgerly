@@ -10,7 +10,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	ledgerapi "github.com/npmulder/ledgerly/internal/ledger"
 	"github.com/npmulder/ledgerly/internal/moneyfx/money"
 )
 
@@ -46,6 +45,9 @@ func (s *Service) CheckConsistency(ctx context.Context, asOf time.Time) (Consist
 	if s.pool == nil {
 		return ConsistencyReport{}, fmt.Errorf("dla: consistency check requires pool")
 	}
+	if s.ledger == nil {
+		return ConsistencyReport{}, fmt.Errorf("dla: consistency check requires ledger")
+	}
 	date, err := normalizeDate(asOf)
 	if err != nil {
 		return ConsistencyReport{}, err
@@ -66,7 +68,7 @@ func (s *Service) CheckConsistency(ctx context.Context, asOf time.Time) (Consist
 	if err != nil {
 		return ConsistencyReport{}, err
 	}
-	ledgerBalance, err := (ledgerapi.Store{}).AccountBalance(ctx, tx, DLAAccountCode, date)
+	ledgerBalance, err := s.ledger.AccountBalanceInTx(ctx, tx, DLAAccountCode, date)
 	if err != nil {
 		return ConsistencyReport{}, err
 	}
