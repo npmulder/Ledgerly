@@ -19,6 +19,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/lib/pq"
 
+	"github.com/npmulder/ledgerly/internal/advisor"
+	"github.com/npmulder/ledgerly/internal/dividends"
 	"github.com/npmulder/ledgerly/internal/dla"
 	"github.com/npmulder/ledgerly/internal/identity"
 	"github.com/npmulder/ledgerly/internal/invoicing"
@@ -31,6 +33,7 @@ import (
 	platformcron "github.com/npmulder/ledgerly/internal/platform/cron"
 	"github.com/npmulder/ledgerly/internal/platform/db"
 	httpserver "github.com/npmulder/ledgerly/internal/platform/http"
+	"github.com/npmulder/ledgerly/internal/reports"
 	"github.com/npmulder/ledgerly/web"
 )
 
@@ -71,6 +74,7 @@ type ModuleDeps struct {
 type Module struct {
 	HTTPModule      httpserver.Module
 	OpenAPIFragment httpserver.OpenAPIFragment
+	ReadAPI         any
 	SubscribeEvents func(*bus.Bus)
 	ScheduledJobs   []ScheduledJob
 }
@@ -96,6 +100,7 @@ type Dependencies struct {
 	LedgerPool    *pgxpool.Pool
 	MoneyFXPool   *pgxpool.Pool
 	InvoicingPool *pgxpool.Pool
+	DividendsPool *pgxpool.Pool
 
 	Bus        *bus.Bus
 	BusOptions []bus.Option
@@ -132,7 +137,9 @@ type App struct {
 	LedgerPool      *pgxpool.Pool
 	MoneyFXPool     *pgxpool.Pool
 	InvoicingPool   *pgxpool.Pool
+	DividendsPool   *pgxpool.Pool
 	IdentityService *identity.Service
+	AdvisorFacts    advisor.FactRegistry
 
 	cron   *platformcron.Runner
 	jobs   map[string]Job
@@ -196,6 +203,10 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		return nil, err
 	}
 	invoicingPool, err := modulePool(ctx, cfg.Runtime.DatabaseURL, invoicing.ModuleName, deps.InvoicingPool, openPool, &closeFuncs)
+	if err != nil {
+		return nil, err
+	}
+	dividendsPool, err := modulePool(ctx, cfg.Runtime.DatabaseURL, dividends.ModuleName, deps.DividendsPool, openPool, &closeFuncs)
 	if err != nil {
 		return nil, err
 	}
@@ -358,6 +369,31 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 	modules = append(modules, invoicingModule.HTTPModule)
 	fragments = append(fragments, invoicingModule.OpenAPIFragment)
 
+	reportsInvoicing, _ := invoicingModule.ReadAPI.(reports.Invoicing)
+	reportsService := reports.New(ledgerService, identityProfile, reportsInvoicing, reports.WithClock(clk))
+	dividendsService := dividends.New(dividendsPool, ledgerService, reportsService, identityProfile, dividends.WithClock(clk))
+
+	factProviders := []advisor.RegisteredFactProvider{}
+	if invoicingRead, ok := invoicingModule.ReadAPI.(advisor.InvoicingReadAPI); ok {
+		factProviders = append(factProviders, advisor.RegisteredFactProvider{
+			Name:     invoicing.ModuleName,
+			Provider: advisor.NewInvoicingFactProvider(invoicingRead),
+		})
+	}
+	if dlaRead, ok := dlaModule.ReadAPI.(advisor.DLAReadAPI); ok {
+		factProviders = append(factProviders, advisor.RegisteredFactProvider{
+			Name:     dla.ModuleName,
+			Provider: advisor.NewDLAFactProvider(dlaRead),
+		})
+	}
+	factProviders = append(factProviders,
+		advisor.RegisteredFactProvider{Name: dividends.ModuleName, Provider: advisor.NewDividendsFactProvider(dividendsService)},
+		advisor.RegisteredFactProvider{Name: reports.ModuleName, Provider: advisor.NewReportsFactProvider(reportsService)},
+		advisor.RegisteredFactProvider{Name: moneyfx.ModuleName, Provider: advisor.NewMoneyFXFactProvider(moneyFXModule)},
+		advisor.RegisteredFactProvider{Name: "identity", Provider: advisor.NewIdentityFactProvider(identityProfile)},
+	)
+	advisorFacts := advisor.NewFactRegistry(factProviders...)
+
 	staticAssets, err := loadStaticAssets(deps)
 	if err != nil {
 		return nil, err
@@ -398,7 +434,9 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		LedgerPool:      ledgerPool,
 		MoneyFXPool:     moneyFXPool,
 		InvoicingPool:   invoicingPool,
+		DividendsPool:   dividendsPool,
 		IdentityService: identityService,
+		AdvisorFacts:    advisorFacts,
 		cron:            cronRunner,
 		jobs:            copyJobs(deps.Jobs),
 		closer: func() error {
@@ -446,6 +484,7 @@ func buildLedgerModule(_ context.Context, deps ModuleDeps) (Module, error) {
 	return Module{
 		HTTPModule:      ledgerModule.HTTPModule(),
 		OpenAPIFragment: ledgerModule.OpenAPIFragment(),
+		ReadAPI:         ledgerModule,
 	}, nil
 }
 
@@ -462,6 +501,7 @@ func buildDLAModule(_ context.Context, deps ModuleDeps) (Module, error) {
 	return Module{
 		HTTPModule:      dlaModule.HTTPModule(),
 		OpenAPIFragment: dlaModule.OpenAPIFragment(),
+		ReadAPI:         dlaModule,
 	}, nil
 }
 
@@ -481,6 +521,7 @@ func buildInvoicingModule(_ context.Context, deps ModuleDeps) (Module, error) {
 	return Module{
 		HTTPModule:      invoicingModule.HTTPModule(),
 		OpenAPIFragment: invoicingModule.OpenAPIFragment(),
+		ReadAPI:         invoicingModule,
 		ScheduledJobs: []ScheduledJob{{
 			Name:     invoicing.OverdueSweepJobName,
 			Schedule: invoicing.OverdueSweepSchedule,

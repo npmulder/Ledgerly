@@ -35,6 +35,12 @@ type Rate struct {
 	Source   string    `json:"source"`
 }
 
+// RateStaleness is the advisor-facing read model for ECB rate freshness.
+type RateStaleness struct {
+	LastDate *time.Time
+	Stale    bool
+}
+
 // Rat parses the exact rate value for use with money.MulRat.
 func (r Rate) Rat() (*big.Rat, error) {
 	value := strings.TrimSpace(r.Value)
@@ -166,6 +172,29 @@ func (s *Service) TodayRate(ctx context.Context, from string, to string) (Rate, 
 		return Rate{}, time.Time{}, err
 	}
 	return rate, fetchedAt, nil
+}
+
+// RateStaleness returns the latest stored ECB rate date and whether that date
+// is stale under the same rule used by the ECB fetcher.
+func (s *Service) RateStaleness(ctx context.Context) (RateStaleness, error) {
+	if err := ctx.Err(); err != nil {
+		return RateStaleness{}, err
+	}
+	if s == nil || s.store == nil {
+		return RateStaleness{}, fmt.Errorf("moneyfx: rate store is required")
+	}
+	lastDate, ok, err := s.store.LatestRateDate(ctx)
+	if err != nil {
+		return RateStaleness{}, err
+	}
+	if !ok {
+		return RateStaleness{Stale: true}, nil
+	}
+	normalized := normalizeRateDate(lastDate)
+	return RateStaleness{
+		LastDate: &normalized,
+		Stale:    ratesAreStale(normalized, s.nowUTC(), ECBLocation()),
+	}, nil
 }
 
 // ToGBP converts m into GBP using the ECB rate for date. GBP inputs are already

@@ -115,6 +115,31 @@ func (m *Module) OpenAPIFragment() httpserver.OpenAPIFragment {
 	return OpenAPIFragment()
 }
 
+// OverdueInvoices returns advisor-facing facts for currently overdue invoices.
+func (m *Module) OverdueInvoices(ctx context.Context) ([]OverdueInvoiceFact, error) {
+	return m.service.OverdueInvoices(ctx)
+}
+
+// Client returns one invoicing client by id.
+func (m *Module) Client(ctx context.Context, id string) (Client, error) {
+	return m.service.Client(ctx, id)
+}
+
+// Invoice returns one invoice by id.
+func (m *Module) Invoice(ctx context.Context, id string) (Invoice, error) {
+	return m.service.Invoice(ctx, id)
+}
+
+// InvoiceByNumber returns one invoice by public invoice number.
+func (m *Module) InvoiceByNumber(ctx context.Context, number string) (Invoice, error) {
+	return m.service.InvoiceByNumber(ctx, number)
+}
+
+// InvoiceVATContextBySendEntryID returns VAT context for a sent-invoice posting.
+func (m *Module) InvoiceVATContextBySendEntryID(ctx context.Context, entryID ledger.EntryID) (InvoiceVATContext, error) {
+	return m.service.InvoiceVATContextBySendEntryID(ctx, entryID)
+}
+
 // Client is invoicing's client reference-data record.
 type Client struct {
 	ID              string       `json:"id"`

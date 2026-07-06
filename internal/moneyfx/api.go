@@ -48,6 +48,11 @@ func (m *Module) TodayRate(ctx context.Context, from string, to string) (Rate, t
 	return m.service.TodayRate(ctx, from, to)
 }
 
+// RateStaleness returns the latest stored ECB rate date and stale status.
+func (m *Module) RateStaleness(ctx context.Context) (RateStaleness, error) {
+	return m.service.RateStaleness(ctx)
+}
+
 // Lock resolves and appends an immutable ECB rate lock inside tx.
 func (m *Module) Lock(ctx context.Context, tx db.Tx, ref LockRef, from string, to string, date time.Time) (RateLock, error) {
 	return m.service.Lock(ctx, tx, ref, from, to, date)
