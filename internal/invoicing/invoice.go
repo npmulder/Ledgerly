@@ -92,6 +92,7 @@ type Invoice struct {
 	Totals            InvoiceTotals `json:"totals"`
 	CreatedAt         time.Time     `json:"created_at"`
 	UpdatedAt         time.Time     `json:"updated_at"`
+	sendRateLock      *RateLock
 }
 
 // InvoiceVATContext is the narrow sent-invoice tax context consumed by reports.
@@ -114,6 +115,7 @@ type InvoiceLine struct {
 
 // InvoiceLineInput is the caller-supplied shape for replacing draft lines.
 type InvoiceLineInput struct {
+	ID          string   `json:"id"`
 	Description string   `json:"description"`
 	Qty         Quantity `json:"qty"`
 	UnitPrice   Money    `json:"unit_price"`
