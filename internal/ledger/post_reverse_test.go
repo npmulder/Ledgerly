@@ -77,6 +77,14 @@ func TestPostValidationRulesRejectWholeEntry(t *testing.T) {
 			want: ErrInvalidMoney,
 		},
 		{
+			name: "GBP sign must match native sign",
+			mutate: func(entry *NewJournalEntry) {
+				entry.Postings[0].AmountGBP.Amount = -entry.Postings[0].AmountGBP.Amount
+				entry.Postings[1].AmountGBP.Amount = -entry.Postings[1].AmountGBP.Amount
+			},
+			want: ErrPostingSignMismatch,
+		},
+		{
 			name: "native zero amount is rejected",
 			mutate: func(entry *NewJournalEntry) {
 				entry.Postings[0].Amount.Amount = 0
@@ -125,6 +133,14 @@ func TestPostValidationRulesRejectWholeEntry(t *testing.T) {
 			},
 			want: ErrInvalidJournalEntry,
 		},
+		{
+			name: "fixed account currency must match native currency",
+			mutate: func(entry *NewJournalEntry) {
+				entry.Postings[0].Amount.Currency = "EUR"
+				entry.Postings[1].Amount.Currency = "EUR"
+			},
+			want: ErrAccountCurrencyMismatch,
+		},
 	}
 
 	for _, tt := range tests {
@@ -146,6 +162,70 @@ func TestPostValidationRulesRejectWholeEntry(t *testing.T) {
 			assertJournalEntryCount(t, ctx, tx, 0)
 		})
 	}
+}
+
+func TestPostRunsInsideModuleOwnedTransaction(t *testing.T) {
+	ctx, _, ledgerPool := temporaryMigratedLedgerDatabase(t)
+	invoicingPool := openDatabasePool(t, ctx, testDatabaseURL(t), ledgerPool.Config().ConnConfig.Database, db.WithModule("invoicing"))
+	t.Cleanup(invoicingPool.Close)
+
+	service := New(invoicingPool, discardLedgerBus())
+	tx, err := invoicingPool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("Begin() error = %v", err)
+	}
+	defer func() {
+		_ = tx.Rollback(context.Background())
+	}()
+
+	entry := validJournalEntry()
+	entry.SourceModule = "invoicing"
+	entry.SourceRef = "invoice-123"
+	if _, err := service.Post(ctx, tx, entry); err != nil {
+		t.Fatalf("Post() from invoicing-owned tx error = %v", err)
+	}
+	assertJournalEntryCount(t, ctx, tx, 1)
+}
+
+func TestPostAllowsNullCurrencyAccountsToUseAnyNativeCurrency(t *testing.T) {
+	ctx, _, ledgerPool := temporaryMigratedLedgerDatabase(t)
+	service := New(ledgerPool, discardLedgerBus())
+
+	tx, err := ledgerPool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("Begin() error = %v", err)
+	}
+	defer func() {
+		_ = tx.Rollback(context.Background())
+	}()
+
+	entry := NewJournalEntry{
+		Date:         time.Date(2026, 7, 5, 0, 0, 0, 0, time.UTC),
+		Description:  "multi-currency null account entry",
+		SourceModule: "ledger",
+		SourceRef:    "null-currency-usd",
+		Postings: []NewPosting{
+			{
+				AccountCode: "4000-sales",
+				Amount:      moneyAmount(100, "USD"),
+				AmountGBP:   moneyAmount(80, "GBP"),
+			},
+			{
+				AccountCode: "5000-fees",
+				Amount:      moneyAmount(-100, "USD"),
+				AmountGBP:   moneyAmount(-80, "GBP"),
+			},
+		},
+	}
+	id, err := service.Post(ctx, tx, entry)
+	if err != nil {
+		t.Fatalf("Post() error = %v", err)
+	}
+	stored, err := service.store.JournalEntry(ctx, tx, id)
+	if err != nil {
+		t.Fatalf("JournalEntry() error = %v", err)
+	}
+	assertStoredEntry(t, stored, entry, nil)
 }
 
 func TestPostStoresEntryPostingsAndPublishesExactlyOnce(t *testing.T) {
@@ -451,10 +531,6 @@ func rapidBalancedEntry(t *rapid.T) NewJournalEntry {
 	pairCount := rapid.IntRange(1, 3).Draw(t, "pair_count")
 	postings := make([]NewPosting, 0, pairCount*2)
 	accounts := []AccountCode{
-		"1100-debtors-eur",
-		"1101-debtors-gbp",
-		"2200-vat-control",
-		"3000-retained-earnings",
 		"4000-sales",
 		"5000-fees",
 		"5010-software",
@@ -472,8 +548,9 @@ func rapidBalancedEntry(t *rapid.T) NewJournalEntry {
 		if nativeAmount < 0 {
 			gbpAmount = -gbpAmount
 		}
-		firstAccount := rapid.SampledFrom(accounts).Draw(t, fmt.Sprintf("first_account_%d", i))
-		secondAccount := rapid.SampledFrom(accounts).Draw(t, fmt.Sprintf("second_account_%d", i))
+		compatibleAccounts := compatiblePostingAccounts(currency, accounts)
+		firstAccount := rapid.SampledFrom(compatibleAccounts).Draw(t, fmt.Sprintf("first_account_%d", i))
+		secondAccount := rapid.SampledFrom(compatibleAccounts).Draw(t, fmt.Sprintf("second_account_%d", i))
 
 		postings = append(postings,
 			NewPosting{
@@ -496,6 +573,18 @@ func rapidBalancedEntry(t *rapid.T) NewJournalEntry {
 		SourceRef:    fmt.Sprintf("rapid-%d", rapid.Int64().Draw(t, "source_ref")),
 		Postings:     postings,
 	}
+}
+
+func compatiblePostingAccounts(currency string, nullCurrencyAccounts []AccountCode) []AccountCode {
+	accounts := make([]AccountCode, 0, len(nullCurrencyAccounts)+4)
+	accounts = append(accounts, nullCurrencyAccounts...)
+	switch currency {
+	case "GBP":
+		accounts = append(accounts, "1101-debtors-gbp", "2200-vat-control", "3000-retained-earnings")
+	case "EUR":
+		accounts = append(accounts, "1100-debtors-eur")
+	}
+	return accounts
 }
 
 func rapidPerturbation(t *rapid.T, label string) int64 {

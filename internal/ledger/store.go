@@ -76,8 +76,8 @@ ORDER BY code`)
 	return accounts, nil
 }
 
-// RequireAccountsExist verifies that every posting account exists before an entry is inserted.
-func (Store) RequireAccountsExist(ctx context.Context, tx db.Tx, codes []AccountCode) error {
+// PostingAccountCurrencies loads fixed account currencies and verifies every posting account exists.
+func (Store) PostingAccountCurrencies(ctx context.Context, tx db.Tx, codes []AccountCode) (map[AccountCode]*string, error) {
 	unique := make([]string, 0, len(codes))
 	seen := make(map[AccountCode]struct{}, len(codes))
 	for _, code := range codes {
@@ -89,32 +89,40 @@ func (Store) RequireAccountsExist(ctx context.Context, tx db.Tx, codes []Account
 	}
 
 	rows, err := tx.Query(ctx, `
-SELECT code
+SELECT code, currency
 FROM ledger.accounts
 WHERE code = ANY($1)`, unique)
 	if err != nil {
-		return fmt.Errorf("ledger: check posting accounts: %w", err)
+		return nil, fmt.Errorf("ledger: check posting accounts: %w", err)
 	}
 	defer rows.Close()
 
-	found := make(map[AccountCode]struct{}, len(unique))
+	found := make(map[AccountCode]*string, len(unique))
 	for rows.Next() {
-		var code string
-		if err := rows.Scan(&code); err != nil {
-			return fmt.Errorf("ledger: scan posting account: %w", err)
+		var (
+			code     string
+			currency pgtype.Text
+		)
+		if err := rows.Scan(&code, &currency); err != nil {
+			return nil, fmt.Errorf("ledger: scan posting account: %w", err)
 		}
-		found[AccountCode(code)] = struct{}{}
+		if currency.Valid {
+			value := currency.String
+			found[AccountCode(code)] = &value
+		} else {
+			found[AccountCode(code)] = nil
+		}
 	}
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("ledger: collect posting accounts: %w", err)
+		return nil, fmt.Errorf("ledger: collect posting accounts: %w", err)
 	}
 
 	for _, code := range codes {
 		if _, ok := found[code]; !ok {
-			return &AccountNotFoundError{Code: code}
+			return nil, &AccountNotFoundError{Code: code}
 		}
 	}
-	return nil
+	return found, nil
 }
 
 // InsertJournalEntry appends entry and all postings. It never updates existing rows.

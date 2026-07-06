@@ -127,6 +127,9 @@ var (
 	// ErrInvalidMoney reports missing or malformed posting money values.
 	ErrInvalidMoney = errors.New("ledger: invalid posting money")
 
+	// ErrPostingSignMismatch reports native and GBP posting amounts on opposite sides.
+	ErrPostingSignMismatch = errors.New("ledger: posting native and GBP signs mismatch")
+
 	// ErrZeroPosting reports a posting with a zero native or GBP amount.
 	ErrZeroPosting = errors.New("ledger: zero-amount posting")
 
@@ -138,6 +141,9 @@ var (
 
 	// ErrAccountNotFound reports a posting account code that is not in the chart of accounts.
 	ErrAccountNotFound = errors.New("ledger: account not found")
+
+	// ErrAccountCurrencyMismatch reports a posting whose native currency conflicts with the account.
+	ErrAccountCurrencyMismatch = errors.New("ledger: account currency mismatch")
 
 	// ErrEntryNotFound reports a missing journal entry.
 	ErrEntryNotFound = errors.New("ledger: journal entry not found")
@@ -188,6 +194,26 @@ func (e *AccountNotFoundError) Error() string {
 
 func (e *AccountNotFoundError) Unwrap() error {
 	return ErrAccountNotFound
+}
+
+// AccountCurrencyMismatchError carries the account currency conflict.
+type AccountCurrencyMismatchError struct {
+	Code      AccountCode
+	Expected  string
+	Requested string
+}
+
+func (e *AccountCurrencyMismatchError) Error() string {
+	return fmt.Sprintf(
+		"ledger: account %s currency is %q, posting requested %q",
+		e.Code,
+		e.Expected,
+		e.Requested,
+	)
+}
+
+func (e *AccountCurrencyMismatchError) Unwrap() error {
+	return ErrAccountCurrencyMismatch
 }
 
 // EntryNotFoundError carries the missing journal entry ID.

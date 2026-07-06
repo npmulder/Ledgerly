@@ -115,7 +115,11 @@ func (s *Service) post(ctx context.Context, tx db.Tx, entry NewJournalEntry, rev
 	if err != nil {
 		return 0, err
 	}
-	if err := s.store.RequireAccountsExist(ctx, tx, postingAccountCodes(validated.Postings)); err != nil {
+	accountCurrencies, err := s.store.PostingAccountCurrencies(ctx, tx, postingAccountCodes(validated.Postings))
+	if err != nil {
+		return 0, err
+	}
+	if err := validatePostingAccountCurrencies(validated.Postings, accountCurrencies); err != nil {
 		return 0, err
 	}
 
@@ -225,6 +229,9 @@ func validatePosting(index int, posting NewPosting) (NewPosting, error) {
 	if posting.Amount.IsZero() || posting.AmountGBP.IsZero() {
 		return NewPosting{}, fmt.Errorf("ledger: posting %d has zero amount: %w", index, ErrZeroPosting)
 	}
+	if postingSignsDisagree(posting.Amount.Amount, posting.AmountGBP.Amount) {
+		return NewPosting{}, fmt.Errorf("ledger: posting %d native and GBP signs disagree: %w", index, ErrPostingSignMismatch)
+	}
 
 	return NewPosting{
 		AccountCode: code,
@@ -237,6 +244,27 @@ func validatePosting(index int, posting NewPosting) (NewPosting, error) {
 			Currency: "GBP",
 		},
 	}, nil
+}
+
+func postingSignsDisagree(nativeAmount, gbpAmount int64) bool {
+	return (nativeAmount < 0) != (gbpAmount < 0)
+}
+
+func validatePostingAccountCurrencies(postings []NewPosting, accountCurrencies map[AccountCode]*string) error {
+	for i, posting := range postings {
+		accountCurrency, ok := accountCurrencies[posting.AccountCode]
+		if !ok {
+			return &AccountNotFoundError{Code: posting.AccountCode}
+		}
+		if accountCurrency != nil && *accountCurrency != posting.Amount.Currency {
+			return fmt.Errorf("ledger: posting %d account currency mismatch: %w", i, &AccountCurrencyMismatchError{
+				Code:      posting.AccountCode,
+				Expected:  *accountCurrency,
+				Requested: posting.Amount.Currency,
+			})
+		}
+	}
+	return nil
 }
 
 func normalizeEntryDate(date time.Time) (time.Time, error) {
