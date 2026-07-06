@@ -113,6 +113,22 @@ func TestHTTPReportsRoutesRequireAuthentication(t *testing.T) {
 	}
 }
 
+func TestHTTPReportsUnknownTaxYearReturnsBadRequest(t *testing.T) {
+	loadReportsPack(t, "")
+	router := newReportsHTTPTestRouter(t)
+
+	response := performReportsRequest(router, http.MethodGet, "/api/reports/pl?from=2099-04-01&to=2099-06-30", true)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("unknown tax year status = %d, want %d; body=%s", response.Code, http.StatusBadRequest, response.Body.String())
+	}
+	if got := response.Header().Get("Content-Type"); got != httpserver.ProblemContentType {
+		t.Fatalf("unknown tax year Content-Type = %q, want %s", got, httpserver.ProblemContentType)
+	}
+	if !strings.Contains(response.Body.String(), "no tax year") {
+		t.Fatalf("unknown tax year body = %s, want missing tax year detail", response.Body.String())
+	}
+}
+
 func newReportsHTTPTestRouter(t *testing.T) http.Handler {
 	t.Helper()
 

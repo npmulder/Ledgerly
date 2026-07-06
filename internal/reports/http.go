@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/npmulder/ledgerly/internal/identity"
+	"github.com/npmulder/ledgerly/internal/jurisdiction"
 	"github.com/npmulder/ledgerly/internal/moneyfx/money"
 	httpserver "github.com/npmulder/ledgerly/internal/platform/http"
 )
@@ -299,7 +300,12 @@ func moneyToResponse(amount money.Money) moneyResponse {
 }
 
 func writeReportsError(w nethttp.ResponseWriter, r *nethttp.Request, err error) {
+	var unknownTaxYear jurisdiction.UnknownTaxYearError
 	if errors.Is(err, ErrInvalidPeriod) || errors.Is(err, ErrInvalidTaxYear) {
+		writeReportsBadRequest(w, r, err)
+		return
+	}
+	if errors.As(err, &unknownTaxYear) {
 		writeReportsBadRequest(w, r, err)
 		return
 	}

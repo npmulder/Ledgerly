@@ -28,46 +28,23 @@ type ReportsPeriod = {
   readonly vatPeriod: string;
 };
 
-const quarterPresets: ReportsPeriod[] = [
-  {
-    from: "2026-01-01",
-    id: "2026-Q1",
-    label: "Jan-Mar",
-    to: "2026-03-31",
-    vatPeriod: "2026-Q1",
-  },
-  {
-    from: "2026-04-01",
-    id: "2026-Q2",
-    label: "Apr-Jun",
-    to: "2026-06-30",
-    vatPeriod: "2026-Q2",
-  },
-  {
-    from: "2026-07-01",
-    id: "2026-Q3",
-    label: "Jul-Sep",
-    to: "2026-09-30",
-    vatPeriod: "2026-Q3",
-  },
-  {
-    from: "2026-10-01",
-    id: "2026-Q4",
-    label: "Oct-Dec",
-    to: "2026-12-31",
-    vatPeriod: "2026-Q4",
-  },
+const quarterDefinitions = [
+  { label: "Jan-Mar", quarter: 1, toMonth: 2 },
+  { label: "Apr-Jun", quarter: 2, toMonth: 5 },
+  { label: "Jul-Sep", quarter: 3, toMonth: 8 },
+  { label: "Oct-Dec", quarter: 4, toMonth: 11 },
 ];
 
-const defaultPeriod = quarterPresets[1];
 const rep5Tooltip = "Available in REP-5";
 
 export function ReportsScreen() {
-  const [period, setPeriod] = useState<ReportsPeriod>(defaultPeriod);
-  const [customRange, setCustomRange] = useState({
+  const quarterPresets = useMemo(() => buildQuarterPresets(), []);
+  const defaultPeriod = defaultReportsPeriod(quarterPresets);
+  const [period, setPeriod] = useState<ReportsPeriod>(() => defaultPeriod);
+  const [customRange, setCustomRange] = useState(() => ({
     from: defaultPeriod.from,
     to: defaultPeriod.to,
-  });
+  }));
 
   const plQuery = useQuery({
     queryFn: () => getReportsPL(period.from, period.to),
@@ -83,9 +60,17 @@ export function ReportsScreen() {
   });
 
   const vatFiling = useMemo(
-    () =>
-      calendarQuery.data?.filings.find((filing) => filing.key === "vat_return"),
-    [calendarQuery.data],
+    () => {
+      const dueDate = dueDateForVATPeriod(period.vatPeriod);
+      if (!dueDate) {
+        return undefined;
+      }
+      return calendarQuery.data?.filings.find(
+        (filing) =>
+          filing.key === "vat_return" && filing.due_date === dueDate,
+      );
+    },
+    [calendarQuery.data, period.vatPeriod],
   );
 
   function selectPreset(next: ReportsPeriod) {
@@ -95,6 +80,9 @@ export function ReportsScreen() {
 
   function applyCustomRange(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!isCompleteCustomRange(customRange)) {
+      return;
+    }
     setPeriod({
       from: customRange.from,
       id: "custom",
@@ -138,6 +126,7 @@ export function ReportsScreen() {
           customRange={customRange}
           onCustomRangeChange={setCustomRange}
           onCustomRangeSubmit={applyCustomRange}
+          quarterPresets={quarterPresets}
         />
         <aside className="reports-rail" aria-label="VAT and filing calendar">
           <VATReturnCard
@@ -164,6 +153,7 @@ function ProfitAndLossCard({
   onSelectPreset,
   period,
   pl,
+  quarterPresets,
 }: {
   readonly customRange: { readonly from: string; readonly to: string };
   readonly isLoading: boolean;
@@ -172,13 +162,16 @@ function ProfitAndLossCard({
   readonly onSelectPreset: (period: ReportsPeriod) => void;
   readonly period: ReportsPeriod;
   readonly pl: ReportsPL | undefined;
+  readonly quarterPresets: ReportsPeriod[];
 }) {
   return (
     <Card
       className="reports-pl-card"
       title={
         <div className="reports-card-title">
-          <span>Profit &amp; loss · {period.label} 2026</span>
+          <span>
+            Profit &amp; loss · {period.label} {periodYearLabel(period)}
+          </span>
           <span>GBP · presentational currency</span>
         </div>
       }
@@ -216,6 +209,7 @@ function ProfitAndLossCard({
                   from: event.target.value,
                 })
               }
+              required
               type="date"
               value={customRange.from}
             />
@@ -230,6 +224,7 @@ function ProfitAndLossCard({
                   to: event.target.value,
                 })
               }
+              required
               type="date"
               value={customRange.to}
             />
@@ -254,7 +249,11 @@ function ProfitAndLossCard({
           <ReportLine
             amount={pl.realised_fx_gains.amount}
             label="Realised FX gains on settlement"
-            tone="positive"
+            tone={
+              pl.realised_fx_gains.amount.amount_minor >= 0
+                ? "positive"
+                : "default"
+            }
           />
           <ReportLine amount={pl.income_total} label="Turnover" strong />
           {pl.expenses.map((line) => (
@@ -306,7 +305,7 @@ function VATReturnCard({
   return (
     <Card
       className="reports-vat-card"
-      title={<span>VAT return · {period.label}</span>}
+      title={<span>VAT return · {formatVATPeriodLabel(period.vatPeriod)}</span>}
       actions={filing ? <DueBadge filing={filing} prefix="DUE" /> : null}
     >
       {isLoading ? (
@@ -450,7 +449,7 @@ function DueBadge({
 
 function formatReportMoney(value: ReportsMoney, negative = false) {
   const formatted = formatMinorUnits({
-    amountMinor: Math.abs(value.amount_minor),
+    amountMinor: negative ? Math.abs(value.amount_minor) : value.amount_minor,
     currency: value.currency,
   });
   if (negative && value.amount_minor !== 0) {
@@ -484,4 +483,110 @@ function quarterForDate(value: string) {
   const date = new Date(`${value}T00:00:00Z`);
   const quarter = Math.floor(date.getUTCMonth() / 3) + 1;
   return `${date.getUTCFullYear()}-Q${quarter}`;
+}
+
+function buildQuarterPresets(year = new Date().getUTCFullYear()) {
+  return quarterDefinitions.map((definition) => {
+    const fromMonth = definition.toMonth - 2;
+    const vatPeriod = `${year}-Q${definition.quarter}`;
+    return {
+      from: isoDate(year, fromMonth, 1),
+      id: vatPeriod,
+      label: definition.label,
+      to: isoDate(
+        year,
+        definition.toMonth,
+        daysInMonth(year, definition.toMonth),
+      ),
+      vatPeriod,
+    };
+  });
+}
+
+function defaultReportsPeriod(presets: readonly ReportsPeriod[]) {
+  const defaultPeriod = presets[1];
+  if (!defaultPeriod) {
+    throw new Error("reports quarter presets are not configured");
+  }
+  return defaultPeriod;
+}
+
+function periodYearLabel(period: ReportsPeriod) {
+  const fromYear = Number(period.from.slice(0, 4));
+  const toYear = Number(period.to.slice(0, 4));
+  return fromYear === toYear ? String(fromYear) : `${fromYear}-${toYear}`;
+}
+
+function isCompleteCustomRange({
+  from,
+  to,
+}: {
+  readonly from: string;
+  readonly to: string;
+}) {
+  return from !== "" && to !== "" && from <= to;
+}
+
+function formatVATPeriodLabel(vatPeriod: string) {
+  const parsed = parseVATPeriod(vatPeriod);
+  if (!parsed) {
+    return vatPeriod;
+  }
+  const definition = quarterDefinition(parsed.quarter);
+  return `${definition.label} ${parsed.year}`;
+}
+
+function dueDateForVATPeriod(vatPeriod: string) {
+  const parsed = parseVATPeriod(vatPeriod);
+  if (!parsed) {
+    return null;
+  }
+  const definition = quarterDefinition(parsed.quarter);
+  const quarterEndDay = daysInMonth(parsed.year, definition.toMonth);
+  return addMonthsClamped(parsed.year, definition.toMonth, quarterEndDay, 1);
+}
+
+function parseVATPeriod(vatPeriod: string) {
+  const match = /^([0-9]{4})-Q([1-4])$/.exec(vatPeriod);
+  if (!match) {
+    return null;
+  }
+  return {
+    quarter: Number(match[2]),
+    year: Number(match[1]),
+  };
+}
+
+function quarterDefinition(quarter: number) {
+  const definition = quarterDefinitions.find(
+    (candidate) => candidate.quarter === quarter,
+  );
+  if (!definition) {
+    throw new Error(`unsupported VAT quarter ${quarter}`);
+  }
+  return definition;
+}
+
+function addMonthsClamped(
+  year: number,
+  monthIndex: number,
+  day: number,
+  months: number,
+) {
+  const targetMonthIndex = monthIndex + months;
+  const targetYear = year + Math.floor(targetMonthIndex / 12);
+  const targetMonth = targetMonthIndex % 12;
+  return isoDate(
+    targetYear,
+    targetMonth,
+    Math.min(day, daysInMonth(targetYear, targetMonth)),
+  );
+}
+
+function daysInMonth(year: number, monthIndex: number) {
+  return new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();
+}
+
+function isoDate(year: number, monthIndex: number, day: number) {
+  return new Date(Date.UTC(year, monthIndex, day)).toISOString().slice(0, 10);
 }

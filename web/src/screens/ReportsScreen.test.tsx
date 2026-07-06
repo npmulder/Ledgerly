@@ -1,5 +1,6 @@
 import {
   cleanup,
+  fireEvent,
   render,
   screen,
   waitFor,
@@ -46,13 +47,38 @@ describe("ReportsScreen", () => {
     expect(netAmounts[netAmounts.length - 1]).toHaveClass("reports-money");
   });
 
+  it("preserves minus signs for negative report totals", async () => {
+    vi.stubGlobal(
+      "fetch",
+      reportsFetch({
+        pl: {
+          ...plFixture(),
+          net_profit: money(-1_234),
+          profit_before_tax: money(-1_234),
+          realised_fx_gains: {
+            amount: money(-2_160),
+            label: "Realised FX gains",
+          },
+        },
+      }),
+    );
+
+    renderReportsScreen();
+
+    const pl = await screen.findByLabelText("P&L lines");
+    expect(within(pl).getByText("-£21.60")).toBeInTheDocument();
+    expect(within(pl).getAllByText("-£12.34")).toHaveLength(2);
+    expect(within(pl).getByText("(£214.30)")).toBeInTheDocument();
+  });
+
   it("renders the VAT due badge state from the filing calendar", async () => {
+    const reportYear = currentReportYear();
     vi.stubGlobal(
       "fetch",
       reportsFetch({
         calendar: calendarFixture([
           filingFixture({
-            due_date: "2026-07-30",
+            due_date: `${reportYear}-07-30`,
             key: "vat_return",
             label: "VAT return",
             status: "due-soon",
@@ -71,24 +97,25 @@ describe("ReportsScreen", () => {
   });
 
   it("maps filing calendar statuses to teal, amber, and red badge classes", async () => {
+    const reportYear = currentReportYear();
     vi.stubGlobal(
       "fetch",
       reportsFetch({
         calendar: calendarFixture([
           filingFixture({
-            due_date: "2026-08-14",
+            due_date: `${reportYear}-08-14`,
             key: "annual_return",
             label: "Annual return",
             status: "upcoming",
           }),
           filingFixture({
-            due_date: "2026-07-30",
+            due_date: `${reportYear}-07-30`,
             key: "vat_return",
             label: "VAT return",
             status: "due-soon",
           }),
           filingFixture({
-            due_date: "2026-04-01",
+            due_date: `${reportYear}-04-01`,
             key: "company_tax_return",
             label: "Company tax return",
             status: "overdue",
@@ -115,18 +142,84 @@ describe("ReportsScreen", () => {
     const user = userEvent.setup();
     const fetchImpl = vi.fn(reportsFetchHandler());
     vi.stubGlobal("fetch", fetchImpl);
+    const reportYear = currentReportYear();
 
     renderReportsScreen();
 
-    await screen.findByText("Profit & loss · Apr-Jun 2026");
+    await screen.findByText(`Profit & loss · Apr-Jun ${reportYear}`);
     await user.click(screen.getByRole("button", { name: "Jan-Mar" }));
 
     await waitFor(() => {
       expect(fetchImpl).toHaveBeenCalledWith(
-        "/api/reports/pl?from=2026-01-01&to=2026-03-31",
+        `/api/reports/pl?from=${reportYear}-01-01&to=${reportYear}-03-31`,
         expect.objectContaining({ method: "GET" }),
       );
     });
+  });
+
+  it("does not apply custom ranges while either date is empty", async () => {
+    const user = userEvent.setup();
+    const fetchImpl = vi.fn(reportsFetchHandler());
+    vi.stubGlobal("fetch", fetchImpl);
+    const reportYear = currentReportYear();
+
+    renderReportsScreen();
+
+    await screen.findByText(`Profit & loss · Apr-Jun ${reportYear}`);
+    fetchImpl.mockClear();
+
+    await user.clear(screen.getByLabelText("From"));
+    await user.click(screen.getByRole("button", { name: "Apply" }));
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(
+      screen.getByText(`Profit & loss · Apr-Jun ${reportYear}`),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps custom VAT ranges labelled and badged by the fetched quarter", async () => {
+    const user = userEvent.setup();
+    const reportYear = currentReportYear();
+    vi.stubGlobal(
+      "fetch",
+      reportsFetch({
+        calendar: calendarFixture([
+          filingFixture({
+            due_date: `${reportYear}-07-30`,
+            key: "vat_return",
+            label: "VAT return",
+            status: "due-soon",
+          }),
+        ]),
+      }),
+    );
+
+    renderReportsScreen();
+
+    await screen.findByText(`Profit & loss · Apr-Jun ${reportYear}`);
+
+    fireEvent.change(screen.getByLabelText("From"), {
+      target: { value: `${reportYear}-05-01` },
+    });
+    fireEvent.change(screen.getByLabelText("To"), {
+      target: { value: `${reportYear}-05-31` },
+    });
+    await user.click(screen.getByRole("button", { name: "Apply" }));
+
+    expect(
+      await screen.findByText(`Profit & loss · May-May ${reportYear}`),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(`VAT return · Apr-Jun ${reportYear}`),
+    ).toBeInTheDocument();
+    expect(screen.getByText("DUE 30 JUL")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Jan-Mar" }));
+
+    expect(
+      await screen.findByText(`VAT return · Jan-Mar ${reportYear}`),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("DUE 30 JUL")).not.toBeInTheDocument();
   });
 });
 
@@ -246,34 +339,39 @@ function vatFixture(): ReportsVAT {
 }
 
 function calendarFixture(
-  filings: ReportsFiling[] = [
+  filings: ReportsFiling[] = defaultCalendarFilings(),
+): ReportsFilingCalendar {
+  return { filings };
+}
+
+function defaultCalendarFilings() {
+  const year = currentReportYear();
+  return [
     filingFixture({
-      due_date: "2026-07-30",
+      due_date: `${year}-07-30`,
       key: "vat_return",
       label: "VAT return",
       status: "due-soon",
     }),
     filingFixture({
-      due_date: "2026-08-14",
+      due_date: `${year}-08-14`,
       key: "annual_return",
       label: "Annual return",
       status: "upcoming",
     }),
     filingFixture({
-      due_date: "2027-04-01",
+      due_date: `${year + 1}-04-01`,
       key: "company_tax_return",
       label: "Company tax return",
       status: "upcoming",
     }),
     filingFixture({
-      due_date: "2026-10-06",
+      due_date: `${year}-10-06`,
       key: "personal_tax_return",
       label: "Personal tax return",
       status: "upcoming",
     }),
-  ],
-): ReportsFilingCalendar {
-  return { filings };
+  ];
 }
 
 function filingFixture(overrides: Partial<ReportsFiling>): ReportsFiling {
@@ -290,6 +388,10 @@ function filingFixture(overrides: Partial<ReportsFiling>): ReportsFiling {
 
 function money(amount_minor: number) {
   return { amount_minor, currency: "GBP" };
+}
+
+function currentReportYear() {
+  return new Date().getUTCFullYear();
 }
 
 function urlFromRequest(input: RequestInfo | URL) {
