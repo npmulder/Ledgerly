@@ -70,6 +70,7 @@ export type ProblemDetails = components["schemas"]["Problem"] &
   Record<string, unknown>;
 
 export type ApiGetPath = PathWithMethod<"get">;
+export type ApiDeletePath = PathWithMethod<"delete">;
 export type ApiPatchPath = PathWithMethod<"patch">;
 export type ApiPostPath = PathWithMethod<"post">;
 export type ApiPutPath = PathWithMethod<"put">;
@@ -131,6 +132,13 @@ export class ApiClient {
     options: ApiRequestOptions<OperationFor<Path, "get">> = {},
   ): Promise<SuccessBody<OperationFor<Path, "get">>> {
     return this.request<Path, "get">(path, "GET", options);
+  }
+
+  async delete<Path extends ApiDeletePath>(
+    path: Path,
+    options: ApiRequestOptions<OperationFor<Path, "delete">> = {},
+  ): Promise<SuccessBody<OperationFor<Path, "delete">>> {
+    return this.request<Path, "delete">(path, "DELETE", options);
   }
 
   async patch<Path extends ApiPatchPath>(

@@ -109,12 +109,25 @@ tasks:
       - go run ./cmd/ledgerly openapi > .task/openapi.json
       - LEDGERLY_OPENAPI_URL=../.task/openapi.json task web:api:generate
 
+  api:generate-go:
+    desc: Generate the committed Go API client from the Go OpenAPI spec
+    cmds:
+      - mkdir -p .task internal/cli/gen
+      - go run ./cmd/ledgerly openapi > .task/openapi.json
+      - go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.5.0 -generate types,client -package gen .task/openapi.json > internal/cli/gen/client.gen.go
+
   api:drift-check:
-    desc: Regenerate the API client and fail when committed output is stale
+    desc: Regenerate API clients and fail when committed output is stale
     cmds:
       - task: api:generate
       - |
         if [ -n "$(git status --porcelain -- web/src/api/generated)" ]; then
           git status --short -- web/src/api/generated
+          exit 1
+        fi
+      - task: api:generate-go
+      - |
+        if [ -n "$(git status --porcelain -- internal/cli/gen)" ]; then
+          git status --short -- internal/cli/gen
           exit 1
         fi

@@ -18,6 +18,7 @@ var (
 	ErrRegistrationClosed = errors.New("registration is closed")
 	ErrInvalidCredentials = errors.New("invalid credentials")
 	ErrUnauthenticated    = errors.New("unauthenticated")
+	ErrForbidden          = errors.New("forbidden")
 	ErrUserNotFound       = errors.New("user not found")
 	ErrAssetNotFound      = errors.New("identity: asset not found")
 	ErrAssetTooLarge      = errors.New("identity: asset exceeds maximum size")
@@ -150,7 +151,43 @@ type LoginResult struct {
 
 type CredentialKind string
 
-const CredentialKindSessionCookie CredentialKind = "session_cookie"
+const (
+	CredentialKindSessionCookie CredentialKind = "session_cookie"
+	CredentialKindPAT           CredentialKind = "pat"
+)
+
+type PATScope string
+
+const (
+	PATScopeReadOnly PATScope = "read-only"
+	PATScopeFull     PATScope = "full"
+)
+
+type PersonalAccessToken struct {
+	ID         int64
+	Name       string
+	Scope      PATScope
+	CreatedAt  time.Time
+	LastUsedAt *time.Time
+	ExpiresAt  *time.Time
+}
+
+type CreatePATInput struct {
+	Name      string
+	Scope     PATScope
+	ExpiresAt *time.Time
+}
+
+type CreatePATResult struct {
+	PersonalAccessToken PersonalAccessToken
+	Token               string
+}
+
+type PrincipalPAT struct {
+	ID    int64
+	Name  string
+	Scope PATScope
+}
 
 // Credential is the parsed authentication material supplied by middleware.
 type Credential struct {
@@ -162,6 +199,7 @@ type Credential struct {
 type Principal struct {
 	User      User
 	ExpiresAt time.Time
+	PAT       *PrincipalPAT
 }
 
 // CredentialCheckResult lets middleware refresh browser credentials after a
@@ -170,6 +208,7 @@ type CredentialCheckResult struct {
 	Principal Principal
 	Token     string
 	ExpiresAt time.Time
+	SetCookie bool
 }
 
 // CredentialChecker is intentionally the only auth dependency used by the

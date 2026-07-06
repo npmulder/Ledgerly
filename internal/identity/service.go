@@ -25,6 +25,8 @@ const dateLayout = "2006-01-02"
 // initialised yet.
 var ErrProfileNotFound = errors.New("identity: company profile not found")
 
+const patTokenPrefix = "lgy_"
+
 type storedUser struct {
 	User
 	PasswordHash string
@@ -36,6 +38,11 @@ type storedSession struct {
 	CreatedAt time.Time
 }
 
+type storedPAT struct {
+	PersonalAccessToken
+	User User
+}
+
 type Store interface {
 	UsersExist(ctx context.Context) (bool, error)
 	CreateFirstUser(ctx context.Context, email, passwordHash, name string) (User, error)
@@ -45,6 +52,12 @@ type Store interface {
 	RefreshSession(ctx context.Context, tokenHash []byte, expiresAt time.Time) error
 	DeleteSession(ctx context.Context, tokenHash []byte) error
 	DeleteExpiredSessions(ctx context.Context, now time.Time) error
+	CreatePAT(ctx context.Context, userID int64, tokenHash []byte, name string, scope PATScope, expiresAt *time.Time) (PersonalAccessToken, error)
+	ListPATs(ctx context.Context, userID int64) ([]PersonalAccessToken, error)
+	DeletePAT(ctx context.Context, userID int64, id int64) error
+	DeletePATByTokenHash(ctx context.Context, tokenHash []byte) error
+	FindPATByTokenHash(ctx context.Context, tokenHash []byte) (storedPAT, error)
+	MarkPATUsed(ctx context.Context, tokenHash []byte, usedAt time.Time) error
 }
 
 // Service owns identity auth use cases.
@@ -406,12 +419,68 @@ func (s *Service) Logout(ctx context.Context, token string) error {
 	return s.store.DeleteSession(ctx, tokenHash[:])
 }
 
+func (s *Service) CreatePAT(ctx context.Context, principal Principal, input CreatePATInput) (CreatePATResult, error) {
+	name := strings.TrimSpace(input.Name)
+	if name == "" {
+		return CreatePATResult{}, fmt.Errorf("PAT name is required")
+	}
+	scope, err := normalizePATScope(input.Scope)
+	if err != nil {
+		return CreatePATResult{}, err
+	}
+	var expiresAt *time.Time
+	if input.ExpiresAt != nil {
+		normalized := input.ExpiresAt.UTC()
+		if !normalized.After(s.clock.Now().UTC()) {
+			return CreatePATResult{}, fmt.Errorf("PAT expiry must be in the future")
+		}
+		expiresAt = &normalized
+	}
+
+	token, err := newPATToken(s.tokenReader)
+	if err != nil {
+		return CreatePATResult{}, fmt.Errorf("create PAT token: %w", err)
+	}
+	tokenHash := hashPATToken(token)
+	record, err := s.store.CreatePAT(ctx, principal.User.ID, tokenHash[:], name, scope, expiresAt)
+	if err != nil {
+		return CreatePATResult{}, err
+	}
+	return CreatePATResult{
+		PersonalAccessToken: record,
+		Token:               token,
+	}, nil
+}
+
+func (s *Service) ListPATs(ctx context.Context, principal Principal) ([]PersonalAccessToken, error) {
+	return s.store.ListPATs(ctx, principal.User.ID)
+}
+
+func (s *Service) RevokePAT(ctx context.Context, principal Principal, id int64) error {
+	if id <= 0 {
+		return fmt.Errorf("PAT id is required")
+	}
+	return s.store.DeletePAT(ctx, principal.User.ID, id)
+}
+
 func (s *Service) CheckCredential(ctx context.Context, credential Credential) (CredentialCheckResult, error) {
-	if credential.Kind != CredentialKindSessionCookie || strings.TrimSpace(credential.Token) == "" {
+	token := strings.TrimSpace(credential.Token)
+	if token == "" {
 		return CredentialCheckResult{}, ErrUnauthenticated
 	}
 
-	tokenHash := hashSessionToken(credential.Token)
+	switch credential.Kind {
+	case CredentialKindSessionCookie:
+		return s.checkSessionCredential(ctx, token)
+	case CredentialKindPAT:
+		return s.checkPATCredential(ctx, token)
+	default:
+		return CredentialCheckResult{}, ErrUnauthenticated
+	}
+}
+
+func (s *Service) checkSessionCredential(ctx context.Context, token string) (CredentialCheckResult, error) {
+	tokenHash := hashSessionToken(token)
 	session, err := s.store.FindSessionByTokenHash(ctx, tokenHash[:])
 	if err != nil {
 		if errors.Is(err, ErrUnauthenticated) {
@@ -437,9 +506,54 @@ func (s *Service) CheckCredential(ctx context.Context, credential Credential) (C
 	}
 	return CredentialCheckResult{
 		Principal: principal,
-		Token:     credential.Token,
+		Token:     token,
 		ExpiresAt: expiresAt,
+		SetCookie: true,
 	}, nil
+}
+
+func (s *Service) checkPATCredential(ctx context.Context, token string) (CredentialCheckResult, error) {
+	if !strings.HasPrefix(token, patTokenPrefix) {
+		return CredentialCheckResult{}, ErrUnauthenticated
+	}
+	tokenHash := hashPATToken(token)
+	record, err := s.store.FindPATByTokenHash(ctx, tokenHash[:])
+	if err != nil {
+		if errors.Is(err, ErrUnauthenticated) {
+			return CredentialCheckResult{}, ErrUnauthenticated
+		}
+		return CredentialCheckResult{}, err
+	}
+
+	now := s.clock.Now().UTC()
+	if record.ExpiresAt != nil && !record.ExpiresAt.After(now) {
+		return CredentialCheckResult{}, ErrUnauthenticated
+	}
+	if err := s.store.MarkPATUsed(ctx, tokenHash[:], now); err != nil {
+		return CredentialCheckResult{}, err
+	}
+
+	return CredentialCheckResult{
+		Principal: Principal{
+			User: record.User,
+			PAT: &PrincipalPAT{
+				ID:    record.ID,
+				Name:  record.Name,
+				Scope: record.Scope,
+			},
+		},
+	}, nil
+}
+
+func normalizePATScope(scope PATScope) (PATScope, error) {
+	switch scope {
+	case "", PATScopeReadOnly:
+		return PATScopeReadOnly, nil
+	case PATScopeFull:
+		return PATScopeFull, nil
+	default:
+		return "", fmt.Errorf("PAT scope must be read-only or full")
+	}
 }
 
 func (patch UpdateProfilePatch) apply(profile CompanyProfile) (CompanyProfile, error) {
@@ -573,5 +687,17 @@ func newSessionToken(reader io.Reader) (string, error) {
 }
 
 func hashSessionToken(token string) [sha256.Size]byte {
+	return sha256.Sum256([]byte(token))
+}
+
+func newPATToken(reader io.Reader) (string, error) {
+	token, err := newSessionToken(reader)
+	if err != nil {
+		return "", err
+	}
+	return patTokenPrefix + token, nil
+}
+
+func hashPATToken(token string) [sha256.Size]byte {
 	return sha256.Sum256([]byte(token))
 }

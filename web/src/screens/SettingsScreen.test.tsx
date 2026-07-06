@@ -11,7 +11,11 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "@/app/App";
-import type { IdentityProfile, IdentityProfilePatch } from "@/api/identity";
+import type {
+  IdentityPAT,
+  IdentityProfile,
+  IdentityProfilePatch,
+} from "@/api/identity";
 import type { InvoicingClient } from "@/api/invoicing";
 
 afterEach(() => {
@@ -85,15 +89,99 @@ describe("Company settings", () => {
     );
   });
 
-  it("renders non-company settings sections as coming soon stubs", async () => {
+  it("renders placeholder settings sections as coming soon stubs", async () => {
     vi.stubGlobal("fetch", authenticatedFetch());
+
+    renderAt("/settings/invoicing-defaults");
+
+    expect(
+      await screen.findByRole("heading", {
+        level: 1,
+        name: "Invoicing defaults",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Coming soon")).toBeInTheDocument();
+  });
+
+  it("creates and revokes personal access tokens from Users settings", async () => {
+    const user = userEvent.setup();
+    let tokens: IdentityPAT[] = [
+      {
+        created_at: "2026-07-05T12:00:00Z",
+        expires_at: null,
+        id: 1,
+        last_used_at: "2026-07-06T09:00:00Z",
+        name: "CLI read",
+        scope: "read-only",
+      },
+    ];
+    const fetchImpl = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = pathFromRequest(input);
+        if (path === "/api/identity/me") {
+          return jsonResponse({
+            created_at: "2026-07-05T12:00:00Z",
+            email: "owner@example.com",
+            id: 1,
+            name: "N. Meyer",
+          });
+        }
+        if (path === "/api/identity/pats" && init?.method === "POST") {
+          const request = JSON.parse(String(init.body)) as {
+            name: string;
+            scope: "read-only" | "full";
+          };
+          const created = {
+            created_at: "2026-07-06T10:00:00Z",
+            expires_at: null,
+            id: 2,
+            last_used_at: null,
+            name: request.name,
+            scope: request.scope,
+          };
+          tokens = [created, ...tokens];
+          return jsonResponse({
+            personal_access_token: created,
+            token: "lgy_created",
+          });
+        }
+        if (path === "/api/identity/pats/1" && init?.method === "DELETE") {
+          tokens = tokens.filter((token) => token.id !== 1);
+          return new Response(null, { status: 204 });
+        }
+        if (path === "/api/identity/pats") {
+          return jsonResponse({ tokens });
+        }
+        return jsonResponse(
+          { status: 404, title: "Not Found", type: "about:blank" },
+          404,
+          "application/problem+json",
+        );
+      },
+    );
+    vi.stubGlobal("fetch", fetchImpl);
 
     renderAt("/settings/users");
 
-    expect(
-      await screen.findByRole("heading", { level: 1, name: "Users" }),
-    ).toBeInTheDocument();
-    expect(screen.getByText("Coming soon")).toBeInTheDocument();
+    expect(await screen.findByText("CLI read")).toBeInTheDocument();
+    await user.type(screen.getByLabelText("Token name"), "Codex CLI");
+    await user.selectOptions(screen.getByLabelText("Scope"), "full");
+    await user.click(screen.getByRole("button", { name: "Create token" }));
+
+    expect(await screen.findByDisplayValue("lgy_created")).toBeInTheDocument();
+    expect(await screen.findByText("Codex CLI")).toBeInTheDocument();
+
+    const oldTokenRow = screen.getByText("CLI read").closest("tr");
+    expect(oldTokenRow).not.toBeNull();
+    await user.click(
+      within(oldTokenRow as HTMLElement).getByRole("button", {
+        name: "Revoke",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByText("CLI read")).not.toBeInTheDocument();
+    });
   });
 
   it("renders clients and archives them from the active list", async () => {

@@ -55,10 +55,58 @@ func OpenAPIFragment() httpserver.OpenAPIFragment {
 					"tags":        []string{"identity"},
 					"summary":     "Return the current user",
 					"operationId": "identityCurrentUser",
-					"security":    sessionSecurity(),
+					"security":    authSecurity(),
 					"responses": map[string]any{
 						"200": jsonResponseRef("Authenticated user", "IdentityUser"),
 						"401": problemResponse("Authentication required"),
+					},
+				},
+			},
+			"/api/identity/pats": map[string]any{
+				"get": map[string]any{
+					"tags":        []string{"identity"},
+					"summary":     "List personal access tokens",
+					"operationId": "identityListPATs",
+					"security":    authSecurity(),
+					"responses": map[string]any{
+						"200": jsonResponseRef("Personal access tokens", "IdentityPATListResponse"),
+						"401": problemResponse("Authentication required"),
+					},
+				},
+				"post": map[string]any{
+					"tags":        []string{"identity"},
+					"summary":     "Create a personal access token",
+					"operationId": "identityCreatePAT",
+					"security":    authSecurity(),
+					"requestBody": jsonRequestBodyRef("IdentityPATCreateRequest"),
+					"responses": map[string]any{
+						"201": jsonResponseRef("Personal access token created", "IdentityPATCreateResponse"),
+						"400": problemResponse("Invalid personal access token request"),
+						"401": problemResponse("Authentication required"),
+						"403": problemResponse("Read-only token cannot create personal access tokens"),
+						"413": problemResponse("Personal access token request body is too large"),
+					},
+				},
+			},
+			"/api/identity/pats/{id}": map[string]any{
+				"delete": map[string]any{
+					"tags":        []string{"identity"},
+					"summary":     "Revoke a personal access token",
+					"operationId": "identityRevokePAT",
+					"security":    authSecurity(),
+					"parameters": []map[string]any{
+						{
+							"name":     "id",
+							"in":       "path",
+							"required": true,
+							"schema":   map[string]any{"type": "integer", "format": "int64"},
+						},
+					},
+					"responses": map[string]any{
+						"204": map[string]any{"description": "Personal access token revoked"},
+						"400": problemResponse("Invalid personal access token id"),
+						"401": problemResponse("Authentication required"),
+						"403": problemResponse("Read-only token cannot revoke personal access tokens"),
 					},
 				},
 			},
@@ -67,7 +115,7 @@ func OpenAPIFragment() httpserver.OpenAPIFragment {
 					"tags":        []string{"identity"},
 					"summary":     "Return the company identity profile",
 					"operationId": "identityGetProfile",
-					"security":    sessionSecurity(),
+					"security":    authSecurity(),
 					"responses": map[string]any{
 						"200": jsonResponseRef("Company profile", "IdentityProfile"),
 						"401": problemResponse("Authentication required"),
@@ -78,7 +126,7 @@ func OpenAPIFragment() httpserver.OpenAPIFragment {
 					"tags":        []string{"identity"},
 					"summary":     "Partially update the company identity profile",
 					"operationId": "identityPatchProfile",
-					"security":    sessionSecurity(),
+					"security":    authSecurity(),
 					"requestBody": jsonRequestBodyRef("IdentityProfilePatch"),
 					"responses": map[string]any{
 						"200": jsonResponseRef("Updated company profile", "IdentityProfile"),
@@ -95,7 +143,7 @@ func OpenAPIFragment() httpserver.OpenAPIFragment {
 					"tags":        []string{"identity"},
 					"summary":     "Replace the company logo",
 					"operationId": "identityReplaceLogo",
-					"security":    sessionSecurity(),
+					"security":    authSecurity(),
 					"requestBody": map[string]any{
 						"required": true,
 						"content": map[string]any{
@@ -118,7 +166,7 @@ func OpenAPIFragment() httpserver.OpenAPIFragment {
 					"tags":        []string{"identity"},
 					"summary":     "Return a content-addressed identity asset",
 					"operationId": "identityGetAsset",
-					"security":    sessionSecurity(),
+					"security":    authSecurity(),
 					"parameters": []map[string]any{
 						{
 							"name":     "id",
@@ -210,6 +258,13 @@ func sessionSecurity() []map[string][]string {
 	}
 }
 
+func authSecurity() []map[string][]string {
+	return []map[string][]string{
+		{"sessionCookie": []string{}},
+		{"patBearer": []string{}},
+	}
+}
+
 func identityComponents() map[string]any {
 	return map[string]any{
 		"securitySchemes": map[string]any{
@@ -218,8 +273,17 @@ func identityComponents() map[string]any {
 				"in":   "cookie",
 				"name": SessionCookieName,
 			},
+			"patBearer": map[string]any{
+				"type":         "http",
+				"scheme":       "bearer",
+				"bearerFormat": "lgy_PAT",
+			},
 		},
 		"schemas": map[string]any{
+			"IdentityPATScope": map[string]any{
+				"type": "string",
+				"enum": []string{"read-only", "full"},
+			},
 			"IdentityRegisterRequest": map[string]any{
 				"type":     "object",
 				"required": []string{"email", "password", "name"},
@@ -247,6 +311,51 @@ func identityComponents() map[string]any {
 					"email":      map[string]any{"type": "string", "format": "email"},
 					"name":       map[string]any{"type": "string"},
 					"created_at": map[string]any{"type": "string", "format": "date-time"},
+					"token_name": map[string]any{"type": "string", "nullable": true},
+					"token_scope": map[string]any{
+						"allOf":    []map[string]any{{"$ref": "#/components/schemas/IdentityPATScope"}},
+						"nullable": true,
+					},
+				},
+			},
+			"IdentityPAT": map[string]any{
+				"type":     "object",
+				"required": []string{"id", "name", "scope", "created_at", "last_used_at", "expires_at"},
+				"properties": map[string]any{
+					"id":           map[string]any{"type": "integer", "format": "int64"},
+					"name":         map[string]any{"type": "string"},
+					"scope":        map[string]any{"$ref": "#/components/schemas/IdentityPATScope"},
+					"created_at":   map[string]any{"type": "string", "format": "date-time"},
+					"last_used_at": map[string]any{"type": "string", "format": "date-time", "nullable": true},
+					"expires_at":   map[string]any{"type": "string", "format": "date-time", "nullable": true},
+				},
+			},
+			"IdentityPATCreateRequest": map[string]any{
+				"type":     "object",
+				"required": []string{"name", "scope"},
+				"properties": map[string]any{
+					"name":       map[string]any{"type": "string", "minLength": 1},
+					"scope":      map[string]any{"$ref": "#/components/schemas/IdentityPATScope"},
+					"expires_at": map[string]any{"type": "string", "format": "date-time", "nullable": true},
+				},
+				"additionalProperties": false,
+			},
+			"IdentityPATCreateResponse": map[string]any{
+				"type":     "object",
+				"required": []string{"personal_access_token", "token"},
+				"properties": map[string]any{
+					"personal_access_token": map[string]any{"$ref": "#/components/schemas/IdentityPAT"},
+					"token":                 map[string]any{"type": "string"},
+				},
+			},
+			"IdentityPATListResponse": map[string]any{
+				"type":     "object",
+				"required": []string{"tokens"},
+				"properties": map[string]any{
+					"tokens": map[string]any{
+						"type":  "array",
+						"items": map[string]any{"$ref": "#/components/schemas/IdentityPAT"},
+					},
 				},
 			},
 			"RegisteredOffice": map[string]any{

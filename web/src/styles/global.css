@@ -531,12 +531,15 @@
 }
 
 .clients-settings,
-.client-form {
+.client-form,
+.pat-settings,
+.pat-form {
   display: grid;
   gap: 14px;
 }
 
-.clients-table .ui-table {
+.clients-table .ui-table,
+.pat-table .ui-table {
   min-width: 820px;
 }
 
@@ -567,6 +570,12 @@
 
 .client-field-grid__wide {
   grid-column: 1 / -1;
+}
+
+.pat-field-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(160px, 1fr) minmax(180px, 1fr);
+  gap: 14px;
 }
 
 .client-address-grid {
@@ -836,6 +845,7 @@
   .client-address-grid,
   .client-field-grid,
   .jurisdiction-rule-row,
+  .pat-field-grid,
   .registered-office-grid,
   .year-end-fields {
     grid-template-columns: 1fr;
