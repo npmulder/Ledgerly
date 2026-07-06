@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/npmulder/ledgerly/internal/moneyfx"
 	"github.com/npmulder/ledgerly/internal/moneyfx/money"
 )
 
@@ -22,6 +21,7 @@ const (
 var (
 	ErrInvoiceNotFound  = errors.New("invoicing: invoice not found")
 	ErrInvoiceImmutable = errors.New("invoicing: invoice is immutable")
+	ErrRateUnavailable  = errors.New("invoicing: rate unavailable")
 
 	decimalQuantityPattern = regexp.MustCompile(`^[0-9]+(\.[0-9]+)?$`)
 )
@@ -30,7 +30,26 @@ var (
 type Money = money.Money
 
 // FXRate is the exact FX rate type used for draft GBP approximations.
-type FXRate = moneyfx.Rate
+type FXRate struct {
+	From     string    `json:"from"`
+	To       string    `json:"to"`
+	Value    string    `json:"value"`
+	RateDate time.Time `json:"rate_date"`
+	Source   string    `json:"source"`
+}
+
+// Rat parses the exact rate value for use with money.MulRat.
+func (r FXRate) Rat() (*big.Rat, error) {
+	value := strings.TrimSpace(r.Value)
+	if value == "" {
+		return nil, fmt.Errorf("invoicing: rate value is required")
+	}
+	rat, ok := new(big.Rat).SetString(value)
+	if !ok {
+		return nil, fmt.Errorf("invoicing: parse rate %q", r.Value)
+	}
+	return rat, nil
+}
 
 // TodayRateFunc returns a presentation rate for draft GBP approximation.
 type TodayRateFunc func(context.Context, string, string) (FXRate, time.Time, error)

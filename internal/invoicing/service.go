@@ -13,7 +13,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/npmulder/ledgerly/internal/jurisdiction"
-	"github.com/npmulder/ledgerly/internal/moneyfx"
 	"github.com/npmulder/ledgerly/internal/platform/clock"
 	httpserver "github.com/npmulder/ledgerly/internal/platform/http"
 )
@@ -71,7 +70,7 @@ func NewService(pool *pgxpool.Pool, store Store, opts ...ServiceOption) *Service
 		pool:               pool,
 		store:              store,
 		clock:              clock.New(),
-		todayRate:          moneyfx.TodayRate,
+		todayRate:          defaultTodayRate,
 		invoiceUsage:       noInvoiceUsageChecker{},
 		idGenerator:        newClientID,
 		invoiceIDGenerator: newInvoiceID,
@@ -520,7 +519,7 @@ func (s *Service) approxGBP(ctx context.Context, total Money) (*InvoiceGBPApprox
 	}
 	rate, asOf, err := s.todayRate(ctx, total.Currency, string(CurrencyGBP))
 	if err != nil {
-		if errors.Is(err, moneyfx.ErrRateUnavailable) {
+		if errors.Is(err, ErrRateUnavailable) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("invoicing: today GBP rate: %w", err)
@@ -547,6 +546,25 @@ func rateRat(value string) (*big.Rat, error) {
 		return nil, fmt.Errorf("invoicing: parse rate %q", value)
 	}
 	return rat, nil
+}
+
+func defaultTodayRate(ctx context.Context, from string, to string) (FXRate, time.Time, error) {
+	if err := ctx.Err(); err != nil {
+		return FXRate{}, time.Time{}, err
+	}
+	normalizedFrom := strings.ToUpper(strings.TrimSpace(from))
+	normalizedTo := strings.ToUpper(strings.TrimSpace(to))
+	now := time.Now().UTC()
+	if normalizedFrom == normalizedTo && normalizedFrom != "" {
+		return FXRate{
+			From:     normalizedFrom,
+			To:       normalizedTo,
+			Value:    "1",
+			RateDate: dateOnly(now),
+			Source:   "identity",
+		}, now, nil
+	}
+	return FXRate{}, time.Time{}, ErrRateUnavailable
 }
 
 func normalizeCurrencyValue(currency Currency) Currency {

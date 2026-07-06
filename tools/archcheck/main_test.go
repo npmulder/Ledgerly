@@ -70,6 +70,30 @@ func TestBoundaryDeclaredDependenciesPass(t *testing.T) {
 	}
 }
 
+func TestBoundaryMoneyFXMayImportInvoicingRootOnly(t *testing.T) {
+	findings := checkPackageBoundaries([]goPackage{
+		{
+			ImportPath: testModulePath + "/internal/moneyfx",
+			Imports: []string{
+				testModulePath + "/internal/invoicing",
+			},
+		},
+		{
+			ImportPath: testModulePath + "/internal/moneyfx",
+			TestImports: []string{
+				testModulePath + "/internal/invoicing/internal/workflow",
+			},
+		},
+	}, testModulePath)
+
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 boundary finding, got %d: %#v", len(findings), findings)
+	}
+	if !strings.Contains(findings[0].String(), "internal/invoicing/internal/workflow") {
+		t.Fatalf("expected deep invoicing import diagnostic, got %q", findings[0])
+	}
+}
+
 func TestRateFixtureFails(t *testing.T) {
 	findings, err := checkRateLiterals(filepath.Join("testdata", "internal"), rateLiteralAllowedModules, guardedLiterals)
 	if err != nil {
