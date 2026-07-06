@@ -54,6 +54,49 @@ func TestMoneyFXRateLockStoresWeekendFallbackAndRoundTripsDecimal(t *testing.T) 
 	}
 }
 
+func TestMoneyFXRateLockStoresSameCurrencyIdentity(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	issueDate := time.Date(2030, 1, 4, 0, 0, 0, 0, time.UTC)
+	fx := newRateLockFixture(t, issueDate.Add(11*time.Hour))
+
+	tx, err := fx.pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin transaction: %v", err)
+	}
+	lock, err := fx.service.Lock(ctx, tx, moneyfx.LockRef{Module: "invoicing", Ref: "INV-GBP-IDENTITY"}, "GBP", "GBP", issueDate)
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("Lock() error = %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit transaction: %v", err)
+	}
+
+	if lock.From != "GBP" || lock.To != "GBP" {
+		t.Fatalf("Lock() pair = %s->%s, want GBP->GBP", lock.From, lock.To)
+	}
+	if lock.Rate != "1" {
+		t.Fatalf("Lock() rate = %q, want identity decimal 1", lock.Rate)
+	}
+	if !lock.RateDate.Equal(issueDate) {
+		t.Fatalf("Lock() rate date = %s, want issue date %s", lock.RateDate.Format(time.DateOnly), issueDate.Format(time.DateOnly))
+	}
+	if lock.Source != "ECB" {
+		t.Fatalf("Lock() source = %q, want persisted source ECB", lock.Source)
+	}
+
+	stored, err := fx.service.GetLock(ctx, lock.ID)
+	if err != nil {
+		t.Fatalf("GetLock() error = %v", err)
+	}
+	if stored.Rate != "1" || stored.Source != "ECB" {
+		t.Fatalf("GetLock() = rate %q source %q, want rate 1 source ECB", stored.Rate, stored.Source)
+	}
+}
+
 func TestMoneyFXRateLocksAreAppendOnlyForModuleRole(t *testing.T) {
 	t.Parallel()
 

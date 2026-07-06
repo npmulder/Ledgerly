@@ -94,7 +94,7 @@ func (s *Service) Lock(ctx context.Context, tx db.Tx, ref LockRef, from string, 
 	if err != nil {
 		return RateLock{}, err
 	}
-	if rate.Source != rateSourceECB {
+	if rate.Source != rateSourceECB && !isIdentityLockRate(rate) {
 		return RateLock{}, fmt.Errorf("moneyfx: lock requires ECB rate source, got %q", rate.Source)
 	}
 	decimal, err := canonicalRateLockDecimal(rate.Value)
@@ -138,6 +138,10 @@ func (s *Service) ActiveLockFor(ctx context.Context, ref LockRef) (RateLock, err
 		return RateLock{}, fmt.Errorf("moneyfx: rate lock store is required")
 	}
 	return s.locks.ActiveRateLockFor(ctx, ref)
+}
+
+func isIdentityLockRate(rate Rate) bool {
+	return rate.Source == rateSourceIdentity && rate.From == rate.To && strings.TrimSpace(rate.Value) == "1"
 }
 
 func normalizeLockRef(ref LockRef) (LockRef, string, error) {
