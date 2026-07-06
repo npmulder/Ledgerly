@@ -64,7 +64,7 @@ func OpenAPIFragment() httpserver.OpenAPIFragment {
 					"tags":        []string{"advisor"},
 					"summary":     "Refresh advisor insights now",
 					"description": "Runs the advisor RefreshNow evaluator synchronously and returns the recorded evaluation run.",
-					"operationId": "advisorRefresh",
+					"operationId": "advisorRefreshNow",
 					"security":    advisorSessionSecurity(),
 					"responses": map[string]any{
 						"200": advisorJSONResponseRef("Advisor evaluation run", "AdvisorRefreshResponse"),

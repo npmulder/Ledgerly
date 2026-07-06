@@ -57,7 +57,7 @@ export interface paths {
          * Refresh advisor insights now
          * @description Runs the advisor RefreshNow evaluator synchronously and returns the recorded evaluation run.
          */
-        post: operations["advisorRefresh"];
+        post: operations["advisorRefreshNow"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2238,7 +2238,7 @@ export interface operations {
             };
         };
     };
-    advisorRefresh: {
+    advisorRefreshNow: {
         parameters: {
             query?: never;
             header?: never;
