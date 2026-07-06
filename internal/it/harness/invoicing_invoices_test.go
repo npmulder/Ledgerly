@@ -1051,7 +1051,14 @@ func (l testRateLocker) LockRate(ctx context.Context, tx db.Tx, ref invoicing.Ra
 	if err != nil {
 		return invoicing.RateLock{}, err
 	}
-	return invoicing.RateLock{ID: int64(lock.ID), Rate: lock.Rate}, nil
+	return invoicing.RateLock{
+		ID:       int64(lock.ID),
+		From:     lock.From,
+		To:       lock.To,
+		Rate:     lock.Rate,
+		RateDate: lock.RateDate,
+		Source:   lock.Source,
+	}, nil
 }
 
 func (l testRateLocker) RateLock(ctx context.Context, id int64) (invoicing.RateLock, error) {
@@ -1059,7 +1066,14 @@ func (l testRateLocker) RateLock(ctx context.Context, id int64) (invoicing.RateL
 	if err != nil {
 		return invoicing.RateLock{}, err
 	}
-	return invoicing.RateLock{ID: int64(lock.ID), Rate: lock.Rate}, nil
+	return invoicing.RateLock{
+		ID:       int64(lock.ID),
+		From:     lock.From,
+		To:       lock.To,
+		Rate:     lock.Rate,
+		RateDate: lock.RateDate,
+		Source:   lock.Source,
+	}, nil
 }
 
 type wantInvoicePosting struct {

@@ -682,10 +682,14 @@ func invoicingComponents() map[string]any {
 			},
 			"InvoicingLockedRate": map[string]any{
 				"type":     "object",
-				"required": []string{"id", "rate"},
+				"required": []string{"id", "from", "to", "rate", "rate_date", "source"},
 				"properties": map[string]any{
-					"id":   map[string]any{"type": "integer", "format": "int64"},
-					"rate": map[string]any{"type": "string"},
+					"id":        map[string]any{"type": "integer", "format": "int64"},
+					"from":      currencySchema(),
+					"to":        currencySchema(),
+					"rate":      map[string]any{"type": "string"},
+					"rate_date": map[string]any{"type": "string", "format": "date"},
+					"source":    map[string]any{"type": "string"},
 				},
 				"additionalProperties": false,
 			},
@@ -777,6 +781,7 @@ func invoiceListItemProperties() map[string]any {
 
 func invoicePatchProperties() map[string]any {
 	return map[string]any{
+		"client_id":     map[string]any{"type": "string", "minLength": 1},
 		"issue_date":    map[string]any{"type": "string", "format": "date"},
 		"due_date":      map[string]any{"type": "string", "format": "date"},
 		"currency":      currencySchema(),

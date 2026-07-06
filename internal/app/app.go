@@ -538,8 +538,12 @@ func (l invoicingMoneyFXLocker) LockRate(ctx context.Context, tx db.Tx, ref invo
 		return invoicing.RateLock{}, err
 	}
 	return invoicing.RateLock{
-		ID:   int64(lock.ID),
-		Rate: lock.Rate,
+		ID:       int64(lock.ID),
+		From:     lock.From,
+		To:       lock.To,
+		Rate:     lock.Rate,
+		RateDate: lock.RateDate,
+		Source:   lock.Source,
 	}, nil
 }
 
@@ -556,8 +560,12 @@ func (r invoicingMoneyFXLockReader) RateLock(ctx context.Context, id int64) (inv
 		return invoicing.RateLock{}, err
 	}
 	return invoicing.RateLock{
-		ID:   int64(lock.ID),
-		Rate: lock.Rate,
+		ID:       int64(lock.ID),
+		From:     lock.From,
+		To:       lock.To,
+		Rate:     lock.Rate,
+		RateDate: lock.RateDate,
+		Source:   lock.Source,
 	}, nil
 }
 

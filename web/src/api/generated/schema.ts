@@ -986,6 +986,7 @@ export interface components {
             updated_at: string;
         };
         InvoicingInvoicePatch: {
+            client_id?: string;
             /** @enum {string} */
             currency?: "EUR" | "GBP";
             /** Format: date */
@@ -1043,9 +1044,16 @@ export interface components {
             totals: components["schemas"]["InvoicingInvoiceTotalsSummary"];
         };
         InvoicingLockedRate: {
+            /** @enum {string} */
+            from: "EUR" | "GBP";
             /** Format: int64 */
             id: number;
             rate: string;
+            /** Format: date */
+            rate_date: string;
+            source: string;
+            /** @enum {string} */
+            to: "EUR" | "GBP";
         };
         InvoicingMoney: {
             /** Format: int64 */

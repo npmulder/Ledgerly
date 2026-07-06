@@ -39,11 +39,16 @@ type sendInvoiceResponse struct {
 }
 
 type lockedRateResponse struct {
-	ID   int64  `json:"id"`
-	Rate string `json:"rate"`
+	ID       int64  `json:"id"`
+	From     string `json:"from"`
+	To       string `json:"to"`
+	Rate     string `json:"rate"`
+	RateDate string `json:"rate_date"`
+	Source   string `json:"source"`
 }
 
 type invoicePatch struct {
+	clientID     *string
 	issueDate    *time.Time
 	dueDate      *time.Time
 	currency     *Currency
@@ -230,7 +235,15 @@ func lockedRateForSentInvoice(invoice Invoice) (lockedRateResponse, error) {
 	if invoice.sendRateLock == nil {
 		return lockedRateResponse{}, fmt.Errorf("invoicing: sent invoice %s has no rate lock", invoice.ID)
 	}
-	return lockedRateResponse(*invoice.sendRateLock), nil
+	lock := invoice.sendRateLock
+	return lockedRateResponse{
+		ID:       lock.ID,
+		From:     lock.From,
+		To:       lock.To,
+		Rate:     lock.Rate,
+		RateDate: dateOnly(lock.RateDate).Format(time.DateOnly),
+		Source:   lock.Source,
+	}, nil
 }
 
 func invoiceIDParam(r *nethttp.Request) string {
@@ -292,6 +305,21 @@ func decodeInvoicePatch(w nethttp.ResponseWriter, r *nethttp.Request) (invoicePa
 	)
 	for field, value := range raw {
 		switch field {
+		case "client_id":
+			if rejectClientJSONNull(value, "/client_id", "must be a string", &fieldErrors) {
+				continue
+			}
+			var clientID string
+			if err := decodeClientStrict(value, &clientID); err != nil {
+				fieldErrors = append(fieldErrors, FieldError{Pointer: "/client_id", Detail: "must be a string"})
+				continue
+			}
+			trimmed := strings.TrimSpace(clientID)
+			if trimmed == "" {
+				fieldErrors = append(fieldErrors, FieldError{Pointer: "/client_id", Detail: "is required"})
+				continue
+			}
+			patch.clientID = &trimmed
 		case "issue_date":
 			assignDatePatch(value, "/issue_date", &patch.issueDate, &fieldErrors)
 		case "due_date":
@@ -346,6 +374,7 @@ func assignDatePatch(value json.RawMessage, pointer string, dst **time.Time, fie
 
 func (p invoicePatch) draftPatch() DraftPatch {
 	return DraftPatch{
+		ClientID:     p.clientID,
 		IssueDate:    p.issueDate,
 		DueDate:      p.dueDate,
 		Currency:     p.currency,
