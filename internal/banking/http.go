@@ -226,11 +226,7 @@ func (h bankingHandler) createAccount(w nethttp.ResponseWriter, r *nethttp.Reque
 		writeBankingDecodeError(w, r, err)
 		return
 	}
-	account, err := h.service.CreateAccount(r.Context(), AccountInput{
-		Name:     request.Name,
-		Provider: request.Provider,
-		Currency: request.Currency,
-	})
+	account, err := h.service.CreateAccount(r.Context(), AccountInput(request))
 	if err != nil {
 		writeBankingError(w, r, err)
 		return
@@ -268,7 +264,9 @@ func (h bankingHandler) importAccountCSV(w nethttp.ResponseWriter, r *nethttp.Re
 		writeBankingBadRequest(w, r, fmt.Errorf("multipart field %q is required", importMultipartFileField))
 		return
 	}
-	defer file.Close()
+	defer func() {
+		_ = file.Close()
+	}()
 
 	var buf bytes.Buffer
 	copied, err := io.Copy(&buf, io.LimitReader(file, maxImportCSVBytes+1))
