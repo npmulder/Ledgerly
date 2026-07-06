@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	nethttp "net/http"
 	"strconv"
 	"strings"
@@ -20,6 +21,7 @@ import (
 const (
 	problemTypeReportsBadRequest = "https://ledgerly.local/problems/reports/bad-request"
 	problemTypeReportsNotFound   = "https://ledgerly.local/problems/reports/not-found"
+	maxReportsJSONBodyBytes      = 64 * 1024
 )
 
 type reportsHandler struct {
@@ -101,6 +103,27 @@ type profitYTDResponse struct {
 	Profit  moneyResponse `json:"profit"`
 }
 
+type archiveRefResponse struct {
+	URL         string `json:"url"`
+	SHA256      string `json:"sha256"`
+	SizeBytes   int64  `json:"size_bytes"`
+	DataVersion string `json:"data_version"`
+	GeneratedAt string `json:"generated_at"`
+}
+
+type shareRequestBody struct {
+	Email  string         `json:"email"`
+	Period periodResponse `json:"period"`
+	From   string         `json:"from,omitempty"`
+	To     string         `json:"to,omitempty"`
+}
+
+type shareResponse struct {
+	Status  string             `json:"status"`
+	Archive archiveRefResponse `json:"archive"`
+	Message string             `json:"message"`
+}
+
 // RegisterRoutes mounts reports REST endpoints.
 func (m *Module) RegisterRoutes(r chi.Router) {
 	h := reportsHandler{service: m.service}
@@ -108,6 +131,8 @@ func (m *Module) RegisterRoutes(r chi.Router) {
 	r.Get("/vat", h.getVAT)
 	r.Get("/calendar", h.getCalendar)
 	r.Get("/profit-ytd", h.getProfitYTD)
+	r.Get("/export", h.getExport)
+	r.Post("/share", h.shareExport)
 }
 
 func (h reportsHandler) getPL(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -164,6 +189,46 @@ func (h reportsHandler) getProfitYTD(w nethttp.ResponseWriter, r *nethttp.Reques
 	})
 }
 
+func (h reportsHandler) getExport(w nethttp.ResponseWriter, r *nethttp.Request) {
+	period, err := parseReportsPeriod(r)
+	if err != nil {
+		writeReportsBadRequest(w, r, err)
+		return
+	}
+	ref, err := h.service.ExportPack(r.Context(), period)
+	if err != nil {
+		writeReportsError(w, r, err)
+		return
+	}
+	nethttp.Redirect(w, r, ref.URL, nethttp.StatusFound)
+}
+
+func (h reportsHandler) shareExport(w nethttp.ResponseWriter, r *nethttp.Request) {
+	var body shareRequestBody
+	if err := decodeReportsJSON(w, r, &body); err != nil {
+		writeReportsBadRequest(w, r, err)
+		return
+	}
+	period, err := body.period()
+	if err != nil {
+		writeReportsBadRequest(w, r, err)
+		return
+	}
+	result, err := h.service.ShareExportPack(r.Context(), ShareRequest{
+		Email:  body.Email,
+		Period: period,
+	})
+	if err != nil {
+		writeReportsError(w, r, err)
+		return
+	}
+	writeReportsJSON(w, nethttp.StatusOK, shareResponse{
+		Status:  string(result.Status),
+		Archive: archiveRefToResponse(result.Archive),
+		Message: result.Message,
+	})
+}
+
 func parseReportsPeriod(r *nethttp.Request) (Period, error) {
 	query := r.URL.Query()
 	from, err := parseRequiredDateQuery(query.Get("from"), "from")
@@ -171,6 +236,26 @@ func parseReportsPeriod(r *nethttp.Request) (Period, error) {
 		return Period{}, err
 	}
 	to, err := parseRequiredDateQuery(query.Get("to"), "to")
+	if err != nil {
+		return Period{}, err
+	}
+	return Period{From: from, To: to}, nil
+}
+
+func (b shareRequestBody) period() (Period, error) {
+	fromText := b.Period.From
+	toText := b.Period.To
+	if strings.TrimSpace(fromText) == "" {
+		fromText = b.From
+	}
+	if strings.TrimSpace(toText) == "" {
+		toText = b.To
+	}
+	from, err := parseRequiredDateQuery(fromText, "period.from")
+	if err != nil {
+		return Period{}, err
+	}
+	to, err := parseRequiredDateQuery(toText, "period.to")
 	if err != nil {
 		return Period{}, err
 	}
@@ -299,9 +384,32 @@ func moneyToResponse(amount money.Money) moneyResponse {
 	}
 }
 
+func archiveRefToResponse(ref ArchiveRef) archiveRefResponse {
+	return archiveRefResponse{
+		URL:         ref.URL,
+		SHA256:      ref.SHA256,
+		SizeBytes:   ref.Size,
+		DataVersion: ref.DataVersion,
+		GeneratedAt: ref.GeneratedAt.UTC().Format(time.RFC3339),
+	}
+}
+
+func decodeReportsJSON(w nethttp.ResponseWriter, r *nethttp.Request, target any) error {
+	r.Body = nethttp.MaxBytesReader(w, r.Body, maxReportsJSONBodyBytes)
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return fmt.Errorf("request body must contain a single JSON object")
+	}
+	return nil
+}
+
 func writeReportsError(w nethttp.ResponseWriter, r *nethttp.Request, err error) {
 	var unknownTaxYear jurisdiction.UnknownTaxYearError
-	if errors.Is(err, ErrInvalidPeriod) || errors.Is(err, ErrInvalidTaxYear) {
+	if errors.Is(err, ErrInvalidPeriod) || errors.Is(err, ErrInvalidTaxYear) || errors.Is(err, ErrInvalidShare) {
 		writeReportsBadRequest(w, r, err)
 		return
 	}

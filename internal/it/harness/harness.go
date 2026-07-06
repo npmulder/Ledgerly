@@ -33,6 +33,7 @@ import (
 	"github.com/npmulder/ledgerly/internal/platform/config"
 	"github.com/npmulder/ledgerly/internal/platform/db"
 	"github.com/npmulder/ledgerly/internal/platform/mail"
+	"github.com/npmulder/ledgerly/internal/reports"
 )
 
 const (
@@ -53,10 +54,12 @@ type Options struct {
 	BalanceCheck  BalanceCheckOption
 	Logger        *slog.Logger
 
-	ModuleBuilders map[string]app.ModuleBuilder
-	Jobs           map[string]app.Job
-	MailSender     mail.Sender
-	AdvisorOptions []advisor.ServiceOption
+	ModuleBuilders    map[string]app.ModuleBuilder
+	Jobs              map[string]app.Job
+	MailSender        mail.Sender
+	ReportsPDF        reports.PLPDFEngine
+	ReportsShareLimit int64
+	AdvisorOptions    []advisor.ServiceOption
 }
 
 // BalanceCheckOption controls the default teardown trial-balance assertion.
@@ -130,19 +133,21 @@ func New(t testing.TB, opts Options) *Harness {
 		},
 		Version: "test",
 	}, app.Dependencies{
-		Logger:              logger,
-		Clock:               fakeClock,
-		HealthDB:            pgxPinger{pool: rawPool},
-		IdentityPool:        identityPool,
-		BankingPool:         bankingPool,
-		DLAPool:             dlaPool,
-		DividendsPool:       dividendsPool,
-		LedgerPool:          ledgerPool,
-		MoneyFXPool:         moneyFXPool,
-		InvoicingPool:       invoicingPool,
-		AdvisorPool:         advisorPool,
-		InvoicingMailSender: opts.MailSender,
-		AdvisorOptions:      opts.AdvisorOptions,
+		Logger:                logger,
+		Clock:                 fakeClock,
+		HealthDB:              pgxPinger{pool: rawPool},
+		IdentityPool:          identityPool,
+		BankingPool:           bankingPool,
+		DLAPool:               dlaPool,
+		DividendsPool:         dividendsPool,
+		LedgerPool:            ledgerPool,
+		MoneyFXPool:           moneyFXPool,
+		InvoicingPool:         invoicingPool,
+		AdvisorPool:           advisorPool,
+		InvoicingMailSender:   opts.MailSender,
+		AdvisorOptions:        opts.AdvisorOptions,
+		ReportsPDFEngine:      opts.ReportsPDF,
+		ReportsShareSizeLimit: opts.ReportsShareLimit,
 		BusOptions: []bus.Option{
 			bus.WithMiddleware(faults.middleware),
 		},

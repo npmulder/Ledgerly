@@ -670,6 +670,33 @@ RETURNING `+invoiceColumnsSQL(),
 	return updated, err
 }
 
+func (s Store) InvoicesIssuedBetween(ctx context.Context, tx db.Tx, from time.Time, to time.Time) ([]Invoice, error) {
+	rows, err := tx.Query(ctx, selectInvoiceSQL()+`
+WHERE issue_date >= $1
+	AND issue_date <= $2
+	AND status IN ('sent', 'paid')
+	AND pdf_asset IS NOT NULL
+	AND btrim(pdf_asset) <> ''
+ORDER BY issue_date ASC, id ASC`, dateOnly(from), dateOnly(to))
+	if err != nil {
+		return nil, fmt.Errorf("invoicing: list issued invoices for export: %w", err)
+	}
+	defer rows.Close()
+
+	invoices := []Invoice{}
+	for rows.Next() {
+		invoice, err := scanInvoiceRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		invoices = append(invoices, invoice)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("invoicing: collect issued invoices for export: %w", err)
+	}
+	return invoices, nil
+}
+
 func (Store) InsertInvoiceSendVATContext(ctx context.Context, tx db.Tx, invoiceID string, sendLedgerEntryID int64, treatment VATTreatment) error {
 	_, err := tx.Exec(ctx, `
 INSERT INTO invoicing.invoice_send_vat_context (

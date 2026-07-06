@@ -91,6 +91,56 @@ func OpenAPIFragment() httpserver.OpenAPIFragment {
 					},
 				},
 			},
+			"/api/reports/export": map[string]any{
+				"get": map[string]any{
+					"tags":        []string{"reports"},
+					"summary":     "Generate and download an accountant export pack",
+					"description": "Generates or reuses the immutable export-pack ZIP for an inclusive posting-date range and redirects to the stored archive asset.",
+					"operationId": "reportsExportPack",
+					"security":    reportsSessionSecurity(),
+					"parameters": []map[string]any{
+						reportsDateQueryParameter("from", "Inclusive posting date lower bound."),
+						reportsDateQueryParameter("to", "Inclusive posting date upper bound."),
+					},
+					"responses": map[string]any{
+						"302": map[string]any{
+							"description": "Redirect to stored export ZIP asset",
+							"headers": map[string]any{
+								"Location": map[string]any{
+									"description": "Immutable export ZIP asset URL.",
+									"schema":      map[string]any{"type": "string", "format": "uri-reference"},
+								},
+							},
+						},
+						"400": reportsProblemResponse("Invalid export query"),
+						"401": reportsProblemResponse("Authentication required"),
+						"404": reportsProblemResponse("Company profile not found"),
+					},
+				},
+			},
+			"/api/reports/share": map[string]any{
+				"post": map[string]any{
+					"tags":        []string{"reports"},
+					"summary":     "Share an export pack with an accountant",
+					"description": "Emails the export-pack ZIP as an attachment when it is within the platform mail size guard; larger packs return a manual-send response.",
+					"operationId": "reportsShareExportPack",
+					"security":    reportsSessionSecurity(),
+					"requestBody": map[string]any{
+						"required": true,
+						"content": map[string]any{
+							"application/json": map[string]any{
+								"schema": map[string]any{"$ref": "#/components/schemas/ReportsShareRequest"},
+							},
+						},
+					},
+					"responses": map[string]any{
+						"200": reportsJSONResponseRef("Share result", "ReportsShareResponse"),
+						"400": reportsProblemResponse("Invalid share request"),
+						"401": reportsProblemResponse("Authentication required"),
+						"404": reportsProblemResponse("Company profile not found"),
+					},
+				},
+			},
 		},
 		Components: reportsComponents(),
 	}
@@ -256,6 +306,37 @@ func reportsComponents() map[string]any {
 				"properties": map[string]any{
 					"tax_year": map[string]any{"type": "string"},
 					"profit":   map[string]any{"$ref": "#/components/schemas/ReportsMoney"},
+				},
+				"additionalProperties": false,
+			},
+			"ReportsArchiveRef": map[string]any{
+				"type":     "object",
+				"required": []string{"url", "sha256", "size_bytes", "data_version", "generated_at"},
+				"properties": map[string]any{
+					"url":          map[string]any{"type": "string", "format": "uri-reference"},
+					"sha256":       map[string]any{"type": "string"},
+					"size_bytes":   map[string]any{"type": "integer", "format": "int64"},
+					"data_version": map[string]any{"type": "string"},
+					"generated_at": map[string]any{"type": "string", "format": "date-time"},
+				},
+				"additionalProperties": false,
+			},
+			"ReportsShareRequest": map[string]any{
+				"type":     "object",
+				"required": []string{"email", "period"},
+				"properties": map[string]any{
+					"email":  map[string]any{"type": "string", "format": "email"},
+					"period": map[string]any{"$ref": "#/components/schemas/ReportsPeriod"},
+				},
+				"additionalProperties": false,
+			},
+			"ReportsShareResponse": map[string]any{
+				"type":     "object",
+				"required": []string{"status", "archive", "message"},
+				"properties": map[string]any{
+					"status":  map[string]any{"type": "string", "enum": []string{string(ShareStatusSent), string(ShareStatusManualSend)}},
+					"archive": map[string]any{"$ref": "#/components/schemas/ReportsArchiveRef"},
+					"message": map[string]any{"type": "string"},
 				},
 				"additionalProperties": false,
 			},

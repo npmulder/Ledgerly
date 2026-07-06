@@ -263,6 +263,16 @@ func (f fakeIdentity) CompanyFacts(context.Context) (identity.CompanyFacts, erro
 	}, nil
 }
 
+func (f fakeIdentity) Profile(context.Context) (identity.CompanyProfile, error) {
+	return identity.CompanyProfile{
+		TradingName:       "NPM Limited",
+		LegalName:         "NPM Limited",
+		CompanyNumber:     "137792C",
+		IncorporationDate: testDate(2020, time.January, 1),
+		YearEnd:           f.yearEnd,
+	}, nil
+}
+
 type fakeInvoicing struct{}
 
 func (fakeInvoicing) Invoice(context.Context, string) (invoicing.Invoice, error) {
@@ -271,6 +281,10 @@ func (fakeInvoicing) Invoice(context.Context, string) (invoicing.Invoice, error)
 
 func (fakeInvoicing) InvoiceByNumber(context.Context, string) (invoicing.Invoice, error) {
 	return invoicing.Invoice{}, invoicing.ErrInvoiceNotFound
+}
+
+func (fakeInvoicing) InvoicesIssuedBetween(context.Context, time.Time, time.Time) ([]invoicing.Invoice, error) {
+	return nil, nil
 }
 
 func (fakeInvoicing) InvoiceVATContextBySendEntryID(context.Context, ledger.EntryID) (invoicing.InvoiceVATContext, error) {

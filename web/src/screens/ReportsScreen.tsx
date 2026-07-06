@@ -1,11 +1,13 @@
 import { type FormEvent, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 
 import { queryKeys } from "@/api/queryKeys";
 import {
   getReportsCalendar,
   getReportsPL,
   getReportsVAT,
+  reportsExportURL,
+  shareReportsExport,
   type ReportsFiling,
   type ReportsMoney,
   type ReportsPL,
@@ -35,8 +37,6 @@ const quarterDefinitions = [
   { label: "Oct-Dec", quarter: 4, toMonth: 11 },
 ];
 
-const rep5Tooltip = "Available in REP-5";
-
 export function ReportsScreen() {
   const quarterPresets = useMemo(() => buildQuarterPresets(), []);
   const defaultPeriod = defaultReportsPeriod(quarterPresets);
@@ -45,6 +45,12 @@ export function ReportsScreen() {
     from: defaultPeriod.from,
     to: defaultPeriod.to,
   }));
+  const [shareOpen, setShareOpen] = useState(false);
+  const [shareEmail, setShareEmail] = useState("");
+  const [statusToast, setStatusToast] = useState<{
+    readonly kind: "error" | "success";
+    readonly text: string;
+  } | null>(null);
 
   const plQuery = useQuery({
     queryFn: () => getReportsPL(period.from, period.to),
@@ -73,6 +79,26 @@ export function ReportsScreen() {
     [calendarQuery.data, period.vatPeriod],
   );
 
+  const shareMutation = useMutation({
+    mutationFn: () => shareReportsExport(shareEmail, period.from, period.to),
+    onError: (error) => {
+      setStatusToast({
+        kind: "error",
+        text:
+          error instanceof Error
+            ? error.message
+            : "Unable to share export pack.",
+      });
+    },
+    onSuccess: (result) => {
+      setShareOpen(false);
+      setStatusToast({
+        kind: "success",
+        text: result.message,
+      });
+    },
+  });
+
   function selectPreset(next: ReportsPeriod) {
     setPeriod(next);
     setCustomRange({ from: next.from, to: next.to });
@@ -92,24 +118,76 @@ export function ReportsScreen() {
     });
   }
 
+  function exportPack() {
+    const link = document.createElement("a");
+    link.href = reportsExportURL(period.from, period.to);
+    link.download = `ledgerly-export-${period.from}_${period.to}.zip`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setStatusToast({ kind: "success", text: "Export pack is being prepared." });
+  }
+
+  function submitShare(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    shareMutation.mutate();
+  }
+
   return (
     <div className="reports-screen">
       <div className="reports-screen__header">
         <PageTitle>Reports</PageTitle>
         <div className="reports-screen__actions">
-          <Button
-            disabled
-            title={rep5Tooltip}
-            type="button"
-            variant="secondary"
-          >
+          <Button type="button" variant="secondary" onClick={() => setShareOpen(true)}>
             Share with accountant
           </Button>
-          <Button disabled title={rep5Tooltip} type="button">
+          <Button type="button" onClick={exportPack}>
             Export pack
           </Button>
         </div>
       </div>
+
+      {statusToast ? (
+        <div
+          className={`reports-toast reports-toast--${statusToast.kind}`}
+          role="status"
+        >
+          {statusToast.text}
+        </div>
+      ) : null}
+
+      {shareOpen ? (
+        <div className="reports-modal-backdrop">
+          <form className="reports-share-modal" onSubmit={submitShare}>
+            <header>
+              <h2>Share with accountant</h2>
+            </header>
+            <Field label="Accountant email">
+              <Input
+                autoComplete="email"
+                inputMode="email"
+                onChange={(event) => setShareEmail(event.target.value)}
+                required
+                type="email"
+                value={shareEmail}
+              />
+            </Field>
+            <div className="reports-share-modal__actions">
+              <Button
+                disabled={shareMutation.isPending}
+                onClick={() => setShareOpen(false)}
+                type="button"
+                variant="secondary"
+              >
+                Cancel
+              </Button>
+              <Button disabled={shareMutation.isPending} type="submit">
+                {shareMutation.isPending ? "Sharing" : "Share"}
+              </Button>
+            </div>
+          </form>
+        </div>
+      ) : null}
 
       <section
         aria-label="Reports advisor insights"
