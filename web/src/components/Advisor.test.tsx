@@ -148,6 +148,108 @@ describe("Advisor components", () => {
     expect(await screen.findByText("Search: ?amount=3000.00")).toBeVisible();
   });
 
+  it.each([
+    ["reports.openFilingCalendar", "Open filing calendar", "/reports"],
+    ["dividends.open", "Open dividends", "/dividends"],
+  ])("dispatches current pack CTA %s", async (action, label, pathname) => {
+    const user = userEvent.setup();
+    vi.stubGlobal(
+      "fetch",
+      advisorFetch([
+        advisorInsight({
+          cta: { action, label },
+          rendered_text: `${label} insight.`,
+        }),
+      ]),
+    );
+
+    renderAdvisor(
+      <Routes>
+        <Route path="/" element={<AdvisorStrip surface="dashboard" />} />
+        <Route path={pathname} element={<LocationPath />} />
+      </Routes>,
+    );
+
+    await user.click(await screen.findByRole("button", { name: label }));
+
+    expect(await screen.findByText(`Path: ${pathname}`)).toBeVisible();
+  });
+
+  it("dispatches the current moneyfx refresh CTA", async () => {
+    const user = userEvent.setup();
+    const fetchImpl = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input), "http://localhost");
+        if (url.pathname === "/api/advisor/insights") {
+          return jsonResponse({
+            insights: [
+              advisorInsight({
+                cta: {
+                  action: "moneyfx.refreshRates",
+                  label: "Refresh rates",
+                },
+                rendered_text: "ECB rates are stale.",
+              }),
+            ],
+          });
+        }
+        if (
+          url.pathname === "/api/moneyfx/rates/today" &&
+          url.searchParams.get("from") === "EUR" &&
+          url.searchParams.get("to") === "GBP"
+        ) {
+          return jsonResponse({
+            fetched_at: "2026-07-06T12:00:00Z",
+            from: "EUR",
+            rate: "0.8600",
+            rate_date: "2026-07-05",
+            source: "ECB",
+            to: "GBP",
+          });
+        }
+        if (
+          url.pathname === "/api/advisor/refresh" &&
+          init?.method === "POST"
+        ) {
+          return jsonResponse({
+            run: {
+              completed_at: "2026-07-06T12:00:01Z",
+              id: "advisor-run",
+              started_at: "2026-07-06T12:00:00Z",
+              status: "completed",
+            },
+          });
+        }
+        return jsonResponse(
+          { status: 404, title: "Not Found", type: "about:blank" },
+          404,
+          "application/problem+json",
+        );
+      },
+    );
+    vi.stubGlobal("fetch", fetchImpl);
+
+    renderAdvisor(<AdvisorStrip surface="banking" />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Refresh rates" }),
+    );
+
+    await waitFor(() => {
+      expect(fetchImpl).toHaveBeenCalledWith(
+        "/api/moneyfx/rates/today?from=EUR&to=GBP",
+        expect.objectContaining({ method: "GET" }),
+      );
+      expect(fetchImpl).toHaveBeenCalledWith(
+        "/api/advisor/refresh",
+        expect.objectContaining({ method: "POST" }),
+      );
+    });
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Rates checked.",
+    );
+  });
+
   it("hides CTA buttons for unknown actions", async () => {
     vi.stubGlobal(
       "fetch",
@@ -252,6 +354,11 @@ function renderAdvisor(ui: React.ReactElement) {
 function LocationSearch() {
   const location = useLocation();
   return <p>Search: {location.search}</p>;
+}
+
+function LocationPath() {
+  const location = useLocation();
+  return <p>Path: {location.pathname}</p>;
 }
 
 function advisorFetch(insights: AdvisorInsight[]) {

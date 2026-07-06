@@ -12,6 +12,7 @@ import {
 } from "@/api/advisor";
 import { isApiError } from "@/api/client";
 import { sendInvoiceReminder } from "@/api/invoicing";
+import { getTodayRate } from "@/api/moneyfx";
 import { queryKeys } from "@/api/queryKeys";
 import { Button } from "@/components/Button";
 import { cx } from "@/components/utils";
@@ -273,6 +274,27 @@ function useAdvisorCTA(insight: AdvisorInsight) {
       void queryClient.invalidateQueries({ queryKey: ["advisor"] });
     },
   });
+  const ratesMutation = useMutation({
+    mutationFn: async () => {
+      const rate = await getTodayRate("EUR", "GBP");
+      await refreshAdvisor();
+      return rate;
+    },
+    onError: (cause) => {
+      setMessage("");
+      setError(problemMessage(cause, "Unable to refresh rates"));
+    },
+    onSuccess: (rate) => {
+      setError("");
+      setMessage("Rates checked.");
+      queryClient.setQueryData(queryKeys.moneyfx.todayRate("EUR", "GBP"), rate);
+      void queryClient.invalidateQueries({ queryKey: ["advisor"] });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.dashboard.summary(),
+      });
+      void queryClient.invalidateQueries({ queryKey: ["moneyfx"] });
+    },
+  });
 
   if (insight.cta.action === "invoicing.sendReminder" && invoiceID) {
     return {
@@ -297,7 +319,41 @@ function useAdvisorCTA(insight: AdvisorInsight) {
     };
   }
 
+  const route = routeForKnownAdvisorAction(insight.cta.action);
+  if (route) {
+    return {
+      error: "",
+      isPending: false,
+      label: insight.cta.label,
+      message: "",
+      onClick: () => navigate(route),
+      pendingLabel: insight.cta.label,
+    };
+  }
+
+  if (insight.cta.action === "moneyfx.refreshRates") {
+    return {
+      error,
+      isPending: ratesMutation.isPending,
+      label: insight.cta.label,
+      message,
+      onClick: () => ratesMutation.mutate(),
+      pendingLabel: "Refreshing",
+    };
+  }
+
   return null;
+}
+
+function routeForKnownAdvisorAction(action: string) {
+  switch (action) {
+    case "reports.openFilingCalendar":
+      return "/reports";
+    case "dividends.open":
+      return "/dividends";
+    default:
+      return null;
+  }
 }
 
 function AdvisorOverflow({
