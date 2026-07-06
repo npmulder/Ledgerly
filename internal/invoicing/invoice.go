@@ -19,9 +19,12 @@ const (
 )
 
 var (
-	ErrInvoiceNotFound  = errors.New("invoicing: invoice not found")
-	ErrInvoiceImmutable = errors.New("invoicing: invoice is immutable")
-	ErrRateUnavailable  = errors.New("invoicing: rate unavailable")
+	ErrInvoiceNotFound                 = errors.New("invoicing: invoice not found")
+	ErrInvoiceImmutable                = errors.New("invoicing: invoice is immutable")
+	ErrRateUnavailable                 = errors.New("invoicing: rate unavailable")
+	ErrInvoicePartialPayment           = errors.New("invoicing: partial invoice payments are not supported")
+	ErrInvoiceSettlementAmountMismatch = errors.New("invoicing: settlement amount does not match invoice total")
+	ErrInvoicePostingNotFound          = errors.New("invoicing: send ledger posting not found")
 
 	decimalQuantityPattern = regexp.MustCompile(`^[0-9]+(\.[0-9]+)?$`)
 )

@@ -9,7 +9,10 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/npmulder/ledgerly/internal/ledger"
+	"github.com/npmulder/ledgerly/internal/platform/bus"
 	"github.com/npmulder/ledgerly/internal/platform/clock"
+	"github.com/npmulder/ledgerly/internal/platform/db"
 	httpserver "github.com/npmulder/ledgerly/internal/platform/http"
 )
 
@@ -56,6 +59,9 @@ type Config struct {
 	Pool                *pgxpool.Pool
 	Clock               clock.Clock
 	TodayRate           TodayRateFunc
+	RateLocker          RateLocker
+	Ledger              LedgerJournal
+	Bus                 *bus.Bus
 	InvoiceUsageChecker InvoiceUsageChecker
 }
 
@@ -80,6 +86,9 @@ func New(cfg Config) (*Module, error) {
 			store,
 			WithClock(cfg.Clock),
 			WithTodayRate(cfg.TodayRate),
+			WithRateLocker(cfg.RateLocker),
+			WithLedger(cfg.Ledger),
+			WithEventBus(cfg.Bus),
 			WithInvoiceUsageChecker(invoiceUsage),
 		),
 	}, nil
@@ -297,6 +306,29 @@ var euVATCountryCodes = map[string]bool{
 // currency immutability rule without changing INV-1's client API.
 type InvoiceUsageChecker interface {
 	ClientHasInvoices(context.Context, string) (bool, error)
+}
+
+// RateLockRef identifies the invoice-owned reference used for immutable FX locks.
+type RateLockRef struct {
+	Module string
+	Ref    string
+}
+
+// RateLock is the subset of a moneyfx lock that invoicing needs for posting.
+type RateLock struct {
+	ID   int64
+	Rate string
+}
+
+// RateLocker is the moneyfx capability invoicing needs for send-time locks.
+type RateLocker interface {
+	LockRate(context.Context, db.Tx, RateLockRef, string, string, time.Time) (RateLock, error)
+}
+
+// LedgerJournal is the ledger capability invoicing needs for send and unsend.
+type LedgerJournal interface {
+	Post(context.Context, db.Tx, ledger.NewJournalEntry) (ledger.EntryID, error)
+	Reverse(context.Context, db.Tx, ledger.EntryID, string) (ledger.EntryID, error)
 }
 
 type noInvoiceUsageChecker struct{}

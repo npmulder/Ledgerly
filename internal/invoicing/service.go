@@ -7,13 +7,17 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/npmulder/ledgerly/internal/jurisdiction"
+	"github.com/npmulder/ledgerly/internal/ledger"
+	"github.com/npmulder/ledgerly/internal/platform/bus"
 	"github.com/npmulder/ledgerly/internal/platform/clock"
+	"github.com/npmulder/ledgerly/internal/platform/db"
 	httpserver "github.com/npmulder/ledgerly/internal/platform/http"
 )
 
@@ -29,6 +33,9 @@ type Service struct {
 	store              Store
 	clock              clock.Clock
 	todayRate          TodayRateFunc
+	rateLocker         RateLocker
+	ledger             LedgerJournal
+	eventBus           *bus.Bus
 	invoiceUsage       InvoiceUsageChecker
 	idGenerator        func() (string, error)
 	invoiceIDGenerator func() (string, error)
@@ -65,12 +72,40 @@ func WithTodayRate(todayRate TodayRateFunc) ServiceOption {
 	}
 }
 
+// WithRateLocker installs the moneyfx lock dependency used when sending invoices.
+func WithRateLocker(locker RateLocker) ServiceOption {
+	return func(s *Service) {
+		if locker != nil {
+			s.rateLocker = locker
+		}
+	}
+}
+
+// WithLedger installs the ledger dependency used when sending and unsending invoices.
+func WithLedger(journal LedgerJournal) ServiceOption {
+	return func(s *Service) {
+		if journal != nil {
+			s.ledger = journal
+		}
+	}
+}
+
+// WithEventBus installs the transactional event bus used by lifecycle commands.
+func WithEventBus(eventBus *bus.Bus) ServiceOption {
+	return func(s *Service) {
+		if eventBus != nil {
+			s.eventBus = eventBus
+		}
+	}
+}
+
 func NewService(pool *pgxpool.Pool, store Store, opts ...ServiceOption) *Service {
 	service := &Service{
 		pool:               pool,
 		store:              store,
 		clock:              clock.New(),
 		todayRate:          defaultTodayRate,
+		eventBus:           bus.New(),
 		invoiceUsage:       noInvoiceUsageChecker{},
 		idGenerator:        newClientID,
 		invoiceIDGenerator: newInvoiceID,
@@ -236,6 +271,205 @@ func (s *Service) DeleteDraft(ctx context.Context, id string) (err error) {
 	return nil
 }
 
+// Send assigns an immutable invoice number, locks the send-date FX rate, posts
+// the debtor/sales ledger entry, and publishes InvoiceSent in one transaction.
+func (s *Service) Send(ctx context.Context, id string) (_ Invoice, err error) {
+	if s.pool == nil {
+		return Invoice{}, fmt.Errorf("invoicing: send requires pool")
+	}
+	if s.rateLocker == nil {
+		return Invoice{}, fmt.Errorf("invoicing: send requires rate locker")
+	}
+	if s.ledger == nil {
+		return Invoice{}, fmt.Errorf("invoicing: send requires ledger")
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Invoice{}, fmt.Errorf("invoicing: begin send transaction: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	draft, err := s.store.InvoiceForUpdate(ctx, tx, strings.TrimSpace(id))
+	if err != nil {
+		return Invoice{}, err
+	}
+	if err := validateSendableDraft(draft); err != nil {
+		return Invoice{}, err
+	}
+	draft, err = s.computeTotals(ctx, draft, false)
+	if err != nil {
+		return Invoice{}, err
+	}
+
+	number, err := s.store.NextNumber(ctx, tx, draft.IssueDate.Year())
+	if err != nil {
+		return Invoice{}, err
+	}
+	lock, err := s.rateLocker.LockRate(
+		ctx,
+		tx,
+		RateLockRef{Module: ModuleName, Ref: number},
+		string(draft.Currency),
+		string(CurrencyGBP),
+		draft.IssueDate,
+	)
+	if err != nil {
+		return Invoice{}, err
+	}
+
+	sent, err := s.store.SetInvoiceSent(ctx, tx, draft.ID, number, lock.ID)
+	if err != nil {
+		return Invoice{}, err
+	}
+	sent.Lines = draft.Lines
+	sent.Totals = draft.Totals
+
+	entry, err := invoiceSendJournalEntry(sent, lock)
+	if err != nil {
+		return Invoice{}, err
+	}
+	if _, err := s.ledger.Post(ctx, tx, entry); err != nil {
+		return Invoice{}, fmt.Errorf("invoicing: post send ledger entry: %w", err)
+	}
+	if err := s.publish(ctx, tx, InvoiceSent{
+		InvoiceID: sent.ID,
+		Number:    number,
+		ClientID:  sent.ClientID,
+		Amount:    sent.Totals.Total,
+		DueDate:   sent.DueDate,
+	}); err != nil {
+		return Invoice{}, fmt.Errorf("invoicing: publish invoice sent: %w", err)
+	}
+
+	if err = tx.Commit(ctx); err != nil {
+		return Invoice{}, fmt.Errorf("invoicing: commit send transaction: %w", err)
+	}
+	return sent, nil
+}
+
+// MarkSettled records a full invoice settlement inside the caller's
+// transaction and publishes InvoiceSettled for realised-FX handling.
+func (s *Service) MarkSettled(ctx context.Context, tx db.Tx, id string, txnRef string, date time.Time, amount Money) (Invoice, error) {
+	if tx == nil {
+		return Invoice{}, fmt.Errorf("invoicing: mark settled requires transaction")
+	}
+
+	invoice, err := s.store.InvoiceForUpdate(ctx, tx, strings.TrimSpace(id))
+	if err != nil {
+		return Invoice{}, err
+	}
+	if invoice.Status != InvoiceStatusSent {
+		return Invoice{}, ErrInvoiceImmutable
+	}
+	invoice, err = s.computeTotals(ctx, invoice, false)
+	if err != nil {
+		return Invoice{}, err
+	}
+
+	normalizedAmount, err := normalizeSettlementAmount(amount)
+	if err != nil {
+		return Invoice{}, err
+	}
+	if err := validateSettlementAmount(invoice.Totals.Total, normalizedAmount); err != nil {
+		return Invoice{}, err
+	}
+	if strings.TrimSpace(txnRef) == "" {
+		return Invoice{}, invoiceValidationError([]FieldError{{Pointer: "/settlement_txn_ref", Detail: "is required"}})
+	}
+	settlementDate := dateOnly(date)
+	if settlementDate.IsZero() {
+		return Invoice{}, invoiceValidationError([]FieldError{{Pointer: "/settled_date", Detail: "is required"}})
+	}
+	if invoice.Number == nil || strings.TrimSpace(*invoice.Number) == "" {
+		return Invoice{}, fmt.Errorf("invoicing: sent invoice %s has no number", invoice.ID)
+	}
+	lockID, err := invoiceLockID(invoice)
+	if err != nil {
+		return Invoice{}, err
+	}
+
+	settled, err := s.store.SetInvoiceSettlement(ctx, tx, invoice.ID, InvoiceSettlement{
+		TxnRef:        stringPtr(strings.TrimSpace(txnRef)),
+		SettledDate:   &settlementDate,
+		SettledAmount: &normalizedAmount,
+	})
+	if err != nil {
+		return Invoice{}, err
+	}
+	settled.Lines = invoice.Lines
+	settled.Totals = invoice.Totals
+
+	if err := s.publish(ctx, tx, InvoiceSettled{
+		InvoiceID:      invoice.ID,
+		InvoiceNumber:  *invoice.Number,
+		LockID:         lockID,
+		NativeAmount:   normalizedAmount,
+		SettlementDate: settlementDate,
+		SourceRef:      invoiceSettlementSourceRef(invoice.ID),
+	}); err != nil {
+		return Invoice{}, fmt.Errorf("invoicing: publish invoice settled: %w", err)
+	}
+	return settled, nil
+}
+
+// RevertToDraft unsends a same-day, unsettled invoice by reversing the send
+// ledger entry and returning the invoice to draft. The previous invoice number
+// is deliberately not reused: the numbering row is left advanced, the draft's
+// number and lock are cleared, and a later resend consumes a fresh number and
+// creates a fresh FX lock.
+func (s *Service) RevertToDraft(ctx context.Context, id string) (_ Invoice, err error) {
+	if s.pool == nil {
+		return Invoice{}, fmt.Errorf("invoicing: revert to draft requires pool")
+	}
+	if s.ledger == nil {
+		return Invoice{}, fmt.Errorf("invoicing: revert to draft requires ledger")
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Invoice{}, fmt.Errorf("invoicing: begin revert transaction: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	invoice, err := s.store.InvoiceForUpdate(ctx, tx, strings.TrimSpace(id))
+	if err != nil {
+		return Invoice{}, err
+	}
+	if err := validateRevertibleInvoice(invoice, dateOnly(s.now())); err != nil {
+		return Invoice{}, err
+	}
+	entryID, err := s.store.SendLedgerEntryID(ctx, tx, *invoice.Number)
+	if err != nil {
+		return Invoice{}, err
+	}
+	if _, err := s.ledger.Reverse(ctx, tx, entryID, "invoice reverted to draft"); err != nil {
+		return Invoice{}, fmt.Errorf("invoicing: reverse send ledger entry: %w", err)
+	}
+	reverted, err := s.store.RevertSentToDraft(ctx, tx, invoice.ID)
+	if err != nil {
+		return Invoice{}, err
+	}
+	reverted.Lines = invoice.Lines
+	reverted, err = s.withComputedTotals(ctx, reverted)
+	if err != nil {
+		return Invoice{}, err
+	}
+
+	if err = tx.Commit(ctx); err != nil {
+		return Invoice{}, fmt.Errorf("invoicing: commit revert transaction: %w", err)
+	}
+	return reverted, nil
+}
+
 // SaveClient creates a new client when c.ID is empty, otherwise updates the
 // existing client while preserving archived history fields.
 func (s *Service) SaveClient(ctx context.Context, c Client) (_ Client, err error) {
@@ -320,6 +554,155 @@ func (s *Service) ensureCurrencyMutable(ctx context.Context, existing Client, ne
 		return ErrClientCurrencyLocked
 	}
 	return nil
+}
+
+func validateSendableDraft(invoice Invoice) error {
+	if err := validateDraftInvoice(invoice); err != nil {
+		return err
+	}
+	if len(invoice.Lines) == 0 {
+		return invoiceValidationError([]FieldError{{Pointer: "/lines", Detail: "must include at least one line"}})
+	}
+	if invoice.Number != nil {
+		return invoiceValidationError([]FieldError{{Pointer: "/number", Detail: "must be empty before send"}})
+	}
+	if invoice.LockID != nil {
+		return invoiceValidationError([]FieldError{{Pointer: "/lock_id", Detail: "must be empty before send"}})
+	}
+	return nil
+}
+
+func validateRevertibleInvoice(invoice Invoice, today time.Time) error {
+	if invoice.Status != InvoiceStatusSent {
+		return ErrInvoiceImmutable
+	}
+	if invoice.SettlementTxnRef != nil || invoice.SettledDate != nil || invoice.SettledAmount != nil {
+		return ErrInvoiceImmutable
+	}
+	if invoice.Number == nil || strings.TrimSpace(*invoice.Number) == "" {
+		return fmt.Errorf("invoicing: sent invoice %s has no number", invoice.ID)
+	}
+	if !dateOnly(invoice.IssueDate).Equal(dateOnly(today)) {
+		return ErrInvoiceImmutable
+	}
+	return nil
+}
+
+func normalizeSettlementAmount(amount Money) (Money, error) {
+	normalized := Money{
+		Amount:   amount.Amount,
+		Currency: strings.ToUpper(strings.TrimSpace(amount.Currency)),
+	}
+	if normalized.Amount <= 0 {
+		return Money{}, ErrInvoiceSettlementAmountMismatch
+	}
+	switch Currency(normalized.Currency) {
+	case CurrencyEUR, CurrencyGBP:
+	default:
+		return Money{}, ErrInvoiceSettlementAmountMismatch
+	}
+	return normalized, nil
+}
+
+func validateSettlementAmount(total Money, amount Money) error {
+	if amount.Currency != total.Currency {
+		return ErrInvoiceSettlementAmountMismatch
+	}
+	if amount.Amount == total.Amount {
+		return nil
+	}
+	if amount.Amount > 0 && amount.Amount < total.Amount {
+		return ErrInvoicePartialPayment
+	}
+	return ErrInvoiceSettlementAmountMismatch
+}
+
+func invoiceLockID(invoice Invoice) (int64, error) {
+	if invoice.LockID == nil || strings.TrimSpace(*invoice.LockID) == "" {
+		return 0, fmt.Errorf("invoicing: sent invoice %s has no lock", invoice.ID)
+	}
+	lockID, err := strconv.ParseInt(strings.TrimSpace(*invoice.LockID), 10, 64)
+	if err != nil || lockID <= 0 {
+		return 0, fmt.Errorf("invoicing: sent invoice %s has invalid lock %q", invoice.ID, *invoice.LockID)
+	}
+	return lockID, nil
+}
+
+func invoiceSendJournalEntry(invoice Invoice, lock RateLock) (ledger.NewJournalEntry, error) {
+	total := invoice.Totals.Total
+	amountGBP, err := lockedAmountGBP(total, lock)
+	if err != nil {
+		return ledger.NewJournalEntry{}, err
+	}
+	creditNative, err := total.Negate()
+	if err != nil {
+		return ledger.NewJournalEntry{}, fmt.Errorf("invoicing: negate invoice total: %w", err)
+	}
+	creditGBP, err := amountGBP.Negate()
+	if err != nil {
+		return ledger.NewJournalEntry{}, fmt.Errorf("invoicing: negate locked GBP total: %w", err)
+	}
+	number := strings.TrimSpace(*invoice.Number)
+	return ledger.NewJournalEntry{
+		Date:         invoice.IssueDate,
+		Description:  "Invoice " + number,
+		SourceModule: ModuleName,
+		SourceRef:    invoiceSendSourceRef(number),
+		Postings: []ledger.NewPosting{
+			{
+				AccountCode: tradeDebtorsAccount(invoice.Currency),
+				Amount:      total,
+				AmountGBP:   amountGBP,
+			},
+			{
+				AccountCode: salesAccount,
+				Amount:      creditNative,
+				AmountGBP:   creditGBP,
+			},
+		},
+	}, nil
+}
+
+const salesAccount ledger.AccountCode = "4000-sales"
+
+func tradeDebtorsAccount(currency Currency) ledger.AccountCode {
+	switch currency {
+	case CurrencyEUR:
+		return "1100-debtors-eur"
+	case CurrencyGBP:
+		return "1101-debtors-gbp"
+	default:
+		return ledger.AccountCode("1100-debtors-" + strings.ToLower(string(currency)))
+	}
+}
+
+func lockedAmountGBP(native Money, lock RateLock) (Money, error) {
+	rat, ok := new(big.Rat).SetString(strings.TrimSpace(lock.Rate))
+	if !ok {
+		return Money{}, fmt.Errorf("invoicing: parse locked rate %q", lock.Rate)
+	}
+	converted := native.MulRat(rat)
+	converted.Currency = string(CurrencyGBP)
+	return converted, nil
+}
+
+func invoiceSendSourceRef(number string) string {
+	return "invoice:" + strings.TrimSpace(number) + ":send"
+}
+
+func invoiceSettlementSourceRef(id string) string {
+	return "invoice:" + strings.TrimSpace(id) + ":settlement"
+}
+
+func stringPtr(value string) *string {
+	return &value
+}
+
+func (s *Service) publish(ctx context.Context, tx db.Tx, evt bus.Event) error {
+	if s.eventBus == nil {
+		return nil
+	}
+	return s.eventBus.Publish(ctx, tx, evt)
 }
 
 func newClientID() (string, error) {
@@ -463,6 +846,10 @@ func validateInvoiceMoney(pointer string, invoiceCurrency Currency, amount Money
 }
 
 func (s *Service) withComputedTotals(ctx context.Context, invoice Invoice) (Invoice, error) {
+	return s.computeTotals(ctx, invoice, invoice.Status == InvoiceStatusDraft)
+}
+
+func (s *Service) computeTotals(ctx context.Context, invoice Invoice, includeDraftApprox bool) (Invoice, error) {
 	subtotal := Money{Currency: string(invoice.Currency)}
 	for i := range invoice.Lines {
 		rat, err := invoice.Lines[i].Qty.rat()
@@ -502,7 +889,7 @@ func (s *Service) withComputedTotals(ctx context.Context, invoice Invoice) (Invo
 		VAT:      vat,
 		Total:    total,
 	}
-	if invoice.Status == InvoiceStatusDraft {
+	if includeDraftApprox && invoice.Status == InvoiceStatusDraft {
 		approx, err := s.approxGBP(ctx, total)
 		if err != nil {
 			return Invoice{}, err
