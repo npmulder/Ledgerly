@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -140,10 +141,61 @@ func TestRealisedFXSettlementZeroDeltaNoEntryOrEvent(t *testing.T) {
 	it.AssertLedgerBalanced(t, f.harness)
 }
 
-func TestRealisedFXSettlementRollsBackWhenHandlerErrors(t *testing.T) {
-	f := newRealisedFXFixture(t, false)
+func TestRealisedFXSettlementRejectsLockForDifferentInvoice(t *testing.T) {
+	f := newRealisedFXFixture(t, true)
 	issueDate := day(2030, 4, 2)
 	settlementDate := day(2030, 4, 3)
+	invoiceID := "invoice-realised-owner"
+	otherInvoiceID := "invoice-realised-other"
+	sourceRef := "invoicing:invoice-realised-owner:settlement"
+
+	f.seedRates(t,
+		moneyfx.ECBRate{Date: issueDate, Currency: "GBP", Rate: "0.8500"},
+		moneyfx.ECBRate{Date: settlementDate, Currency: "GBP", Rate: "0.8600"},
+	)
+	otherLock := f.lockInvoice(t, otherInvoiceID, issueDate)
+
+	err := f.publishInvoiceSettled(invoicing.InvoiceSettled{
+		InvoiceID:      invoiceID,
+		LockID:         int64(otherLock.ID),
+		NativeAmount:   eur(450_000),
+		SettlementDate: settlementDate,
+		SourceRef:      sourceRef,
+	})
+	if err == nil || !strings.Contains(err.Error(), "belongs to invoicing:"+otherInvoiceID) {
+		t.Fatalf("publish settlement with stale lock error = %v, want lock owner mismatch", err)
+	}
+	assertRealisedFXEvents(t, f.events(), nil)
+	assertCountWhere(t, f.ctx, f.harness.DB, "ledger.journal_entries", "source_module = 'moneyfx' AND source_ref = $1", 0, sourceRef)
+	assertRealisedFXRows(t, f.ctx, f.harness.DB, invoiceID, otherLock.ID, 0, 0)
+	it.AssertLedgerBalanced(t, f.harness)
+
+	lock := f.lockInvoice(t, invoiceID, issueDate)
+	if err := f.publishInvoiceSettled(invoicing.InvoiceSettled{
+		InvoiceID:      invoiceID,
+		LockID:         int64(lock.ID),
+		NativeAmount:   eur(450_000),
+		SettlementDate: settlementDate,
+		SourceRef:      sourceRef,
+	}); err != nil {
+		t.Fatalf("publish settlement with correct lock: %v", err)
+	}
+	assertRealisedFXEvents(t, f.events(), []moneyfx.RealisedFX{{
+		InvoiceID: invoiceID,
+		AmountGBP: gbp(4_500),
+	}})
+	assertMoneyFXLedgerPostings(t, f.ctx, f.harness.DB, sourceRef, []wantPosting{
+		{account: "1101-debtors-gbp", amount: 4_500},
+		{account: "4900-fx-gain-loss", amount: -4_500},
+	})
+	assertRealisedFXRows(t, f.ctx, f.harness.DB, invoiceID, lock.ID, 1, 4_500)
+	it.AssertLedgerBalanced(t, f.harness)
+}
+
+func TestRealisedFXSettlementRollsBackWhenHandlerErrors(t *testing.T) {
+	f := newRealisedFXFixture(t, false)
+	issueDate := day(2030, 5, 2)
+	settlementDate := day(2030, 5, 3)
 	invoiceID := "invoice-realised-rollback"
 	sourceRef := "invoicing:invoice-realised-rollback:settlement"
 	forced := errors.New("forced realised FX subscriber failure")

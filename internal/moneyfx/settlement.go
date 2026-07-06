@@ -83,6 +83,9 @@ func (h realisedFXHandler) handleInvoiceSettled(ctx context.Context, tx db.Tx, e
 	if err != nil {
 		return err
 	}
+	if err := validateInvoiceLockOwner(normalized, lock); err != nil {
+		return err
+	}
 	delta, err := h.realisedFXAmount(ctx, tx, normalized, lock)
 	if err != nil {
 		return err
@@ -144,6 +147,17 @@ func (h realisedFXHandler) realisedFXAmount(ctx context.Context, tx db.Tx, evt i
 		return money.Money{}, fmt.Errorf("moneyfx: subtract locked GBP: %w", err)
 	}
 	return delta, nil
+}
+
+func validateInvoiceLockOwner(evt invoicing.InvoiceSettled, lock RateLock) error {
+	expected, _, err := normalizeLockRef(LockRef{Module: invoicing.ModuleName, Ref: evt.InvoiceID})
+	if err != nil {
+		return err
+	}
+	if lock.Ref != expected {
+		return fmt.Errorf("moneyfx: invoice %s lock %d belongs to %s, want %s", evt.InvoiceID, lock.ID, lock.Ref.String(), expected.String())
+	}
+	return nil
 }
 
 func realisedFXJournalEntry(evt invoicing.InvoiceSettled, amountGBP money.Money) (ledger.NewJournalEntry, error) {
