@@ -702,6 +702,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/reports/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Generate and download an accountant export pack
+         * @description Generates or reuses the immutable export-pack ZIP for an inclusive posting-date range and redirects to the stored archive asset.
+         */
+        get: operations["reportsExportPack"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/reports/pl": {
         parameters: {
             query?: never;
@@ -736,6 +756,26 @@ export interface paths {
         get: operations["reportsGetProfitYTD"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/reports/share": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Share an export pack with an accountant
+         * @description Emails the export-pack ZIP as an attachment when it is within the platform mail size guard; larger packs return a manual-send response.
+         */
+        post: operations["reportsShareExportPack"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1548,6 +1588,16 @@ export interface components {
             postal_code: string;
             region: string;
         };
+        ReportsArchiveRef: {
+            data_version: string;
+            /** Format: date-time */
+            generated_at: string;
+            sha256: string;
+            /** Format: int64 */
+            size_bytes: number;
+            /** Format: uri-reference */
+            url: string;
+        };
         ReportsExpenseLine: {
             account_code: string;
             account_name: string;
@@ -1604,6 +1654,17 @@ export interface components {
         ReportsProfitYTDResponse: {
             profit: components["schemas"]["ReportsMoney"];
             tax_year: string;
+        };
+        ReportsShareRequest: {
+            /** Format: email */
+            email: string;
+            period: components["schemas"]["ReportsPeriod"];
+        };
+        ReportsShareResponse: {
+            archive: components["schemas"]["ReportsArchiveRef"];
+            message: string;
+            /** @enum {string} */
+            status: "sent" | "manual-send";
         };
         ReportsTaxLine: {
             amount: components["schemas"]["ReportsMoney"];
@@ -3656,6 +3717,58 @@ export interface operations {
             };
         };
     };
+    reportsExportPack: {
+        parameters: {
+            query: {
+                /** @description Inclusive posting date lower bound. */
+                from: string;
+                /** @description Inclusive posting date upper bound. */
+                to: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Redirect to stored export ZIP asset */
+            302: {
+                headers: {
+                    /** @description Immutable export ZIP asset URL. */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid export query */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Company profile not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     reportsGetProfitAndLoss: {
         parameters: {
             query: {
@@ -3721,6 +3834,57 @@ export interface operations {
                 };
             };
             /** @description Invalid profit YTD query */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Company profile not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    reportsShareExportPack: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReportsShareRequest"];
+            };
+        };
+        responses: {
+            /** @description Share result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportsShareResponse"];
+                };
+            };
+            /** @description Invalid share request */
             400: {
                 headers: {
                     [name: string]: unknown;

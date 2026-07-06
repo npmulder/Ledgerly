@@ -132,10 +132,10 @@ func VATQuarterForDate(date time.Time) Period {
 }
 
 func (s *Service) vatPositionCompanyFacts(ctx context.Context) (jurisdiction.CompanyFacts, bool, error) {
-	if s.identity == nil {
+	if s.facts == nil {
 		return jurisdiction.CompanyFacts{}, false, nil
 	}
-	facts, err := s.identity.CompanyFacts(ctx)
+	facts, err := s.facts.CompanyFacts(ctx)
 	if err != nil {
 		return jurisdiction.CompanyFacts{}, false, fmt.Errorf("reports: VAT position identity facts: %w", err)
 	}
