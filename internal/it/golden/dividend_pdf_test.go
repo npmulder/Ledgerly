@@ -27,6 +27,7 @@ func TestDividendPDFGoldens(t *testing.T) {
 		if err != nil {
 			t.Fatalf("extract voucher PDF text: %v", err)
 		}
+		text = canonicalPDFText(text)
 		for _, want := range []string{
 			"137792C",
 			"£30.00",
@@ -37,7 +38,7 @@ func TestDividendPDFGoldens(t *testing.T) {
 				t.Fatalf("voucher PDF text missing %q:\n%s", want, text)
 			}
 		}
-		PDF(t, "dividend-voucher-npm", pdfBytes)
+		PDF(t, "dividend-voucher-npm", pdfBytes, WithCanonicalText())
 	})
 
 	t.Run("board-minutes-npm", func(t *testing.T) {
@@ -49,6 +50,7 @@ func TestDividendPDFGoldens(t *testing.T) {
 		if err != nil {
 			t.Fatalf("extract board minutes PDF text: %v", err)
 		}
+		text = canonicalPDFText(text)
 		for _, want := range []string{
 			"£17,160.00",
 			"£30.00",
@@ -59,7 +61,7 @@ func TestDividendPDFGoldens(t *testing.T) {
 				t.Fatalf("minutes PDF text missing %q:\n%s", want, text)
 			}
 		}
-		PDF(t, "board-minutes-npm", pdfBytes)
+		PDF(t, "board-minutes-npm", pdfBytes, WithCanonicalText())
 	})
 }
 
