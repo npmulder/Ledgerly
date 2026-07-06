@@ -68,7 +68,7 @@ func TestHarnessBootsUnderTwoSecondsAfterTemplateDB(t *testing.T) {
 func TestParallelHarnessesDoNotInterfere(t *testing.T) {
 	ready := make(chan struct{}, 2)
 	release := make(chan struct{})
-	queried := make(chan struct{}, 2)
+	posted := make(chan struct{}, 2)
 	releaseAssert := make(chan struct{})
 	var wait sync.Once
 
@@ -78,8 +78,8 @@ func TestParallelHarnessesDoNotInterfere(t *testing.T) {
 				<-ready
 				<-ready
 				close(release)
-				<-queried
-				<-queried
+				<-posted
+				<-posted
 				close(releaseAssert)
 			}()
 		})
@@ -94,10 +94,12 @@ func TestParallelHarnessesDoNotInterfere(t *testing.T) {
 			ready <- struct{}{}
 			<-release
 
-			accounts := getLedgerAccounts(t, h)
-			queried <- struct{}{}
+			postLedgerEntryWithRef(t, h, ledger.New(h.LedgerPool), "parallel-isolation")
+			posted <- struct{}{}
 			<-releaseAssert
 
+			assertLedgerEntryCount(t, h, "parallel-isolation", 1)
+			accounts := getLedgerAccounts(t, h)
 			assertLedgerAccount(t, accounts, "4000-sales")
 		})
 	}
@@ -201,6 +203,11 @@ func TestAssertLedgerBalancedTeardownCatchesUnbalancedLedger(t *testing.T) {
 
 func postLedgerEntry(t *testing.T, h *harness.Harness, service *ledger.Service) ledger.EntryID {
 	t.Helper()
+	return postLedgerEntryWithRef(t, h, service, "trial-balance")
+}
+
+func postLedgerEntryWithRef(t *testing.T, h *harness.Harness, service *ledger.Service, sourceRef string) ledger.EntryID {
+	t.Helper()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -215,9 +222,9 @@ func postLedgerEntry(t *testing.T, h *harness.Harness, service *ledger.Service) 
 
 	entryID, err := service.Post(ctx, tx, ledger.NewJournalEntry{
 		Date:         time.Date(2026, 7, 5, 0, 0, 0, 0, time.UTC),
-		Description:  "harness trial-balance entry",
+		Description:  "harness " + sourceRef + " entry",
 		SourceModule: "harness",
-		SourceRef:    "trial-balance",
+		SourceRef:    sourceRef,
 		Postings: []ledger.NewPosting{
 			{
 				AccountCode: "1101-debtors-gbp",
@@ -238,6 +245,21 @@ func postLedgerEntry(t *testing.T, h *harness.Harness, service *ledger.Service) 
 		t.Fatalf("commit ledger entry: %v", err)
 	}
 	return entryID
+}
+
+func assertLedgerEntryCount(t *testing.T, h *harness.Harness, sourceRef string, want int) {
+	t.Helper()
+
+	var got int
+	h.Tx(func(ctx context.Context, tx db.Tx) error {
+		return tx.QueryRow(ctx, `
+SELECT count(*)
+FROM ledger.journal_entries
+WHERE source_module = $1 AND source_ref = $2`, "harness", sourceRef).Scan(&got)
+	})
+	if got != want {
+		t.Fatalf("ledger entry count for source_ref %q = %d, want %d", sourceRef, got, want)
+	}
 }
 
 func corruptLedgerPosting(t *testing.T, h *harness.Harness, entryID ledger.EntryID, delta int64) {
