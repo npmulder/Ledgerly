@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLoadFromReportsMissingRequiredKeys(t *testing.T) {
@@ -73,6 +74,9 @@ func TestLoadFromAppliesDefaults(t *testing.T) {
 	if cfg.Jurisdiction != DefaultJurisdiction {
 		t.Fatalf("Jurisdiction = %q, want %q", cfg.Jurisdiction, DefaultJurisdiction)
 	}
+	if cfg.ECBHTTPTimeout != DefaultECBHTTPTimeout {
+		t.Fatalf("ECBHTTPTimeout = %s, want %s", cfg.ECBHTTPTimeout, DefaultECBHTTPTimeout)
+	}
 }
 
 func TestLoadFromReadsJurisdiction(t *testing.T) {
@@ -89,6 +93,39 @@ func TestLoadFromReadsJurisdiction(t *testing.T) {
 
 	if cfg.Jurisdiction != "testland@0.1" {
 		t.Fatalf("Jurisdiction = %q, want testland@0.1", cfg.Jurisdiction)
+	}
+}
+
+func TestLoadFromReadsECBHTTPTimeout(t *testing.T) {
+	cfg, err := LoadFrom(mapLookup(map[string]string{
+		"LEDGERLY_DATABASE_URL":     "postgres://ledgerly@example/ledgerly",
+		"LEDGERLY_DATA_DIR":         "/var/lib/ledgerly",
+		"LEDGERLY_ENV":              "dev",
+		"LEDGERLY_LOG_LEVEL":        "info",
+		"LEDGERLY_ECB_HTTP_TIMEOUT": "1500ms",
+	}))
+	if err != nil {
+		t.Fatalf("LoadFrom() error = %v", err)
+	}
+
+	if cfg.ECBHTTPTimeout != 1500*time.Millisecond {
+		t.Fatalf("ECBHTTPTimeout = %s, want 1.5s", cfg.ECBHTTPTimeout)
+	}
+}
+
+func TestLoadFromRejectsInvalidECBHTTPTimeout(t *testing.T) {
+	_, err := LoadFrom(mapLookup(map[string]string{
+		"LEDGERLY_DATABASE_URL":     "postgres://ledgerly@example/ledgerly",
+		"LEDGERLY_DATA_DIR":         "/var/lib/ledgerly",
+		"LEDGERLY_ENV":              "dev",
+		"LEDGERLY_LOG_LEVEL":        "info",
+		"LEDGERLY_ECB_HTTP_TIMEOUT": "0s",
+	}))
+	if err == nil {
+		t.Fatal("LoadFrom() error = nil, want invalid timeout error")
+	}
+	if !strings.Contains(err.Error(), "LEDGERLY_ECB_HTTP_TIMEOUT") {
+		t.Fatalf("LoadFrom() error = %q, want ECB timeout key", err)
 	}
 }
 
