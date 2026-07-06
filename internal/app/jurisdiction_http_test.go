@@ -85,6 +85,13 @@ func TestJurisdictionDeadlinesEndpointUsesCompanyFacts(t *testing.T) {
 			Recurrence: "annual",
 		},
 		{
+			Key:        "personal_tax_return",
+			Label:      "Personal tax return",
+			Authority:  "IoM Income Tax Division",
+			DueDate:    "2026-10-06",
+			Recurrence: "annual",
+		},
+		{
 			Key:        "company_tax_return",
 			Label:      "Company tax return",
 			Authority:  "",

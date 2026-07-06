@@ -98,8 +98,8 @@ func TestIsleOfManAccessorsReturnHandoffValues2025_26(t *testing.T) {
 			name: "filing rules",
 			check: func(t *testing.T) {
 				got := FilingRules()
-				if len(got) != 3 {
-					t.Fatalf("FilingRules length = %d, want 3", len(got))
+				if len(got) != 4 {
+					t.Fatalf("FilingRules length = %d, want 4", len(got))
 				}
 				if got["annual_return"].Due != "incorporation_anniversary + 1 month" {
 					t.Fatalf("annual_return due = %q", got["annual_return"].Due)
@@ -112,6 +112,12 @@ func TestIsleOfManAccessorsReturnHandoffValues2025_26(t *testing.T) {
 				}
 				if !got["company_tax_return"].RequiredAtZeroRate {
 					t.Fatal("company_tax_return RequiredAtZeroRate = false, want true")
+				}
+				if got["personal_tax_return"].Due != "tax_year_end + 6 months + 1 day" {
+					t.Fatalf("personal_tax_return due = %q", got["personal_tax_return"].Due)
+				}
+				if got["personal_tax_return"].Authority != "IoM Income Tax Division" {
+					t.Fatalf("personal_tax_return authority = %q, want IoM Income Tax Division", got["personal_tax_return"].Authority)
 				}
 				if got["vat_return"].Cadence != "quarterly" {
 					t.Fatalf("vat_return cadence = %q, want quarterly", got["vat_return"].Cadence)
