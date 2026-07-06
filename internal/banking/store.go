@@ -2,9 +2,12 @@ package banking
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -194,9 +197,373 @@ RETURNING id`,
 	return false, fmt.Errorf("banking: insert transaction: %w", err)
 }
 
+func (Store) Transaction(ctx context.Context, tx db.Tx, id TransactionID) (Transaction, error) {
+	txn, err := scanTransactionRow(tx.QueryRow(ctx, transactionSelectSQL()+`
+WHERE id = $1`, int64(id)))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Transaction{}, &TransactionNotFoundError{ID: id}
+		}
+		return Transaction{}, fmt.Errorf("banking: load transaction %d: %w", id, err)
+	}
+	return txn, nil
+}
+
+func (Store) TransactionForUpdate(ctx context.Context, tx db.Tx, id TransactionID) (Transaction, error) {
+	txn, err := scanTransactionRow(tx.QueryRow(ctx, transactionSelectSQL()+`
+WHERE id = $1
+FOR UPDATE`, int64(id)))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Transaction{}, &TransactionNotFoundError{ID: id}
+		}
+		return Transaction{}, fmt.Errorf("banking: lock transaction %d: %w", id, err)
+	}
+	return txn, nil
+}
+
+func (s Store) TransitionTransactionState(ctx context.Context, tx db.Tx, id TransactionID, to TransactionState, actor string) (TransactionStateChange, error) {
+	if !validTransactionState(to) {
+		return TransactionStateChange{}, fmt.Errorf("banking: state %q: %w", to, ErrInvalidStateTransition)
+	}
+	actor = strings.TrimSpace(actor)
+	if actor == "" {
+		return TransactionStateChange{}, fmt.Errorf("banking: state transition actor is required: %w", ErrInvalidStateTransition)
+	}
+	txn, err := s.TransactionForUpdate(ctx, tx, id)
+	if err != nil {
+		return TransactionStateChange{}, err
+	}
+	return s.transitionTransactionStateLocked(ctx, tx, txn, to, actor)
+}
+
+func (Store) transitionTransactionStateLocked(ctx context.Context, tx db.Tx, txn Transaction, to TransactionState, actor string) (TransactionStateChange, error) {
+	from := txn.State
+	if !legalTransactionStateTransition(from, to) {
+		return TransactionStateChange{}, &InvalidStateTransitionError{
+			TransactionID: txn.ID,
+			From:          from,
+			To:            to,
+		}
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE transactions
+SET state = $2
+WHERE id = $1`,
+		int64(txn.ID),
+		string(to),
+	); err != nil {
+		return TransactionStateChange{}, fmt.Errorf("banking: update transaction %d state: %w", txn.ID, err)
+	}
+	return scanStateChangeRow(tx.QueryRow(ctx, `
+INSERT INTO transaction_state_changes (txn_id, from_state, to_state, actor)
+VALUES ($1, $2, $3, $4)
+RETURNING id, txn_id, from_state, to_state, changed_at, actor`,
+		int64(txn.ID),
+		string(from),
+		string(to),
+		actor,
+	))
+}
+
+func (s Store) InsertSuggestion(ctx context.Context, tx db.Tx, input SuggestionInput) (Suggestion, error) {
+	normalized, err := normalizeSuggestionInput(input)
+	if err != nil {
+		return Suggestion{}, err
+	}
+	txn, err := s.TransactionForUpdate(ctx, tx, normalized.TransactionID)
+	if err != nil {
+		return Suggestion{}, err
+	}
+	switch txn.State {
+	case TransactionStateUnreconciled:
+		if _, err := s.transitionTransactionStateLocked(ctx, tx, txn, TransactionStateSuggested, normalized.CreatedBy); err != nil {
+			return Suggestion{}, err
+		}
+	case TransactionStateSuggested:
+	default:
+		return Suggestion{}, &InvalidStateTransitionError{
+			TransactionID: txn.ID,
+			From:          txn.State,
+			To:            TransactionStateSuggested,
+		}
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE suggestions
+SET superseded_at = now()
+WHERE txn_id = $1
+	AND superseded_at IS NULL`,
+		int64(normalized.TransactionID),
+	); err != nil {
+		return Suggestion{}, fmt.Errorf("banking: supersede active suggestion for transaction %d: %w", normalized.TransactionID, err)
+	}
+	return scanSuggestionRow(tx.QueryRow(ctx, `
+INSERT INTO suggestions (txn_id, kind, confidence, target, explanation, created_by)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, txn_id, kind, confidence::float8, target, explanation, created_by, created_at, superseded_at`,
+		int64(normalized.TransactionID),
+		string(normalized.Kind),
+		normalized.Confidence,
+		normalized.Target,
+		normalized.Explanation,
+		normalized.CreatedBy,
+	))
+}
+
+func (Store) ActiveSuggestion(ctx context.Context, tx db.Tx, txnID TransactionID) (Suggestion, error) {
+	suggestion, err := scanSuggestionRow(tx.QueryRow(ctx, suggestionSelectSQL()+`
+WHERE txn_id = $1
+	AND superseded_at IS NULL`, int64(txnID)))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Suggestion{}, ErrSuggestionNotFound
+		}
+		return Suggestion{}, fmt.Errorf("banking: load active suggestion for transaction %d: %w", txnID, err)
+	}
+	return suggestion, nil
+}
+
+func (Store) SuggestionsForTransaction(ctx context.Context, tx db.Tx, txnID TransactionID) ([]Suggestion, error) {
+	rows, err := tx.Query(ctx, suggestionSelectSQL()+`
+WHERE txn_id = $1
+ORDER BY created_at DESC, id DESC`, int64(txnID))
+	if err != nil {
+		return nil, fmt.Errorf("banking: list suggestions for transaction %d: %w", txnID, err)
+	}
+	defer rows.Close()
+	suggestions, err := pgx.CollectRows(rows, scanSuggestion)
+	if err != nil {
+		return nil, fmt.Errorf("banking: collect suggestions for transaction %d: %w", txnID, err)
+	}
+	return suggestions, nil
+}
+
+func (Store) InsertPayeeRule(ctx context.Context, tx db.Tx, input PayeeRuleInput) (PayeeRule, error) {
+	normalized, err := normalizePayeeRuleInput(input)
+	if err != nil {
+		return PayeeRule{}, err
+	}
+	return scanPayeeRuleRow(tx.QueryRow(ctx, `
+INSERT INTO payee_rules (matcher, match_mode, account_code, created_from)
+VALUES ($1, $2, $3, $4)
+RETURNING id, matcher, match_mode, account_code, times_applied, last_applied_at, created_from, created_at`,
+		normalized.Matcher,
+		string(normalized.MatchMode),
+		string(normalized.AccountCode),
+		string(normalized.CreatedFrom),
+	))
+}
+
+func (Store) RecordPayeeRuleApplied(ctx context.Context, tx db.Tx, id PayeeRuleID) (PayeeRule, error) {
+	rule, err := scanPayeeRuleRow(tx.QueryRow(ctx, `
+UPDATE payee_rules
+SET times_applied = times_applied + 1,
+	last_applied_at = now()
+WHERE id = $1
+RETURNING id, matcher, match_mode, account_code, times_applied, last_applied_at, created_from, created_at`,
+		int64(id),
+	))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return PayeeRule{}, ErrPayeeRuleNotFound
+		}
+		return PayeeRule{}, fmt.Errorf("banking: record payee rule %d applied: %w", id, err)
+	}
+	return rule, nil
+}
+
+func (Store) MatchingPayeeRules(ctx context.Context, tx db.Tx, payee string) ([]PayeeRule, error) {
+	normalized := NormalizePayee(payee)
+	if normalized == "" {
+		return nil, nil
+	}
+	rows, err := tx.Query(ctx, `
+SELECT id, matcher, match_mode, account_code, times_applied, last_applied_at, created_from, created_at
+FROM payee_rules
+WHERE (match_mode = 'exact' AND matcher = $1)
+	OR (match_mode = 'contains' AND $1 LIKE '%' || matcher || '%')
+ORDER BY times_applied DESC, last_applied_at DESC NULLS LAST, id`, normalized)
+	if err != nil {
+		return nil, fmt.Errorf("banking: match payee rules for %q: %w", normalized, err)
+	}
+	defer rows.Close()
+	rules, err := pgx.CollectRows(rows, scanPayeeRule)
+	if err != nil {
+		return nil, fmt.Errorf("banking: collect payee rule matches for %q: %w", normalized, err)
+	}
+	return rules, nil
+}
+
+func (Store) Feed(ctx context.Context, tx db.Tx, filter FeedFilter) ([]Transaction, error) {
+	var (
+		fromDate any
+		toDate   any
+		after    any
+		afterID  int64
+	)
+	if filter.From != nil {
+		fromDate = *filter.From
+	}
+	if filter.To != nil {
+		toDate = *filter.To
+	}
+	if filter.After != nil {
+		after = filter.After.Date
+		afterID = int64(filter.After.ID)
+	}
+	rows, err := tx.Query(ctx, transactionSelectSQL()+`
+WHERE ($1::bigint = 0 OR account_id = $1)
+	AND (NULLIF($2::text, '') IS NULL OR state = NULLIF($2::text, '')::transaction_state)
+	AND ($3::date IS NULL OR date >= $3::date)
+	AND ($4::date IS NULL OR date <= $4::date)
+	AND ($5::date IS NULL OR date < $5::date OR (date = $5::date AND id < $6))
+ORDER BY date DESC, id DESC
+LIMIT $7`,
+		int64(filter.AccountID),
+		string(filter.State),
+		fromDate,
+		toDate,
+		after,
+		afterID,
+		filter.Limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("banking: transaction feed: %w", err)
+	}
+	defer rows.Close()
+	txns, err := pgx.CollectRows(rows, scanTransaction)
+	if err != nil {
+		return nil, fmt.Errorf("banking: collect transaction feed: %w", err)
+	}
+	return txns, nil
+}
+
+func (Store) ReviewQueue(ctx context.Context, tx db.Tx) (ReviewQueue, error) {
+	rows, err := tx.Query(ctx, `
+SELECT `+transactionColumns("t")+`,
+	s.id,
+	s.txn_id,
+	s.kind,
+	s.confidence::float8,
+	s.target,
+	s.explanation,
+	s.created_by,
+	s.created_at,
+	s.superseded_at
+FROM transactions t
+JOIN suggestions s ON s.txn_id = t.id
+	AND s.superseded_at IS NULL
+WHERE t.state = 'suggested'
+ORDER BY s.kind, s.confidence DESC, t.date DESC, t.id DESC`)
+	if err != nil {
+		return ReviewQueue{}, fmt.Errorf("banking: review queue: %w", err)
+	}
+	defer rows.Close()
+
+	var queue ReviewQueue
+	for rows.Next() {
+		item, err := scanReviewQueueItem(rows)
+		if err != nil {
+			return ReviewQueue{}, err
+		}
+		switch item.Suggestion.Kind {
+		case SuggestionKindInvoiceMatch:
+			queue.InvoiceMatches = append(queue.InvoiceMatches, item)
+		case SuggestionKindDLA:
+			queue.DLA = append(queue.DLA, item)
+		case SuggestionKindPayeeRule:
+			queue.PayeeRules = append(queue.PayeeRules, item)
+		default:
+			return ReviewQueue{}, fmt.Errorf("banking: review queue suggestion kind %q: %w", item.Suggestion.Kind, ErrInvalidSuggestion)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return ReviewQueue{}, fmt.Errorf("banking: collect review queue: %w", err)
+	}
+	return queue, nil
+}
+
+func (Store) RecentlyReconciled(ctx context.Context, tx db.Tx, limit int) ([]ReconciledTransaction, error) {
+	rows, err := tx.Query(ctx, `
+SELECT `+transactionColumns("t")+`,
+	c.changed_at,
+	c.actor
+FROM transaction_state_changes c
+JOIN transactions t ON t.id = c.txn_id
+WHERE c.to_state = 'reconciled'
+	AND t.state = 'reconciled'
+ORDER BY c.changed_at DESC, c.id DESC
+LIMIT $1`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("banking: recently reconciled: %w", err)
+	}
+	defer rows.Close()
+
+	var items []ReconciledTransaction
+	for rows.Next() {
+		item, err := scanReconciledTransaction(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("banking: collect recently reconciled: %w", err)
+	}
+	return items, nil
+}
+
+func (Store) UnreconciledCount(ctx context.Context, tx db.Tx, accountID AccountID) (int, error) {
+	var count int
+	if err := tx.QueryRow(ctx, `
+SELECT count(*)::integer
+FROM transactions
+WHERE account_id = $1
+	AND state = 'unreconciled'`, int64(accountID)).Scan(&count); err != nil {
+		return 0, fmt.Errorf("banking: unreconciled count for account %d: %w", accountID, err)
+	}
+	return count, nil
+}
+
 func accountSelectSQL() string {
 	return `SELECT id, name, provider, currency, ledger_account_code, created_at
 FROM bank_accounts
+`
+}
+
+func transactionSelectSQL() string {
+	return "SELECT " + transactionColumns("") + "\nFROM transactions\n"
+}
+
+func transactionColumns(alias string) string {
+	prefix := ""
+	if alias != "" {
+		prefix = alias + "."
+	}
+	return prefix + `id,
+	` + prefix + `account_id,
+	` + prefix + `date,
+	` + prefix + `amount,
+	` + prefix + `currency,
+	` + prefix + `payee,
+	` + prefix + `reference,
+	` + prefix + `provider_meta,
+	` + prefix + `import_batch_id,
+	` + prefix + `state,
+	` + prefix + `created_at`
+}
+
+func suggestionSelectSQL() string {
+	return `SELECT id,
+	txn_id,
+	kind,
+	confidence::float8,
+	target,
+	explanation,
+	created_by,
+	created_at,
+	superseded_at
+FROM suggestions
 `
 }
 
@@ -227,6 +594,266 @@ func scanAccountRow(row accountRow) (BankAccount, error) {
 	return account, nil
 }
 
+func scanTransaction(row pgx.CollectableRow) (Transaction, error) {
+	return scanTransactionRow(row)
+}
+
+type transactionRow interface {
+	Scan(dest ...any) error
+}
+
+func scanTransactionRow(row transactionRow) (Transaction, error) {
+	var (
+		txn       Transaction
+		id        int64
+		accountID int64
+		amount    int64
+		currency  string
+		meta      []byte
+		batchID   int64
+		state     string
+	)
+	if err := row.Scan(
+		&id,
+		&accountID,
+		&txn.Date,
+		&amount,
+		&currency,
+		&txn.Payee,
+		&txn.Reference,
+		&meta,
+		&batchID,
+		&state,
+		&txn.CreatedAt,
+	); err != nil {
+		return Transaction{}, err
+	}
+	if err := json.Unmarshal(meta, &txn.ProviderMeta); err != nil {
+		return Transaction{}, fmt.Errorf("banking: unmarshal transaction provider metadata: %w", err)
+	}
+	txn.ID = TransactionID(id)
+	txn.AccountID = AccountID(accountID)
+	txn.Amount = money.Money{Amount: amount, Currency: currency}
+	txn.ImportBatchID = ImportBatchID(batchID)
+	txn.State = TransactionState(state)
+	txn.Date = txn.Date.UTC()
+	txn.CreatedAt = txn.CreatedAt.UTC()
+	return txn, nil
+}
+
+type stateChangeRow interface {
+	Scan(dest ...any) error
+}
+
+func scanStateChangeRow(row stateChangeRow) (TransactionStateChange, error) {
+	var (
+		change TransactionStateChange
+		id     int64
+		txnID  int64
+		from   string
+		to     string
+	)
+	if err := row.Scan(
+		&id,
+		&txnID,
+		&from,
+		&to,
+		&change.ChangedAt,
+		&change.Actor,
+	); err != nil {
+		return TransactionStateChange{}, fmt.Errorf("banking: scan state change: %w", err)
+	}
+	change.ID = TransactionStateChangeID(id)
+	change.TransactionID = TransactionID(txnID)
+	change.From = TransactionState(from)
+	change.To = TransactionState(to)
+	change.ChangedAt = change.ChangedAt.UTC()
+	return change, nil
+}
+
+func scanSuggestion(row pgx.CollectableRow) (Suggestion, error) {
+	return scanSuggestionRow(row)
+}
+
+type suggestionRow interface {
+	Scan(dest ...any) error
+}
+
+func scanSuggestionRow(row suggestionRow) (Suggestion, error) {
+	var (
+		suggestion   Suggestion
+		id           int64
+		txnID        int64
+		kind         string
+		supersededAt sql.NullTime
+	)
+	if err := row.Scan(
+		&id,
+		&txnID,
+		&kind,
+		&suggestion.Confidence,
+		&suggestion.Target,
+		&suggestion.Explanation,
+		&suggestion.CreatedBy,
+		&suggestion.CreatedAt,
+		&supersededAt,
+	); err != nil {
+		return Suggestion{}, fmt.Errorf("banking: scan suggestion: %w", err)
+	}
+	suggestion.ID = SuggestionID(id)
+	suggestion.TransactionID = TransactionID(txnID)
+	suggestion.Kind = SuggestionKind(kind)
+	suggestion.CreatedAt = suggestion.CreatedAt.UTC()
+	if supersededAt.Valid {
+		value := supersededAt.Time.UTC()
+		suggestion.SupersededAt = &value
+	}
+	return suggestion, nil
+}
+
+func scanPayeeRule(row pgx.CollectableRow) (PayeeRule, error) {
+	return scanPayeeRuleRow(row)
+}
+
+type payeeRuleRow interface {
+	Scan(dest ...any) error
+}
+
+func scanPayeeRuleRow(row payeeRuleRow) (PayeeRule, error) {
+	var (
+		rule          PayeeRule
+		id            int64
+		matchMode     string
+		accountCode   string
+		lastAppliedAt sql.NullTime
+		createdFrom   string
+	)
+	if err := row.Scan(
+		&id,
+		&rule.Matcher,
+		&matchMode,
+		&accountCode,
+		&rule.TimesApplied,
+		&lastAppliedAt,
+		&createdFrom,
+		&rule.CreatedAt,
+	); err != nil {
+		return PayeeRule{}, fmt.Errorf("banking: scan payee rule: %w", err)
+	}
+	rule.ID = PayeeRuleID(id)
+	rule.MatchMode = PayeeRuleMatchMode(matchMode)
+	rule.AccountCode = ledger.AccountCode(accountCode)
+	rule.CreatedFrom = PayeeRuleCreatedFrom(createdFrom)
+	rule.CreatedAt = rule.CreatedAt.UTC()
+	if lastAppliedAt.Valid {
+		value := lastAppliedAt.Time.UTC()
+		rule.LastAppliedAt = &value
+	}
+	return rule, nil
+}
+
+func scanReviewQueueItem(row transactionRow) (ReviewQueueItem, error) {
+	var (
+		item          ReviewQueueItem
+		txnID         int64
+		accountID     int64
+		amount        int64
+		currency      string
+		meta          []byte
+		batchID       int64
+		state         string
+		suggestionID  int64
+		suggestionTxn int64
+		kind          string
+		supersededAt  sql.NullTime
+	)
+	if err := row.Scan(
+		&txnID,
+		&accountID,
+		&item.Transaction.Date,
+		&amount,
+		&currency,
+		&item.Transaction.Payee,
+		&item.Transaction.Reference,
+		&meta,
+		&batchID,
+		&state,
+		&item.Transaction.CreatedAt,
+		&suggestionID,
+		&suggestionTxn,
+		&kind,
+		&item.Suggestion.Confidence,
+		&item.Suggestion.Target,
+		&item.Suggestion.Explanation,
+		&item.Suggestion.CreatedBy,
+		&item.Suggestion.CreatedAt,
+		&supersededAt,
+	); err != nil {
+		return ReviewQueueItem{}, fmt.Errorf("banking: scan review queue item: %w", err)
+	}
+	if err := json.Unmarshal(meta, &item.Transaction.ProviderMeta); err != nil {
+		return ReviewQueueItem{}, fmt.Errorf("banking: unmarshal review queue transaction provider metadata: %w", err)
+	}
+	item.Transaction.ID = TransactionID(txnID)
+	item.Transaction.AccountID = AccountID(accountID)
+	item.Transaction.Amount = money.Money{Amount: amount, Currency: currency}
+	item.Transaction.ImportBatchID = ImportBatchID(batchID)
+	item.Transaction.State = TransactionState(state)
+	item.Transaction.Date = item.Transaction.Date.UTC()
+	item.Transaction.CreatedAt = item.Transaction.CreatedAt.UTC()
+	item.Suggestion.ID = SuggestionID(suggestionID)
+	item.Suggestion.TransactionID = TransactionID(suggestionTxn)
+	item.Suggestion.Kind = SuggestionKind(kind)
+	item.Suggestion.CreatedAt = item.Suggestion.CreatedAt.UTC()
+	if supersededAt.Valid {
+		value := supersededAt.Time.UTC()
+		item.Suggestion.SupersededAt = &value
+	}
+	return item, nil
+}
+
+func scanReconciledTransaction(row transactionRow) (ReconciledTransaction, error) {
+	var (
+		item      ReconciledTransaction
+		txnID     int64
+		accountID int64
+		amount    int64
+		currency  string
+		meta      []byte
+		batchID   int64
+		state     string
+	)
+	if err := row.Scan(
+		&txnID,
+		&accountID,
+		&item.Transaction.Date,
+		&amount,
+		&currency,
+		&item.Transaction.Payee,
+		&item.Transaction.Reference,
+		&meta,
+		&batchID,
+		&state,
+		&item.Transaction.CreatedAt,
+		&item.ReconciledAt,
+		&item.Actor,
+	); err != nil {
+		return ReconciledTransaction{}, fmt.Errorf("banking: scan reconciled transaction: %w", err)
+	}
+	if err := json.Unmarshal(meta, &item.Transaction.ProviderMeta); err != nil {
+		return ReconciledTransaction{}, fmt.Errorf("banking: unmarshal reconciled transaction provider metadata: %w", err)
+	}
+	item.Transaction.ID = TransactionID(txnID)
+	item.Transaction.AccountID = AccountID(accountID)
+	item.Transaction.Amount = money.Money{Amount: amount, Currency: currency}
+	item.Transaction.ImportBatchID = ImportBatchID(batchID)
+	item.Transaction.State = TransactionState(state)
+	item.Transaction.Date = item.Transaction.Date.UTC()
+	item.Transaction.CreatedAt = item.Transaction.CreatedAt.UTC()
+	item.ReconciledAt = item.ReconciledAt.UTC()
+	return item, nil
+}
+
 func marshalProviderMeta(meta map[string]string) ([]byte, error) {
 	if meta == nil {
 		meta = map[string]string{}
@@ -236,4 +863,94 @@ func marshalProviderMeta(meta map[string]string) ([]byte, error) {
 		return nil, fmt.Errorf("banking: marshal provider metadata: %w", err)
 	}
 	return data, nil
+}
+
+func validTransactionState(state TransactionState) bool {
+	switch state {
+	case TransactionStateUnreconciled,
+		TransactionStateSuggested,
+		TransactionStateReconciled,
+		TransactionStateExcluded:
+		return true
+	default:
+		return false
+	}
+}
+
+func legalTransactionStateTransition(from TransactionState, to TransactionState) bool {
+	switch from {
+	case TransactionStateUnreconciled:
+		return to == TransactionStateSuggested || to == TransactionStateExcluded
+	case TransactionStateSuggested:
+		return to == TransactionStateReconciled || to == TransactionStateExcluded
+	case TransactionStateExcluded:
+		return to == TransactionStateUnreconciled
+	case TransactionStateReconciled:
+		return false
+	default:
+		return false
+	}
+}
+
+func normalizeSuggestionInput(input SuggestionInput) (SuggestionInput, error) {
+	normalized := SuggestionInput{
+		TransactionID: input.TransactionID,
+		Kind:          input.Kind,
+		Confidence:    input.Confidence,
+		Target:        strings.TrimSpace(input.Target),
+		Explanation:   strings.TrimSpace(input.Explanation),
+		CreatedBy:     strings.TrimSpace(input.CreatedBy),
+	}
+	if normalized.TransactionID <= 0 {
+		return SuggestionInput{}, fmt.Errorf("banking: suggestion transaction id is required: %w", ErrInvalidSuggestion)
+	}
+	switch normalized.Kind {
+	case SuggestionKindInvoiceMatch, SuggestionKindDLA, SuggestionKindPayeeRule:
+	default:
+		return SuggestionInput{}, fmt.Errorf("banking: suggestion kind %q: %w", input.Kind, ErrInvalidSuggestion)
+	}
+	if math.IsNaN(normalized.Confidence) || math.IsInf(normalized.Confidence, 0) || normalized.Confidence < 0 || normalized.Confidence > 1 {
+		return SuggestionInput{}, fmt.Errorf("banking: suggestion confidence %.3f: %w", normalized.Confidence, ErrInvalidSuggestion)
+	}
+	if normalized.Target == "" {
+		return SuggestionInput{}, fmt.Errorf("banking: suggestion target is required: %w", ErrInvalidSuggestion)
+	}
+	if normalized.Explanation == "" {
+		return SuggestionInput{}, fmt.Errorf("banking: suggestion explanation is required: %w", ErrInvalidSuggestion)
+	}
+	if normalized.CreatedBy == "" {
+		return SuggestionInput{}, fmt.Errorf("banking: suggestion created_by is required: %w", ErrInvalidSuggestion)
+	}
+	return normalized, nil
+}
+
+func normalizePayeeRuleInput(input PayeeRuleInput) (PayeeRuleInput, error) {
+	matchMode := input.MatchMode
+	if matchMode == "" {
+		matchMode = PayeeRuleMatchExact
+	}
+	createdFrom := input.CreatedFrom
+	normalized := PayeeRuleInput{
+		Matcher:     NormalizePayee(input.Matcher),
+		MatchMode:   matchMode,
+		AccountCode: ledger.AccountCode(strings.TrimSpace(string(input.AccountCode))),
+		CreatedFrom: createdFrom,
+	}
+	if normalized.Matcher == "" {
+		return PayeeRuleInput{}, fmt.Errorf("banking: payee rule matcher is required: %w", ErrInvalidPayeeRule)
+	}
+	switch normalized.MatchMode {
+	case PayeeRuleMatchExact, PayeeRuleMatchContains:
+	default:
+		return PayeeRuleInput{}, fmt.Errorf("banking: payee rule match mode %q: %w", input.MatchMode, ErrInvalidPayeeRule)
+	}
+	if normalized.AccountCode == "" {
+		return PayeeRuleInput{}, fmt.Errorf("banking: payee rule account code is required: %w", ErrInvalidPayeeRule)
+	}
+	switch normalized.CreatedFrom {
+	case PayeeRuleCreatedFromRecode, PayeeRuleCreatedFromManual:
+	default:
+		return PayeeRuleInput{}, fmt.Errorf("banking: payee rule created_from %q: %w", input.CreatedFrom, ErrInvalidPayeeRule)
+	}
+	return normalized, nil
 }
