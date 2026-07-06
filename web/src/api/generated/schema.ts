@@ -4,6 +4,66 @@
  */
 
 export interface paths {
+    "/api/dla/balance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Return current DLA balance status
+         * @description Returns the current DLA balance, credit/overdrawn status, jurisdiction policy keys, and suggested clearance amount when overdrawn.
+         */
+        get: operations["dlaGetBalance"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/dla/entries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create a manual DLA entry
+         * @description Accepts manual repayments and personally-paid expenses owed to the director. Drawings are rejected because they must originate from banking reconciliation.
+         */
+        post: operations["dlaCreateEntry"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/dla/ledger": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Browse director loan ledger entries
+         * @description Returns DLA presentation-ledger rows in stable date/id order with derived running balance and owed-to-you/drawn columns.
+         */
+        get: operations["dlaListLedger"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/identity/assets/{id}": {
         parameters: {
             query?: never;
@@ -404,6 +464,80 @@ export interface components {
             bic: string;
             iban: string;
         };
+        DLABalanceResponse: {
+            balance: components["schemas"]["DLAMoney"];
+            policy: components["schemas"]["DLAPolicy"];
+            /** @enum {string} */
+            status: "credit" | "overdrawn";
+            suggested_clearance?: components["schemas"]["DLAMoney"] | null;
+        };
+        DLAEntryCreatedResponse: {
+            source_ref: string;
+        };
+        /** @description Manual DLA entry request. kind=drawing is included so clients can receive a typed rejection; accepted manual kinds are repayment and expense-owed. */
+        DLAEntryRequest: {
+            amount: components["schemas"]["DLAMoney"];
+            /** @description Required for repayment entries. */
+            cash_account_code?: string;
+            /** Format: date */
+            date: string;
+            description: string;
+            /** @description Required for expense-owed entries; use the target ledger expense account code. */
+            expense_category?: string;
+            /** @enum {string} */
+            kind: "repayment" | "expense-owed" | "drawing";
+            /** @description Optional idempotency/source reference. If omitted, the server generates a manual source_ref and returns it. */
+            source_ref?: string;
+        };
+        DLAFieldError: {
+            detail: string;
+            pointer: string;
+        };
+        DLALedgerEntry: {
+            amount: components["schemas"]["DLAMoney"];
+            /** @enum {string} */
+            balance_side: "CR" | "DR" | "zero";
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date */
+            date: string;
+            description: string;
+            drawn: components["schemas"]["DLAMoney"];
+            /** Format: int64 */
+            id: number;
+            /** @enum {string} */
+            kind: "drawing" | "repayment" | "expense-owed";
+            owed_to_you: components["schemas"]["DLAMoney"];
+            running_balance: components["schemas"]["DLAMoney"];
+            source_ref: string;
+        };
+        DLALedgerResponse: {
+            entries: components["schemas"]["DLALedgerEntry"][];
+            next_cursor: string | null;
+        };
+        DLAMoney: {
+            /** Format: int64 */
+            amount_minor: number;
+            currency: string;
+        };
+        DLAPolicy: {
+            bik_warning_key: string;
+            remedy: string;
+            s455_charge: boolean;
+        };
+        DLAValidationProblem: {
+            detail?: string;
+            errors: components["schemas"]["DLAFieldError"][];
+            /** Format: uri-reference */
+            instance?: string;
+            /** Format: int32 */
+            status: number;
+            title: string;
+            /** Format: uri-reference */
+            type: string;
+        } & {
+            [key: string]: unknown;
+        };
         FieldError: {
             detail: string;
             pointer: string;
@@ -683,6 +817,149 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    dlaGetBalance: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current DLA balance */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DLABalanceResponse"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    dlaCreateEntry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DLAEntryRequest"];
+            };
+        };
+        responses: {
+            /** @description DLA entry created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DLAEntryCreatedResponse"];
+                };
+            };
+            /** @description Malformed DLA entry request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Duplicate source_ref */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description DLA entry request body is too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description DLA entry validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["DLAValidationProblem"];
+                };
+            };
+        };
+    };
+    dlaListLedger: {
+        parameters: {
+            query?: {
+                /** @description Inclusive entry date lower bound. */
+                from?: string;
+                /** @description Inclusive entry date upper bound. */
+                to?: string;
+                /** @description Opaque keyset cursor from the previous response. */
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description DLA ledger entries listed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DLALedgerResponse"];
+                };
+            };
+            /** @description Invalid DLA ledger query */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     identityGetAsset: {
         parameters: {
             query?: never;

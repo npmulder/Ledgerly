@@ -57,6 +57,7 @@ type ModuleDeps struct {
 	Logger        *slog.Logger
 	Clock         clock.Clock
 	Bus           *bus.Bus
+	DLAPool       *pgxpool.Pool
 	MoneyFXPool   *pgxpool.Pool
 	InvoicingPool *pgxpool.Pool
 	TodayRate     invoicing.TodayRateFunc
@@ -296,6 +297,26 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 	modules = append(modules, ledgerModule.HTTPModule)
 	fragments = append(fragments, ledgerModule.OpenAPIFragment)
 
+	dlaBuilder := buildDLAModule
+	if deps.ModuleBuilders != nil && deps.ModuleBuilders[dla.ModuleName] != nil {
+		dlaBuilder = deps.ModuleBuilders[dla.ModuleName]
+	}
+	dlaModule, err := dlaBuilder(ctx, ModuleDeps{
+		Logger:     logger,
+		Clock:      clk,
+		Bus:        eventBus,
+		DLAPool:    dlaPool,
+		LedgerPool: ledgerPool,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if dlaModule.SubscribeEvents != nil {
+		dlaModule.SubscribeEvents(eventBus)
+	}
+	modules = append(modules, dlaModule.HTTPModule)
+	fragments = append(fragments, dlaModule.OpenAPIFragment)
+
 	invoicingBuilder := buildInvoicingModule
 	if deps.ModuleBuilders != nil && deps.ModuleBuilders[invoicing.ModuleName] != nil {
 		invoicingBuilder = deps.ModuleBuilders[invoicing.ModuleName]
@@ -389,6 +410,7 @@ func OpenAPIDocument(version string) map[string]any {
 		jurisdictionOpenAPIFragment(),
 		moneyfx.OpenAPIFragment(),
 		ledger.OpenAPIFragment(),
+		dla.OpenAPIFragment(),
 		invoicing.OpenAPIFragment(),
 	)
 }
@@ -405,6 +427,22 @@ func buildLedgerModule(_ context.Context, deps ModuleDeps) (Module, error) {
 	return Module{
 		HTTPModule:      ledgerModule.HTTPModule(),
 		OpenAPIFragment: ledgerModule.OpenAPIFragment(),
+	}, nil
+}
+
+func buildDLAModule(_ context.Context, deps ModuleDeps) (Module, error) {
+	dlaModule, err := dla.NewModule(dla.Config{
+		Pool:   deps.DLAPool,
+		Bus:    deps.Bus,
+		Clock:  deps.Clock,
+		Ledger: ledger.New(deps.LedgerPool, deps.Bus),
+	})
+	if err != nil {
+		return Module{}, err
+	}
+	return Module{
+		HTTPModule:      dlaModule.HTTPModule(),
+		OpenAPIFragment: dlaModule.OpenAPIFragment(),
 	}, nil
 }
 
