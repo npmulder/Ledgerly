@@ -56,9 +56,10 @@ type rateReader interface {
 
 // Service provides DB-backed money-fx queries and conversions.
 type Service struct {
-	store rateReader
-	locks rateLockStore
-	clock clock.Clock
+	store    rateReader
+	locks    rateLockStore
+	realised realisedFXStore
+	clock    clock.Clock
 }
 
 // NewService creates the money-fx service used by modules and HTTP handlers.
@@ -67,10 +68,12 @@ func NewService(store rateReader, clk clock.Clock) *Service {
 		clk = clock.New()
 	}
 	lockStore, _ := store.(rateLockStore)
+	realisedStore, _ := store.(realisedFXStore)
 	return &Service{
-		store: store,
-		locks: lockStore,
-		clock: clk,
+		store:    store,
+		locks:    lockStore,
+		realised: realisedStore,
+		clock:    clk,
 	}
 }
 

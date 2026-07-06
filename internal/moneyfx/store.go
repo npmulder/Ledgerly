@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/npmulder/ledgerly/internal/moneyfx/money"
 	"github.com/npmulder/ledgerly/internal/platform/db"
 )
 
@@ -306,10 +307,17 @@ func (s Store) RateLockByID(ctx context.Context, id LockID) (RateLock, error) {
 	if s.pool == nil {
 		return RateLock{}, fmt.Errorf("moneyfx: load rate lock requires pool")
 	}
+	return loadRateLockByID(ctx, s.pool, id)
+}
+
+func loadRateLockByID(ctx context.Context, queryer rateQueryer, id LockID) (RateLock, error) {
+	if queryer == nil {
+		return RateLock{}, fmt.Errorf("moneyfx: load rate lock requires queryer")
+	}
 	if id <= 0 {
 		return RateLock{}, fmt.Errorf("moneyfx: rate lock id %d: %w", id, ErrLockNotFound)
 	}
-	lock, err := scanRateLock(s.pool.QueryRow(ctx, `
+	lock, err := scanRateLock(queryer.QueryRow(ctx, `
 SELECT id, ref, from_currency, to_currency, rate::text, rate_date, locked_at, source
 FROM moneyfx.rate_locks
 WHERE id = $1`,
@@ -322,6 +330,81 @@ WHERE id = $1`,
 		return RateLock{}, fmt.Errorf("moneyfx: load rate lock: %w", err)
 	}
 	return lock, nil
+}
+
+type realisedFXStore interface {
+	InsertRealisedFX(ctx context.Context, tx db.Tx, record newRealisedFX) (bool, error)
+}
+
+type newRealisedFX struct {
+	InvoiceID      string
+	LockID         LockID
+	SettlementDate time.Time
+	AmountGBP      money.Money
+	SourceRef      string
+}
+
+// InsertRealisedFX records the settlement key and amount inside tx.
+//
+// The returned bool is false when the `(invoice_id, lock_id)` pair was already
+// processed. Callers insert before ledger posting so replayed settlement events
+// no-op without a second journal entry.
+func (s Store) InsertRealisedFX(ctx context.Context, tx db.Tx, record newRealisedFX) (bool, error) {
+	if tx == nil {
+		return false, fmt.Errorf("moneyfx: insert realised FX requires transaction")
+	}
+	normalized, err := normalizeNewRealisedFX(record)
+	if err != nil {
+		return false, err
+	}
+
+	var id int64
+	if err := tx.QueryRow(ctx, `
+INSERT INTO moneyfx.realised_fx (invoice_id, lock_id, settlement_date, amount_gbp, source_ref)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (invoice_id, lock_id) DO NOTHING
+RETURNING id`,
+		normalized.InvoiceID,
+		int64(normalized.LockID),
+		normalized.SettlementDate,
+		normalized.AmountGBP.Amount,
+		normalized.SourceRef,
+	).Scan(&id); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, fmt.Errorf("moneyfx: insert realised FX %s/%d: %w", normalized.InvoiceID, normalized.LockID, err)
+	}
+	return true, nil
+}
+
+func normalizeNewRealisedFX(record newRealisedFX) (newRealisedFX, error) {
+	normalized := newRealisedFX{
+		InvoiceID:      strings.TrimSpace(record.InvoiceID),
+		LockID:         record.LockID,
+		SettlementDate: normalizeRateDate(record.SettlementDate),
+		AmountGBP: money.Money{
+			Amount:   record.AmountGBP.Amount,
+			Currency: strings.ToUpper(strings.TrimSpace(record.AmountGBP.Currency)),
+		},
+		SourceRef: strings.TrimSpace(record.SourceRef),
+	}
+	if normalized.InvoiceID == "" {
+		return newRealisedFX{}, fmt.Errorf("moneyfx: realised FX invoice id is required")
+	}
+	if normalized.LockID <= 0 {
+		return newRealisedFX{}, fmt.Errorf("moneyfx: realised FX lock id %d: %w", normalized.LockID, ErrLockNotFound)
+	}
+	if normalized.SettlementDate.IsZero() {
+		return newRealisedFX{}, fmt.Errorf("moneyfx: realised FX settlement date is required")
+	}
+	if normalized.AmountGBP.Currency != "GBP" {
+		return newRealisedFX{}, fmt.Errorf("moneyfx: realised FX amount currency is %q, want GBP", normalized.AmountGBP.Currency)
+	}
+	if normalized.SourceRef == "" {
+		return newRealisedFX{}, fmt.Errorf("moneyfx: realised FX source ref is required")
+	}
+	return normalized, nil
 }
 
 // ActiveRateLockFor returns the newest rate lock for ref.
