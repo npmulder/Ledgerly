@@ -93,6 +93,40 @@ describe("DividendsScreen", () => {
     ).toBeDisabled();
   });
 
+  it("blocks validation API failures and hides pending PDF links", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal(
+      "fetch",
+      dividendsFetch({
+        declarations: [
+          declarationFixture({
+            minutes_asset: null,
+            voucher_asset: null,
+          }),
+        ],
+      }),
+    );
+
+    renderDividendsScreen();
+
+    await screen.findByText("Voucher pending");
+    expect(screen.getByText("Minutes pending")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Voucher" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Minutes" })).not.toBeInTheDocument();
+
+    await user.type(screen.getByLabelText("Amount"), "1000.01");
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Cannot declare",
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "cannot be represented as a uniform per-share amount",
+    );
+    expect(
+      screen.getByRole("button", { name: "Generate voucher + minutes" }),
+    ).toBeDisabled();
+  });
+
   it("honors ?amount= prefill and validates on load", async () => {
     const fetchImpl = dividendsFetch();
     vi.stubGlobal("fetch", fetchImpl);
@@ -150,6 +184,20 @@ function dividendsFetch(overrides: Partial<DividendsFixtures> = {}) {
     }
     if (path === "/api/dividends/validate" && method === "POST") {
       const body = JSON.parse(String(init?.body));
+      if (body.amount.amount % 100 !== 0) {
+        return jsonResponse(
+          {
+            detail:
+              "dividends: amount £1,000.01 cannot be represented as a uniform per-share amount across 100 shares: invalid dividend declaration",
+            errors: [{ detail: "is invalid", pointer: "/amount" }],
+            status: 422,
+            title: "Dividend declaration is invalid",
+            type: "https://ledgerly.local/problems/dividends/validation",
+          },
+          422,
+          "application/problem+json",
+        );
+      }
       return jsonResponse(validationFixture(body.amount.amount, headroom));
     }
     return jsonResponse(
@@ -203,6 +251,23 @@ function validationFixture(
       tax_year: "2026-27",
     },
     within_headroom: within,
+  };
+}
+
+function declarationFixture(
+  overrides: Partial<DividendsDeclaration> = {},
+): DividendsDeclaration {
+  return {
+    amount: { amount: 300000, currency: "GBP" },
+    created_at: "2026-07-06T12:00:00Z",
+    declared_date: "2026-07-06T00:00:00Z",
+    id: "dividend-1",
+    minutes_asset: "minutes-asset",
+    per_share: { amount: 3000, currency: "GBP" },
+    shareholder_name: "N. Meyer",
+    shares: 100,
+    voucher_asset: "voucher-asset",
+    ...overrides,
   };
 }
 

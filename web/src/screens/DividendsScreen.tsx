@@ -14,6 +14,7 @@ import {
   type DividendsMoney,
   type DividendsValidationResult,
 } from "@/api/dividends";
+import { isApiError } from "@/api/client";
 import { queryKeys } from "@/api/queryKeys";
 import {
   Button,
@@ -152,6 +153,7 @@ export function DividendsScreen() {
                 </Field>
                 <ValidationStrip
                   amountMinor={amountMinor}
+                  error={validationQuery.error}
                   isLoading={validationQuery.isFetching}
                   validation={validation}
                 />
@@ -239,10 +241,12 @@ function HeadroomPanel({
 
 function ValidationStrip({
   amountMinor,
+  error,
   isLoading,
   validation,
 }: {
   readonly amountMinor: number | null;
+  readonly error: Error | null;
   readonly isLoading: boolean;
   readonly validation: DividendsValidationResult | null;
 }) {
@@ -257,6 +261,17 @@ function ValidationStrip({
     return (
       <div className="dividends-validation-strip" role="status">
         <span>Validating</span>
+      </div>
+    );
+  }
+  if (error && !validation) {
+    return (
+      <div
+        className="dividends-validation-strip dividends-validation-strip--blocked"
+        role="alert"
+      >
+        <span>Cannot declare</span>
+        <span>{validationErrorMessage(error)}</span>
       </div>
     );
   }
@@ -333,8 +348,18 @@ function HistoryTable({
             </TableCell>
             <TableCell>
               <div className="dividends-history-table__links">
-                <a href={dividendVoucherPDFPath(declaration.id)}>Voucher</a>
-                <a href={boardMinutesPDFPath(declaration.id)}>Minutes</a>
+                {hasDocumentAsset(declaration.voucher_asset) ? (
+                  <a href={dividendVoucherPDFPath(declaration.id)}>Voucher</a>
+                ) : (
+                  <span aria-label="Voucher PDF pending">Voucher pending</span>
+                )}
+                {hasDocumentAsset(declaration.minutes_asset) ? (
+                  <a href={boardMinutesPDFPath(declaration.id)}>Minutes</a>
+                ) : (
+                  <span aria-label="Board minutes PDF pending">
+                    Minutes pending
+                  </span>
+                )}
               </div>
             </TableCell>
           </TableRow>
@@ -424,4 +449,15 @@ function formatDividendDate(value: string) {
     timeZone: "UTC",
     year: "numeric",
   }).format(new Date(value));
+}
+
+function hasDocumentAsset(asset: string | null | undefined) {
+  return typeof asset === "string" && asset.trim() !== "";
+}
+
+function validationErrorMessage(error: Error) {
+  if (isApiError(error) && typeof error.problem.detail === "string") {
+    return error.problem.detail;
+  }
+  return error.message || "Amount cannot be declared.";
 }

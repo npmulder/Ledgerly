@@ -448,6 +448,24 @@ func TestDividendsDeclareTypedValidationFailures(t *testing.T) {
 	it.AssertLedgerBalanced(t, h)
 }
 
+func TestDividendsValidateRejectsNonUniformPerShareAmount(t *testing.T) {
+	ctx := context.Background()
+	h := newDividendsHarness(t)
+	loadDividendsPack(t, "")
+	postRetainedEarnings(t, h, "2025-03-31", 200_000)
+	service := newDividendsService(t, h)
+
+	_, err := service.Validate(ctx, harnessMoney(100_001))
+	if !errors.Is(err, dividends.ErrInvalidDeclaration) {
+		t.Fatalf("Validate(non-uniform per-share) error = %v, want ErrInvalidDeclaration", err)
+	}
+	if !strings.Contains(err.Error(), "uniform per-share amount") {
+		t.Fatalf("Validate(non-uniform per-share) error = %q, want split detail", err)
+	}
+	assertCountWhere(t, ctx, h.DB, "dividends.declarations", "true", 0)
+	it.AssertLedgerBalanced(t, h)
+}
+
 func TestDividendsDeclareConcurrentRaceAllowsOneWinner(t *testing.T) {
 	ctx := context.Background()
 	h := newDividendsHarness(t)
