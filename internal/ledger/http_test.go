@@ -80,7 +80,7 @@ func TestHTTPAccountsAndTrialBalance(t *testing.T) {
 	if err := json.Unmarshal(trialBalanceResult.Body.Bytes(), &trialBalance); err != nil {
 		t.Fatalf("decode trial balance: %v; body=%s", err, trialBalanceResult.Body.String())
 	}
-	if trialBalance.AsOf != "2026-07-06" || trialBalance.Status != string(TrialBalanceStatusBalanced) {
+	if trialBalance.AsOf != "2026-07-06" || trialBalance.Status != "balanced" {
 		t.Fatalf("trial balance = %+v, want as_of 2026-07-06 balanced", trialBalance)
 	}
 }

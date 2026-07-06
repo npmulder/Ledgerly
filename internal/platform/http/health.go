@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	nethttp "net/http"
+	"strings"
 	"time"
 )
 
@@ -40,6 +42,20 @@ func healthHandler(cfg Config) nethttp.HandlerFunc {
 		}
 
 		checks["db"] = healthCheck{Status: "ok"}
+		if detail := runAdditionalHealthChecks(r.Context(), cfg, checks); detail != "" {
+			WriteProblem(w, r, Problem{
+				Type:   problemTypeServiceUnavailable,
+				Title:  nethttp.StatusText(nethttp.StatusServiceUnavailable),
+				Status: nethttp.StatusServiceUnavailable,
+				Detail: detail,
+				Extensions: map[string]any{
+					"version": cfg.Version,
+					"checks":  checks,
+				},
+			})
+			return
+		}
+
 		writeJSON(w, nethttp.StatusOK, healthResponse{
 			Status:    "ok",
 			Version:   cfg.Version,
@@ -47,6 +63,25 @@ func healthHandler(cfg Config) nethttp.HandlerFunc {
 			Checks:    checks,
 		})
 	}
+}
+
+func runAdditionalHealthChecks(ctx context.Context, cfg Config, checks map[string]healthCheck) string {
+	var detail string
+	for _, check := range cfg.HealthChecks {
+		name := strings.TrimSpace(check.Name)
+		if name == "" || check.Check == nil {
+			continue
+		}
+		if err := check.Check(ctx); err != nil {
+			checks[name] = healthCheck{Status: "down", Error: err.Error()}
+			if detail == "" {
+				detail = fmt.Sprintf("%s failed", name)
+			}
+			continue
+		}
+		checks[name] = healthCheck{Status: "ok"}
+	}
+	return detail
 }
 
 func pingDB(ctx context.Context, cfg Config) error {

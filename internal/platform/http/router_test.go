@@ -80,6 +80,54 @@ func TestHealthzReturnsProblemWhenDatabasePingFails(t *testing.T) {
 	}
 }
 
+func TestHealthzReturnsProblemWhenAdditionalCheckFailsAndRecovers(t *testing.T) {
+	checkErr := errors.New("ledger trial balance unbalanced: entry 42")
+	router := NewRouter(Config{
+		Version: "test-version",
+		DB:      pingerFunc(func(context.Context) error { return nil }),
+		HealthChecks: []HealthCheck{
+			{
+				Name: "ledger.trial-balance",
+				Check: func(context.Context) error {
+					return checkErr
+				},
+			},
+		},
+	})
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(nethttp.MethodGet, "/healthz", nil))
+
+	if response.Code != nethttp.StatusServiceUnavailable {
+		t.Fatalf("/healthz status = %d, want %d; body=%s", response.Code, nethttp.StatusServiceUnavailable, response.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("problem response is not JSON: %v", err)
+	}
+	if body["detail"] != "ledger.trial-balance failed" {
+		t.Fatalf("problem detail = %v, want ledger.trial-balance failed", body["detail"])
+	}
+	checks, ok := body["checks"].(map[string]any)
+	if !ok {
+		t.Fatalf("checks extension missing or wrong type: %+v", body["checks"])
+	}
+	ledgerCheck, ok := checks["ledger.trial-balance"].(map[string]any)
+	if !ok {
+		t.Fatalf("ledger.trial-balance check missing: %+v", checks)
+	}
+	if ledgerCheck["status"] != "down" || ledgerCheck["error"] != checkErr.Error() {
+		t.Fatalf("ledger.trial-balance check = %+v, want down with reason", ledgerCheck)
+	}
+
+	checkErr = nil
+	recovered := httptest.NewRecorder()
+	router.ServeHTTP(recovered, httptest.NewRequest(nethttp.MethodGet, "/healthz", nil))
+	if recovered.Code != nethttp.StatusOK {
+		t.Fatalf("recovered /healthz status = %d, want %d; body=%s", recovered.Code, nethttp.StatusOK, recovered.Body.String())
+	}
+}
+
 func TestReadyzUsesDatabasePing(t *testing.T) {
 	var calls int
 	router := NewRouter(Config{

@@ -25,6 +25,12 @@ type Pinger interface {
 	PingContext(context.Context) error
 }
 
+// HealthCheck is an additional named dependency check included in healthz.
+type HealthCheck struct {
+	Name  string
+	Check func(context.Context) error
+}
+
 // RegisterRoutes is the module route registration contract.
 type RegisterRoutes func(chi.Router)
 
@@ -44,6 +50,7 @@ type Config struct {
 	StaticAssets     fs.FS
 	Modules          []Module
 	OpenAPIFragments []OpenAPIFragment
+	HealthChecks     []HealthCheck
 	HandlerTimeout   time.Duration
 	HealthTimeout    time.Duration
 }

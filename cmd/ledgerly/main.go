@@ -19,6 +19,7 @@ import (
 	"github.com/npmulder/ledgerly/internal/app"
 	"github.com/npmulder/ledgerly/internal/identity"
 	"github.com/npmulder/ledgerly/internal/jurisdiction"
+	"github.com/npmulder/ledgerly/internal/ledger"
 	"github.com/npmulder/ledgerly/internal/platform/chrome"
 	"github.com/npmulder/ledgerly/internal/platform/config"
 	"github.com/npmulder/ledgerly/internal/platform/db"
@@ -77,6 +78,8 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 			return fmt.Errorf("usage: ledgerly openapi")
 		}
 		return runOpenAPI(stdout)
+	case "check":
+		return runCheck(ctx, args[1:], stdout)
 	case "version", "--version", "-v":
 		return printVersion(stdout)
 	default:
@@ -125,6 +128,40 @@ func runOpenAPI(stdout io.Writer) error {
 	encoder := json.NewEncoder(stdout)
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(app.OpenAPIDocument(version))
+}
+
+func runCheck(ctx context.Context, args []string, stdout io.Writer) error {
+	if len(args) != 1 || args[0] != "trial-balance" {
+		return fmt.Errorf("usage: ledgerly check trial-balance")
+	}
+	return runCheckTrialBalance(ctx, stdout)
+}
+
+func runCheckTrialBalance(ctx context.Context, stdout io.Writer) error {
+	databaseURL := strings.TrimSpace(os.Getenv("LEDGERLY_DATABASE_URL"))
+	if databaseURL == "" {
+		databaseURL = db.DefaultDevDatabaseURL
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+
+	pool, err := app.OpenPoolWithRetry(ctx, databaseURL, db.WithModule(ledger.ModuleName))
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+
+	report, err := ledger.New(pool).TrialBalance(ctx, time.Now())
+	if err != nil && !errors.Is(err, ledger.ErrTrialBalanceViolation) {
+		return err
+	}
+	encoder := json.NewEncoder(stdout)
+	encoder.SetIndent("", "  ")
+	if encodeErr := encoder.Encode(report); encodeErr != nil {
+		return encodeErr
+	}
+	return err
 }
 
 func runChromeSmoke(ctx context.Context, stdout io.Writer, outputPath string) error {

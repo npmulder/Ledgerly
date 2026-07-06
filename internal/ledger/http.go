@@ -122,6 +122,11 @@ func (h ledgerHandler) getTrialBalance(w nethttp.ResponseWriter, r *nethttp.Requ
 	asOf := h.clock.Now().UTC()
 	report, err := h.service.TrialBalance(r.Context(), asOf)
 	if err != nil {
+		var violation *TrialBalanceViolationError
+		if errors.As(err, &violation) {
+			writeLedgerJSON(w, nethttp.StatusOK, trialBalanceToResponse(violation.Report))
+			return
+		}
 		writeLedgerError(w, r, err)
 		return
 	}
@@ -246,17 +251,24 @@ func accountsToResponse(accounts []Account) accountsResponse {
 	return response
 }
 
-func trialBalanceToResponse(report TrialBalance) trialBalanceResponse {
+func trialBalanceToResponse(report Report) trialBalanceResponse {
 	response := trialBalanceResponse{
 		AsOf:         report.AsOf.UTC().Format(time.DateOnly),
-		Status:       string(report.Status),
-		NativeTotals: make([]moneyResponse, 0, len(report.Native)),
-		AmountGBP:    moneyToResponse(report.AmountGBP.Amount, report.AmountGBP.Currency),
+		Status:       trialBalanceStatus(report),
+		NativeTotals: make([]moneyResponse, 0, len(report.CurrencySums)),
+		AmountGBP:    moneyToResponse(report.GBPTotal, "GBP"),
 	}
-	for _, amount := range report.Native {
-		response.NativeTotals = append(response.NativeTotals, moneyToResponse(amount.Amount, amount.Currency))
+	for _, sum := range report.CurrencySums {
+		response.NativeTotals = append(response.NativeTotals, moneyToResponse(sum.Amount, sum.Currency))
 	}
 	return response
+}
+
+func trialBalanceStatus(report Report) string {
+	if report.Balanced {
+		return "balanced"
+	}
+	return "out_of_balance"
 }
 
 func moneyToResponse(amount int64, currency string) moneyResponse {

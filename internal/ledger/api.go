@@ -102,22 +102,6 @@ type AccountBalance struct {
 	AmountGBP   money.Money
 }
 
-// TrialBalanceStatus describes whether the ledger balances as of a date.
-type TrialBalanceStatus string
-
-const (
-	TrialBalanceStatusBalanced     TrialBalanceStatus = "balanced"
-	TrialBalanceStatusOutOfBalance TrialBalanceStatus = "out_of_balance"
-)
-
-// TrialBalance is the full-ledger double-entry invariant report as of a date.
-type TrialBalance struct {
-	AsOf      time.Time
-	Status    TrialBalanceStatus
-	Native    []money.Money
-	AmountGBP money.Money
-}
-
 // EntryCursor identifies the last entry from a previous Entries page. Entries
 // returns rows ordered by date then id, and an EntryCursor resumes strictly
 // after that tuple.
@@ -168,7 +152,7 @@ type Ledger interface {
 	Reverse(ctx context.Context, tx db.Tx, id EntryID, reason string) (EntryID, error)
 	AccountBalance(ctx context.Context, code AccountCode, asOf time.Time) (AccountBalance, error)
 	BalancesByType(ctx context.Context, from time.Time, to time.Time) ([]AccountBalance, error)
-	TrialBalance(ctx context.Context, asOf time.Time) (TrialBalance, error)
+	TrialBalance(ctx context.Context, asOf time.Time) (Report, error)
 	Entries(ctx context.Context, filter EntryFilter) ([]JournalEntry, error)
 	EnsureAccount(ctx context.Context, tx db.Tx, spec AccountSpec) (AccountCode, error)
 	Accounts(ctx context.Context) ([]Account, error)
@@ -269,6 +253,9 @@ var (
 
 	// ErrInvariantViolation reports a stored entry that fails the cheap per-entry balance check.
 	ErrInvariantViolation = errors.New("ledger: entry invariant violation")
+
+	// ErrTrialBalanceViolation reports a full-table trial-balance invariant failure.
+	ErrTrialBalanceViolation = errors.New("ledger: trial balance invariant violation")
 )
 
 // AccountConflictError carries the conflicting field for an existing account.
