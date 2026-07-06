@@ -197,6 +197,13 @@ func TestValidationFailuresNameFilePathAndField(t *testing.T) {
 			wantText:  "unknown deadline offset unit",
 		},
 		{
+			name:      "malformed advisor condition",
+			pack:      strings.Replace(valid, "condition: balance > 0", "condition: balance >", 1),
+			wantPath:  "advisor_rules[0].condition",
+			wantField: "condition",
+			wantText:  "expected expression",
+		},
+		{
 			name: "missing annual return filing",
 			pack: strings.Replace(
 				valid,

@@ -156,7 +156,7 @@ func clonePack(in *Pack) *Pack {
 	out.Tax.VAT.Years = cloneMap(in.Tax.VAT.Years)
 	out.Tax.VAT.ReverseCharge = cloneMap(in.Tax.VAT.ReverseCharge)
 	out.Filings = cloneMap(in.Filings)
-	out.AdvisorRules = append([]AdvisorRule(nil), in.AdvisorRules...)
+	out.AdvisorRules = cloneAdvisorRules(in.AdvisorRules)
 	return &out
 }
 
@@ -178,6 +178,31 @@ func cloneMap[K comparable, V any](in map[K]V) map[K]V {
 		return nil
 	}
 	out := make(map[K]V, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
+}
+
+func cloneAdvisorRules(in []AdvisorRule) []AdvisorRule {
+	if in == nil {
+		return nil
+	}
+	out := make([]AdvisorRule, len(in))
+	for index, rule := range in {
+		out[index] = rule
+		out[index].Surfaces = append([]string(nil), rule.Surfaces...)
+		out[index].FactQuery = append([]string(nil), rule.FactQuery...)
+		out[index].CTA.Params = cloneAnyMap(rule.CTA.Params)
+	}
+	return out
+}
+
+func cloneAnyMap(in map[string]any) map[string]any {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]any, len(in))
 	for key, value := range in {
 		out[key] = value
 	}
