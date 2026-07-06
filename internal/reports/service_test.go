@@ -56,6 +56,64 @@ func TestProfitYTDUsesCompanyYearEndBoundariesAndMatchesPLNet(t *testing.T) {
 	assertReportMoney(t, pl.Income[0].Amount, 30_000)
 }
 
+func TestProfitYTDClampsLeapDayYearEndInNonLeapYears(t *testing.T) {
+	loadReportsPack(t, "")
+	ctx := context.Background()
+	fakeLedger := newFakeLedger(
+		fakeEntry(1, "2025-02-28", "manual", "before-window", fakePosting("4000-sales", -1_000)),
+		fakeEntry(2, "2025-03-01", "manual", "window-start", fakePosting("4000-sales", -10_000)),
+		fakeEntry(3, "2026-02-28", "manual", "window-end", fakePosting("4000-sales", -20_000)),
+		fakeEntry(4, "2026-03-01", "manual", "after-window", fakePosting("4000-sales", -40_000)),
+	)
+	service := New(
+		fakeLedger,
+		fakeIdentity{yearEnd: identity.YearEnd{Month: time.February, Day: 29}},
+		fakeInvoicing{},
+	)
+
+	ytd, err := service.ProfitYTD(ctx, "2025-26")
+	if err != nil {
+		t.Fatalf("ProfitYTD(2025-26) error = %v", err)
+	}
+	assertReportMoney(t, ytd, 30_000)
+	assertDate(t, fakeLedger.lastBalancesFrom, "2025-03-01")
+	assertDate(t, fakeLedger.lastBalancesTo, "2026-02-28")
+
+	period, err := financialYearPeriod("2023-24", time.February, 29)
+	if err != nil {
+		t.Fatalf("financialYearPeriod(2023-24) error = %v", err)
+	}
+	assertDate(t, period.From, "2023-03-01")
+	assertDate(t, period.To, "2024-02-29")
+}
+
+func TestProfitAndLossSkipsNetZeroMissingInvoiceAttribution(t *testing.T) {
+	loadReportsPack(t, "")
+	ctx := context.Background()
+	sourceRef := "invoice:INV-2025-0001:send"
+	service := New(
+		newFakeLedger(
+			fakeEntry(1, "2025-05-01", invoicing.ModuleName, sourceRef, fakePosting("4000-sales", -100_000)),
+			fakeEntry(2, "2025-05-01", invoicing.ModuleName, sourceRef, fakePosting("4000-sales", 100_000)),
+		),
+		fakeIdentity{yearEnd: identity.YearEnd{Month: time.March, Day: 31}},
+		fakeInvoicing{},
+	)
+
+	pl, err := service.ProfitAndLoss(ctx, Period{
+		From: time.Date(2025, time.May, 1, 0, 0, 0, 0, time.UTC),
+		To:   time.Date(2025, time.May, 31, 0, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("ProfitAndLoss() error = %v", err)
+	}
+	assertReportMoney(t, pl.IncomeTotal, 0)
+	assertReportMoney(t, pl.NetProfit, 0)
+	if len(pl.Income) != 0 {
+		t.Fatalf("Income = %#v, want no zero-value invoice line", pl.Income)
+	}
+}
+
 func TestProfitAndLossCorporateTaxLineUsesActivePackRate(t *testing.T) {
 	loadReportsPack(t, "standard_rate: \"0.1\"")
 	ctx := context.Background()

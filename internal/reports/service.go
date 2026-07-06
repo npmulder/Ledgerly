@@ -201,6 +201,7 @@ type incomeKey struct {
 func (s *Service) entryBreakdown(ctx context.Context, period Period, accounts map[ledger.AccountCode]ledger.Account) (entryBreakdown, error) {
 	income := map[incomeKey]IncomeLine{}
 	expenses := map[ledger.AccountCode]ExpenseLine{}
+	invoiceIncome := map[string]money.Money{}
 	invoiceCache := map[string]invoiceAttribution{}
 
 	breakdown := entryBreakdown{
@@ -220,7 +221,7 @@ func (s *Service) entryBreakdown(ctx context.Context, period Period, accounts ma
 			return entryBreakdown{}, err
 		}
 		for _, entry := range entries {
-			if err := s.addEntryToBreakdown(ctx, entry, accounts, income, expenses, invoiceCache, &breakdown); err != nil {
+			if err := s.addEntryToBreakdown(entry, accounts, income, expenses, invoiceIncome, &breakdown); err != nil {
 				return entryBreakdown{}, err
 			}
 		}
@@ -231,18 +232,20 @@ func (s *Service) entryBreakdown(ctx context.Context, period Period, accounts ma
 		cursor = &ledger.EntryCursor{Date: last.Date, ID: last.ID}
 	}
 
+	if err := s.addInvoiceIncomeLines(ctx, invoiceIncome, income, invoiceCache, &breakdown); err != nil {
+		return entryBreakdown{}, err
+	}
 	breakdown.Income = sortedIncomeLines(income)
 	breakdown.Expenses = sortedExpenseLines(expenses)
 	return breakdown, nil
 }
 
 func (s *Service) addEntryToBreakdown(
-	ctx context.Context,
 	entry ledger.JournalEntry,
 	accounts map[ledger.AccountCode]ledger.Account,
 	income map[incomeKey]IncomeLine,
 	expenses map[ledger.AccountCode]ExpenseLine,
-	invoiceCache map[string]invoiceAttribution,
+	invoiceIncome map[string]money.Money,
 	breakdown *entryBreakdown,
 ) error {
 	for _, posting := range entry.Postings {
@@ -264,7 +267,13 @@ func (s *Service) addEntryToBreakdown(
 				breakdown.RealisedFXGains = next
 				continue
 			}
-			if err := s.addIncomeLine(ctx, entry, amount, income, invoiceCache, breakdown); err != nil {
+			if entry.SourceModule == invoicing.ModuleName {
+				if err := addInvoiceIncomeTotal(entry.SourceRef, amount, invoiceIncome); err != nil {
+					return err
+				}
+				continue
+			}
+			if err := addOtherIncomeLine(amount, income, breakdown); err != nil {
 				return err
 			}
 		case ledger.AccountTypeExpense:
@@ -292,43 +301,91 @@ func (s *Service) addEntryToBreakdown(
 	return nil
 }
 
-func (s *Service) addIncomeLine(
+func addInvoiceIncomeTotal(sourceRef string, amount money.Money, invoiceIncome map[string]money.Money) error {
+	total, ok := invoiceIncome[sourceRef]
+	if !ok {
+		total = money.Zero(gbpCurrency)
+	}
+	next, err := total.Add(amount)
+	if err != nil {
+		return err
+	}
+	invoiceIncome[sourceRef] = next
+	return nil
+}
+
+func (s *Service) addInvoiceIncomeLines(
 	ctx context.Context,
-	entry ledger.JournalEntry,
-	amount money.Money,
+	invoiceIncome map[string]money.Money,
 	income map[incomeKey]IncomeLine,
 	invoiceCache map[string]invoiceAttribution,
 	breakdown *entryBreakdown,
 ) error {
-	key := incomeKey{label: otherIncomeLabel}
-	line := income[key]
-	if entry.SourceModule == invoicing.ModuleName {
-		attribution, err := s.invoiceAttribution(ctx, entry.SourceRef, invoiceCache)
+	sourceRefs := make([]string, 0, len(invoiceIncome))
+	for sourceRef := range invoiceIncome {
+		sourceRefs = append(sourceRefs, sourceRef)
+	}
+	sort.Strings(sourceRefs)
+
+	for _, sourceRef := range sourceRefs {
+		amount := invoiceIncome[sourceRef]
+		if amount.IsZero() {
+			continue
+		}
+		attribution, err := s.invoiceAttribution(ctx, sourceRef, invoiceCache)
 		if err != nil {
 			return err
 		}
-		key = incomeKey{
-			clientID: attribution.ClientID,
-			currency: attribution.Currency,
-			label:    incomeLabel(attribution.ClientName, attribution.Currency),
+		if err := addAttributedIncomeLine(attribution, amount, income, breakdown); err != nil {
+			return err
 		}
-		line = income[key]
-		if line.Label == "" {
-			line = IncomeLine{
-				Label:      key.label,
-				ClientID:   attribution.ClientID,
-				ClientName: attribution.ClientName,
-				Currency:   attribution.Currency,
-				Amount:     money.Zero(gbpCurrency),
-			}
-		}
-	} else if line.Label == "" {
+	}
+	return nil
+}
+
+func addOtherIncomeLine(amount money.Money, income map[incomeKey]IncomeLine, breakdown *entryBreakdown) error {
+	key := incomeKey{label: otherIncomeLabel}
+	line := income[key]
+	if line.Label == "" {
 		line = IncomeLine{
 			Label:  otherIncomeLabel,
 			Amount: money.Zero(gbpCurrency),
 		}
 	}
+	return addIncomeAmount(key, line, amount, income, breakdown)
+}
 
+func addAttributedIncomeLine(
+	attribution invoiceAttribution,
+	amount money.Money,
+	income map[incomeKey]IncomeLine,
+	breakdown *entryBreakdown,
+) error {
+	key := incomeKey{
+		clientID: attribution.ClientID,
+		currency: attribution.Currency,
+		label:    incomeLabel(attribution.ClientName, attribution.Currency),
+	}
+	line := income[key]
+	if line.Label == "" {
+		line = IncomeLine{
+			Label:      key.label,
+			ClientID:   attribution.ClientID,
+			ClientName: attribution.ClientName,
+			Currency:   attribution.Currency,
+			Amount:     money.Zero(gbpCurrency),
+		}
+	}
+	return addIncomeAmount(key, line, amount, income, breakdown)
+}
+
+func addIncomeAmount(
+	key incomeKey,
+	line IncomeLine,
+	amount money.Money,
+	income map[incomeKey]IncomeLine,
+	breakdown *entryBreakdown,
+) error {
 	next, err := line.Amount.Add(amount)
 	if err != nil {
 		return err
@@ -454,12 +511,30 @@ func financialYearPeriod(taxYear string, month time.Month, day int) (Period, err
 	if err != nil {
 		return Period{}, err
 	}
-	end := time.Date(endYear, month, day, 0, 0, 0, 0, time.UTC)
-	if end.Month() != month || end.Day() != day {
-		return Period{}, fmt.Errorf("reports: invalid year end %d-%02d: %w", month, day, ErrInvalidPeriod)
+	previousEnd, err := financialYearEndDate(startYear, month, day)
+	if err != nil {
+		return Period{}, err
 	}
-	start := time.Date(startYear, month, day, 0, 0, 0, 0, time.UTC).AddDate(0, 0, 1)
+	end, err := financialYearEndDate(endYear, month, day)
+	if err != nil {
+		return Period{}, err
+	}
+	start := previousEnd.AddDate(0, 0, 1)
 	return Period{From: start, To: end}, nil
+}
+
+func financialYearEndDate(year int, month time.Month, day int) (time.Time, error) {
+	if month < time.January || month > time.December || day < 1 {
+		return time.Time{}, fmt.Errorf("reports: invalid year end %d-%02d: %w", month, day, ErrInvalidPeriod)
+	}
+	lastDay := time.Date(year, month+1, 0, 0, 0, 0, 0, time.UTC).Day()
+	if day > lastDay {
+		if month != time.February || day != 29 {
+			return time.Time{}, fmt.Errorf("reports: invalid year end %d-%02d: %w", month, day, ErrInvalidPeriod)
+		}
+		day = lastDay
+	}
+	return time.Date(year, month, day, 0, 0, 0, 0, time.UTC), nil
 }
 
 func parseTaxYear(taxYear string) (int, int, error) {
