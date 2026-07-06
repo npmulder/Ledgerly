@@ -154,6 +154,7 @@ func clonePack(in *Pack) *Pack {
 	}
 	out.Tax.Dividends = cloneMap(in.Tax.Dividends)
 	out.Tax.VAT.Years = cloneMap(in.Tax.VAT.Years)
+	out.Tax.VAT.Treatments = cloneMap(in.Tax.VAT.Treatments)
 	out.Tax.VAT.ReverseCharge = cloneMap(in.Tax.VAT.ReverseCharge)
 	out.Filings = cloneMap(in.Filings)
 	out.AdvisorRules = append([]AdvisorRule(nil), in.AdvisorRules...)

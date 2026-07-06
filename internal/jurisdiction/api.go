@@ -28,6 +28,15 @@ func (e UnknownReverseChargeKindError) Error() string {
 	return fmt.Sprintf("jurisdiction: reverse charge wording kind %q not found", e.Kind)
 }
 
+// UnknownVATTreatmentError reports a missing VAT treatment semantics entry.
+type UnknownVATTreatmentError struct {
+	Treatment string
+}
+
+func (e UnknownVATTreatmentError) Error() string {
+	return fmt.Sprintf("jurisdiction: VAT treatment %q not found", e.Treatment)
+}
+
 func (r Rate) String() string {
 	return string(r)
 }
@@ -120,6 +129,20 @@ func ReverseChargeWording(kind string) (Wording, error) {
 		return Wording{}, UnknownReverseChargeKindError{Kind: kind}
 	}
 	return wording, nil
+}
+
+// VATSemanticsForTreatment returns pack-backed VAT reporting semantics for a
+// treatment value stored by modules such as invoicing.
+func VATSemanticsForTreatment(treatment string) (VATTreatmentSemantics, error) {
+	pack, err := activePackSnapshot()
+	if err != nil {
+		return VATTreatmentSemantics{}, err
+	}
+	semantics, ok := pack.Tax.VAT.Treatments[treatment]
+	if !ok {
+		return VATTreatmentSemantics{}, UnknownVATTreatmentError{Treatment: treatment}
+	}
+	return semantics, nil
 }
 
 func taxYearForDate(date time.Time, yearEnd YearEnd) (string, error) {

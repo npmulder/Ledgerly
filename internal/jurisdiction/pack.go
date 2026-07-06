@@ -57,14 +57,21 @@ type DividendYear struct {
 }
 
 type VAT struct {
-	Regime        string             `yaml:"regime"`
-	Authority     string             `yaml:"authority"`
-	Years         map[string]VATYear `yaml:"-"`
-	ReverseCharge map[string]Wording `yaml:"reverse_charge"`
+	Regime        string                           `yaml:"regime"`
+	Authority     string                           `yaml:"authority"`
+	Years         map[string]VATYear               `yaml:"-"`
+	Treatments    map[string]VATTreatmentSemantics `yaml:"treatments"`
+	ReverseCharge map[string]Wording               `yaml:"reverse_charge"`
 }
 
 type VATYear struct {
 	StandardRate Rate `yaml:"standard_rate"`
+}
+
+type VATTreatmentSemantics struct {
+	OutputVAT         bool   `yaml:"output_vat"`
+	VATReturnNetSales bool   `yaml:"vat_return_net_sales"`
+	ReverseChargeKind string `yaml:"reverse_charge_kind,omitempty"`
 }
 
 type Wording struct {

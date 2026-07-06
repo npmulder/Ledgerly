@@ -94,6 +94,38 @@ func TestIsleOfManAccessorsReturnHandoffValues2025_26(t *testing.T) {
 			},
 		},
 		{
+			name: "VAT treatment semantics",
+			check: func(t *testing.T) {
+				domestic, err := VATSemanticsForTreatment("domestic")
+				if err != nil {
+					t.Fatalf("VATSemanticsForTreatment(domestic) error = %v", err)
+				}
+				if !domestic.OutputVAT {
+					t.Fatal("domestic OutputVAT = false, want true")
+				}
+				if !domestic.VATReturnNetSales {
+					t.Fatal("domestic VATReturnNetSales = false, want true")
+				}
+				if domestic.ReverseChargeKind != "" {
+					t.Fatalf("domestic ReverseChargeKind = %q, want empty", domestic.ReverseChargeKind)
+				}
+
+				reverseCharge, err := VATSemanticsForTreatment("reverse-charge-eu-b2b")
+				if err != nil {
+					t.Fatalf("VATSemanticsForTreatment(reverse-charge-eu-b2b) error = %v", err)
+				}
+				if reverseCharge.OutputVAT {
+					t.Fatal("reverse charge OutputVAT = true, want false")
+				}
+				if !reverseCharge.VATReturnNetSales {
+					t.Fatal("reverse charge VATReturnNetSales = false, want true")
+				}
+				if reverseCharge.ReverseChargeKind != "b2b_services_eu" {
+					t.Fatalf("reverse charge ReverseChargeKind = %q, want b2b_services_eu", reverseCharge.ReverseChargeKind)
+				}
+			},
+		},
+		{
 			name: "filing rules",
 			check: func(t *testing.T) {
 				got := FilingRules()
@@ -366,6 +398,22 @@ func TestReverseChargeWordingReturnsTypedErrorForUnknownKind(t *testing.T) {
 	}
 	if unknownKind.Kind != "unknown" {
 		t.Fatalf("UnknownReverseChargeKindError.Kind = %q, want unknown", unknownKind.Kind)
+	}
+}
+
+func TestVATSemanticsForTreatmentReturnsTypedErrorForUnknownTreatment(t *testing.T) {
+	loadIsleOfManForAccessors(t)
+
+	_, err := VATSemanticsForTreatment("unknown")
+	if err == nil {
+		t.Fatal("VATSemanticsForTreatment() error = nil, want UnknownVATTreatmentError")
+	}
+	var unknownTreatment UnknownVATTreatmentError
+	if !errors.As(err, &unknownTreatment) {
+		t.Fatalf("VATSemanticsForTreatment() error type = %T, want UnknownVATTreatmentError", err)
+	}
+	if unknownTreatment.Treatment != "unknown" {
+		t.Fatalf("UnknownVATTreatmentError.Treatment = %q, want unknown", unknownTreatment.Treatment)
 	}
 }
 

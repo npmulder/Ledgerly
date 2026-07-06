@@ -27,6 +27,14 @@ tax:
     authority: Isle of Man Customs & Excise
     "2025-26":
       standard_rate: "0.20"
+    treatments:
+      domestic:
+        output_vat: true
+        vat_return_net_sales: true
+      reverse-charge-eu-b2b:
+        output_vat: false
+        vat_return_net_sales: true
+        reverse_charge_kind: b2b_services_eu
     reverse_charge:
       b2b_services_eu:
         article: Article 196, Directive 2006/112/EC

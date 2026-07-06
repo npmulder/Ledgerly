@@ -16,6 +16,8 @@ income per client/currency (attribution via invoicing read API joined on ledger 
 
 UK-regime boxes relevant to the mock: Box 1 (output VAT), Box 4 (input VAT), Box 6 (net sales); net position (reclaim in mock), due badge from filing calendar. Reverse-charge sales contribute £0 to Box 1 but appear in Box 6. Figures derive from VAT control account postings + invoice VAT treatments. v1 computes figures for manual filing with IoM Customs & Excise — no e-filing integration.
 
+**v1 input-VAT limitation:** Box 4 is not derived from expense recodes. Until receipts capture VAT portions, input VAT is entered as a manual quarterly adjustment entry posted to the ledger VAT control account; this entry is the only v1 source for reclaimable input VAT in the VAT return figures.
+
 ## Filing calendar
 
 `jurisdiction.FilingDeadlines(companyFacts)` resolved against identity data (incorporation date, year end 31 Mar): VAT return (quarterly) · annual return (incorporation anniversary + 1 month, IoM Companies Registry) · company income tax return (year end + 12 months + 1 day — required even at 0%) · personal tax return. Each with due-date badge; amber advisor insights as deadlines approach.

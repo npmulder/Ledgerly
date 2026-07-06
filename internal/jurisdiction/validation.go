@@ -159,6 +159,38 @@ func validateVAT(file string, vat VAT) error {
 			return fieldError(file, path+".invoice_wording", "invoice_wording", "must not be empty")
 		}
 	}
+	if err := validateVATTreatments(file, vat); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func validateVATTreatments(file string, vat VAT) error {
+	if len(vat.Treatments) == 0 {
+		return fieldError(file, "tax.vat.treatments", "treatments", "must contain at least one treatment")
+	}
+
+	keys := make([]string, 0, len(vat.Treatments))
+	for key := range vat.Treatments {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	for _, key := range keys {
+		path := "tax.vat.treatments." + key
+		if strings.TrimSpace(key) == "" {
+			return fieldError(file, path, "treatment", "must not be empty")
+		}
+		treatment := vat.Treatments[key]
+		reverseChargeKind := strings.TrimSpace(treatment.ReverseChargeKind)
+		if reverseChargeKind == "" {
+			continue
+		}
+		if _, ok := vat.ReverseCharge[reverseChargeKind]; !ok {
+			return fieldError(file, path+".reverse_charge_kind", "reverse_charge_kind", fmt.Sprintf("must reference configured reverse charge wording %q", reverseChargeKind))
+		}
+	}
 
 	return nil
 }

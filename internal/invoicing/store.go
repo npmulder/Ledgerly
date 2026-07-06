@@ -330,6 +330,24 @@ func (s Store) Invoice(ctx context.Context, tx db.Tx, id string) (Invoice, error
 	return invoice, nil
 }
 
+func (Store) InvoiceVATContextBySendEntryID(ctx context.Context, tx db.Tx, entryID int64) (InvoiceVATContext, error) {
+	var context InvoiceVATContext
+	err := tx.QueryRow(ctx, `
+SELECT id, vat_treatment
+FROM invoicing.invoices
+WHERE send_ledger_entry_id = $1`, entryID).Scan(
+		&context.InvoiceID,
+		&context.VATTreatment,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return InvoiceVATContext{}, ErrInvoiceNotFound
+	}
+	if err != nil {
+		return InvoiceVATContext{}, fmt.Errorf("invoicing: invoice VAT context for send entry %d: %w", entryID, err)
+	}
+	return context, nil
+}
+
 func (s Store) InvoiceForUpdate(ctx context.Context, tx db.Tx, id string) (Invoice, error) {
 	invoice, err := scanInvoiceRow(tx.QueryRow(ctx, selectInvoiceSQL()+"\nWHERE id = $1\nFOR UPDATE", id))
 	if err != nil {
