@@ -60,6 +60,21 @@ WHERE id = $1`, int64(id)))
 	return account, nil
 }
 
+func (Store) ListAccounts(ctx context.Context, tx db.Tx) ([]BankAccount, error) {
+	rows, err := tx.Query(ctx, accountSelectSQL()+`
+ORDER BY lower(name), currency, id`)
+	if err != nil {
+		return nil, fmt.Errorf("banking: list accounts: %w", err)
+	}
+	defer rows.Close()
+
+	accounts, err := pgx.CollectRows(rows, scanAccount)
+	if err != nil {
+		return nil, fmt.Errorf("banking: collect accounts: %w", err)
+	}
+	return accounts, nil
+}
+
 func (s Store) InsertAccount(ctx context.Context, tx db.Tx, input AccountInput, code ledger.AccountCode) (BankAccount, error) {
 	account, err := scanAccountRow(tx.QueryRow(ctx, `
 INSERT INTO bank_accounts (name, provider, currency, ledger_account_code)
@@ -701,6 +716,10 @@ func accountSelectSQL() string {
 	return `SELECT id, name, provider, currency, ledger_account_code, created_at
 FROM bank_accounts
 `
+}
+
+func scanAccount(row pgx.CollectableRow) (BankAccount, error) {
+	return scanAccountRow(row)
 }
 
 func transactionSelectSQL() string {

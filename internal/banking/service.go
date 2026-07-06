@@ -350,6 +350,13 @@ func (s *Service) RecentlyReconciled(ctx context.Context, limit int) ([]Reconcil
 	return s.store.RecentlyReconciled(ctx, s.pool, normalizeRecentlyReconciledLimit(limit))
 }
 
+func (s *Service) Accounts(ctx context.Context) ([]BankAccount, error) {
+	if s.pool == nil {
+		return nil, fmt.Errorf("banking: accounts requires pool")
+	}
+	return s.store.ListAccounts(ctx, s.pool)
+}
+
 func (s *Service) UnreconciledCount(ctx context.Context, accountID AccountID) (int, error) {
 	if s.pool == nil {
 		return 0, fmt.Errorf("banking: unreconciled count requires pool")

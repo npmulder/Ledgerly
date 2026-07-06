@@ -332,6 +332,115 @@ type DLAValidationProblem struct {
 	AdditionalProperties map[string]interface{} `json:"-"`
 }
 
+// DashboardCash defines model for DashboardCash.
+type DashboardCash struct {
+	Accounts []DashboardCashAccount `json:"accounts"`
+	TotalGbp DashboardMoney         `json:"total_gbp"`
+}
+
+// DashboardCashAccount defines model for DashboardCashAccount.
+type DashboardCashAccount struct {
+	Currency          string         `json:"currency"`
+	GbpBalance        DashboardMoney `json:"gbp_balance"`
+	Id                int64          `json:"id"`
+	LedgerAccountCode string         `json:"ledger_account_code"`
+	Name              string         `json:"name"`
+	NativeBalance     DashboardMoney `json:"native_balance"`
+	Provider          string         `json:"provider"`
+}
+
+// DashboardDLA defines model for DashboardDLA.
+type DashboardDLA struct {
+	Balance DashboardMoney `json:"balance"`
+	Status  string         `json:"status"`
+}
+
+// DashboardDividendHeadroom defines model for DashboardDividendHeadroom.
+type DashboardDividendHeadroom struct {
+	Available     DashboardMoney `json:"available"`
+	Distributable bool           `json:"distributable"`
+}
+
+// DashboardGreeting defines model for DashboardGreeting.
+type DashboardGreeting struct {
+	TradingName string `json:"trading_name"`
+	UserName    string `json:"user_name"`
+}
+
+// DashboardMoney defines model for DashboardMoney.
+type DashboardMoney struct {
+	Amount   int64  `json:"amount"`
+	Currency string `json:"currency"`
+}
+
+// DashboardOutstanding defines model for DashboardOutstanding.
+type DashboardOutstanding struct {
+	EarliestDueDate *openapi_types.Date `json:"earliest_due_date"`
+	TotalGbp        DashboardMoney      `json:"total_gbp"`
+	Totals          []DashboardMoney    `json:"totals"`
+}
+
+// DashboardRate defines model for DashboardRate.
+type DashboardRate struct {
+	FetchedAt time.Time          `json:"fetched_at"`
+	From      string             `json:"from"`
+	Rate      string             `json:"rate"`
+	RateDate  openapi_types.Date `json:"rate_date"`
+	Source    string             `json:"source"`
+	To        string             `json:"to"`
+}
+
+// DashboardRecentInvoice defines model for DashboardRecentInvoice.
+type DashboardRecentInvoice struct {
+	Amount      DashboardMoney `json:"amount"`
+	Client      string         `json:"client"`
+	DaysOverdue *int           `json:"days_overdue"`
+	Number      *string        `json:"number"`
+	Status      string         `json:"status"`
+}
+
+// DashboardReconcileAccount defines model for DashboardReconcileAccount.
+type DashboardReconcileAccount struct {
+	Currency          string `json:"currency"`
+	Id                int64  `json:"id"`
+	LedgerAccountCode string `json:"ledger_account_code"`
+	Name              string `json:"name"`
+	UnreconciledCount int    `json:"unreconciled_count"`
+}
+
+// DashboardReviewQueueItem defines model for DashboardReviewQueueItem.
+type DashboardReviewQueueItem struct {
+	Amount     DashboardMoney `json:"amount"`
+	Confidence float64        `json:"confidence"`
+	Kind       string         `json:"kind"`
+	Payee      string         `json:"payee"`
+}
+
+// DashboardSectionError defines model for DashboardSectionError.
+type DashboardSectionError struct {
+	Detail  string `json:"detail"`
+	Section string `json:"section"`
+}
+
+// DashboardSummary defines model for DashboardSummary.
+type DashboardSummary struct {
+	Cash             *DashboardCash             `json:"cash"`
+	DividendHeadroom *DashboardDividendHeadroom `json:"dividendHeadroom"`
+	Dla              *DashboardDLA              `json:"dla"`
+	Errors           []DashboardSectionError    `json:"errors"`
+	Greeting         *DashboardGreeting         `json:"greeting"`
+	Outstanding      *DashboardOutstanding      `json:"outstanding"`
+	Rate             *DashboardRate             `json:"rate"`
+	RecentInvoices   *[]DashboardRecentInvoice  `json:"recentInvoices"`
+	ToReconcile      *DashboardToReconcile      `json:"toReconcile"`
+}
+
+// DashboardToReconcile defines model for DashboardToReconcile.
+type DashboardToReconcile struct {
+	Accounts    []DashboardReconcileAccount `json:"accounts"`
+	ReviewQueue []DashboardReviewQueueItem  `json:"review_queue"`
+}
+
 // FieldError defines model for FieldError.
 type FieldError struct {
 	Detail  string `json:"detail"`
@@ -1481,6 +1590,9 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 
 // The interface specification for the client above.
 type ClientInterface interface {
+	// DashboardGetSummary request
+	DashboardGetSummary(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// DlaGetBalance request
 	DlaGetBalance(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -1615,6 +1727,18 @@ type ClientInterface interface {
 
 	// GetReadyz request
 	GetReadyz(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+}
+
+func (c *Client) DashboardGetSummary(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDashboardGetSummaryRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
 }
 
 func (c *Client) DlaGetBalance(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -2191,6 +2315,33 @@ func (c *Client) GetReadyz(ctx context.Context, reqEditors ...RequestEditorFn) (
 		return nil, err
 	}
 	return c.Client.Do(req)
+}
+
+// NewDashboardGetSummaryRequest generates requests for DashboardGetSummary
+func NewDashboardGetSummaryRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/dashboard/summary")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
 }
 
 // NewDlaGetBalanceRequest generates requests for DlaGetBalance
@@ -3832,6 +3983,9 @@ func WithBaseURL(baseURL string) ClientOption {
 
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
+	// DashboardGetSummaryWithResponse request
+	DashboardGetSummaryWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*DashboardGetSummaryResponse, error)
+
 	// DlaGetBalanceWithResponse request
 	DlaGetBalanceWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*DlaGetBalanceResponse, error)
 
@@ -3966,6 +4120,30 @@ type ClientWithResponsesInterface interface {
 
 	// GetReadyzWithResponse request
 	GetReadyzWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetReadyzResponse, error)
+}
+
+type DashboardGetSummaryResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON200                   *DashboardSummary
+	ApplicationproblemJSON401 *Problem
+	ApplicationproblemJSON503 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r DashboardGetSummaryResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DashboardGetSummaryResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
 }
 
 type DlaGetBalanceResponse struct {
@@ -4923,6 +5101,15 @@ func (r GetReadyzResponse) StatusCode() int {
 	return 0
 }
 
+// DashboardGetSummaryWithResponse request returning *DashboardGetSummaryResponse
+func (c *ClientWithResponses) DashboardGetSummaryWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*DashboardGetSummaryResponse, error) {
+	rsp, err := c.DashboardGetSummary(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDashboardGetSummaryResponse(rsp)
+}
+
 // DlaGetBalanceWithResponse request returning *DlaGetBalanceResponse
 func (c *ClientWithResponses) DlaGetBalanceWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*DlaGetBalanceResponse, error) {
 	rsp, err := c.DlaGetBalance(ctx, reqEditors...)
@@ -5344,6 +5531,46 @@ func (c *ClientWithResponses) GetReadyzWithResponse(ctx context.Context, reqEdit
 		return nil, err
 	}
 	return ParseGetReadyzResponse(rsp)
+}
+
+// ParseDashboardGetSummaryResponse parses an HTTP response from a DashboardGetSummaryWithResponse call
+func ParseDashboardGetSummaryResponse(rsp *http.Response) (*DashboardGetSummaryResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DashboardGetSummaryResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DashboardSummary
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
 }
 
 // ParseDlaGetBalanceResponse parses an HTTP response from a DlaGetBalanceWithResponse call

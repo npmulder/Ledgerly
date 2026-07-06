@@ -20,6 +20,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/npmulder/ledgerly/internal/app"
+	"github.com/npmulder/ledgerly/internal/banking"
+	"github.com/npmulder/ledgerly/internal/dividends"
 	"github.com/npmulder/ledgerly/internal/dla"
 	"github.com/npmulder/ledgerly/internal/identity"
 	"github.com/npmulder/ledgerly/internal/it/testdb"
@@ -73,7 +75,9 @@ type Harness struct {
 	BaseURL         string
 	Client          *nethttp.Client
 	DB              *pgxpool.Pool
+	BankingPool     *pgxpool.Pool
 	DLAPool         *pgxpool.Pool
+	DividendsPool   *pgxpool.Pool
 	LedgerPool      *pgxpool.Pool
 	Clock           *clock.FakeClock
 	Bus             *bus.Bus
@@ -93,7 +97,9 @@ func New(t testing.TB, opts Options) *Harness {
 	start := time.Now()
 	rawPool := testdb.Raw(t)
 	identityPool := testdb.AsModule(t, "identity")
+	bankingPool := testdb.AsModule(t, banking.ModuleName)
 	dlaPool := testdb.AsModule(t, dla.ModuleName)
+	dividendsPool := testdb.AsModule(t, dividends.ModuleName)
 	ledgerPool := testdb.AsModule(t, ledger.ModuleName)
 	moneyFXPool := testdb.AsModule(t, moneyfx.ModuleName)
 	invoicingPool := testdb.AsModule(t, "invoicing")
@@ -124,7 +130,9 @@ func New(t testing.TB, opts Options) *Harness {
 		Clock:               fakeClock,
 		HealthDB:            pgxPinger{pool: rawPool},
 		IdentityPool:        identityPool,
+		BankingPool:         bankingPool,
 		DLAPool:             dlaPool,
+		DividendsPool:       dividendsPool,
 		LedgerPool:          ledgerPool,
 		MoneyFXPool:         moneyFXPool,
 		InvoicingPool:       invoicingPool,
@@ -154,7 +162,9 @@ func New(t testing.TB, opts Options) *Harness {
 		BaseURL:         server.URL,
 		Client:          authenticatedClient(baseClient, cookie),
 		DB:              rawPool,
+		BankingPool:     bankingPool,
 		DLAPool:         dlaPool,
+		DividendsPool:   dividendsPool,
 		LedgerPool:      ledgerPool,
 		Clock:           fakeClock,
 		Bus:             built.Bus,

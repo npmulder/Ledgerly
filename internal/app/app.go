@@ -20,6 +20,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/lib/pq"
 
+	"github.com/npmulder/ledgerly/internal/banking"
+	"github.com/npmulder/ledgerly/internal/dividends"
 	"github.com/npmulder/ledgerly/internal/dla"
 	"github.com/npmulder/ledgerly/internal/identity"
 	"github.com/npmulder/ledgerly/internal/invoicing"
@@ -33,6 +35,7 @@ import (
 	"github.com/npmulder/ledgerly/internal/platform/db"
 	httpserver "github.com/npmulder/ledgerly/internal/platform/http"
 	"github.com/npmulder/ledgerly/internal/platform/mail"
+	"github.com/npmulder/ledgerly/internal/reports"
 	"github.com/npmulder/ledgerly/web"
 )
 
@@ -99,7 +102,9 @@ type Dependencies struct {
 	HealthCloser io.Closer
 
 	IdentityPool  *pgxpool.Pool
+	BankingPool   *pgxpool.Pool
 	DLAPool       *pgxpool.Pool
+	DividendsPool *pgxpool.Pool
 	LedgerPool    *pgxpool.Pool
 	MoneyFXPool   *pgxpool.Pool
 	InvoicingPool *pgxpool.Pool
@@ -140,7 +145,9 @@ type App struct {
 
 	HealthDB        httpserver.Pinger
 	IdentityPool    *pgxpool.Pool
+	BankingPool     *pgxpool.Pool
 	DLAPool         *pgxpool.Pool
+	DividendsPool   *pgxpool.Pool
 	LedgerPool      *pgxpool.Pool
 	MoneyFXPool     *pgxpool.Pool
 	InvoicingPool   *pgxpool.Pool
@@ -208,6 +215,14 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		return nil, err
 	}
 	invoicingPool, err := modulePool(ctx, cfg.Runtime.DatabaseURL, invoicing.ModuleName, deps.InvoicingPool, openPool, &closeFuncs)
+	if err != nil {
+		return nil, err
+	}
+	bankingPool, err := modulePool(ctx, cfg.Runtime.DatabaseURL, banking.ModuleName, deps.BankingPool, openPool, &closeFuncs)
+	if err != nil {
+		return nil, err
+	}
+	dividendsPool, err := modulePool(ctx, cfg.Runtime.DatabaseURL, dividends.ModuleName, deps.DividendsPool, openPool, &closeFuncs)
 	if err != nil {
 		return nil, err
 	}
@@ -317,6 +332,31 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 	modules = append(modules, moneyFXModule.HTTPModule())
 	fragments = append(fragments, moneyFXModule.OpenAPIFragment())
 
+	dashboardInvoicingService := invoicing.NewService(
+		invoicingPool,
+		invoicing.Store{},
+		invoicing.WithClock(clk),
+		invoicing.WithTodayRate(invoicingTodayRate(moneyFXModule)),
+		invoicing.WithRateLocker(invoicingMoneyFXLocker{module: moneyFXModule}),
+		invoicing.WithRateLockReader(invoicingMoneyFXLockReader{module: moneyFXModule}),
+		invoicing.WithLedger(ledgerService),
+		invoicing.WithEventBus(eventBus),
+	)
+	reportsService := reports.New(
+		ledgerService,
+		identityProfile,
+		dashboardInvoicingService,
+		reports.WithClock(clk),
+	)
+	dividendsService := dividends.New(
+		dividendsPool,
+		ledgerService,
+		reportsService,
+		identityProfile,
+		dividends.WithClock(clk),
+	)
+	bankingService := banking.NewService(bankingPool, ledgerService)
+
 	ledgerBuilder := buildLedgerModule
 	if deps.ModuleBuilders != nil && deps.ModuleBuilders[ledger.ModuleName] != nil {
 		ledgerBuilder = deps.ModuleBuilders[ledger.ModuleName]
@@ -390,6 +430,19 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 	modules = append(modules, invoicingModule.HTTPModule)
 	fragments = append(fragments, invoicingModule.OpenAPIFragment)
 
+	modules = append(modules, dashboardHTTPModule(dashboardDependencies{
+		clock:     clk,
+		ledger:    ledgerService,
+		moneyFX:   moneyFXModule,
+		invoicing: dashboardInvoicingService,
+		dla:       dlaService,
+		dividends: dividendsService,
+		banking:   bankingService,
+		identity:  identityProfile,
+		principal: identity.PrincipalFromContext,
+	}))
+	fragments = append(fragments, dashboardOpenAPIFragment())
+
 	staticAssets, err := loadStaticAssets(deps)
 	if err != nil {
 		return nil, err
@@ -426,7 +479,9 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		Clock:           clk,
 		HealthDB:        healthDB,
 		IdentityPool:    identityPool,
+		BankingPool:     bankingPool,
 		DLAPool:         dlaPool,
+		DividendsPool:   dividendsPool,
 		LedgerPool:      ledgerPool,
 		MoneyFXPool:     moneyFXPool,
 		InvoicingPool:   invoicingPool,
@@ -463,6 +518,7 @@ func OpenAPIDocument(version string) map[string]any {
 		ledger.OpenAPIFragment(),
 		dla.OpenAPIFragment(),
 		invoicing.OpenAPIFragment(),
+		dashboardOpenAPIFragment(),
 	)
 }
 
