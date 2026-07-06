@@ -5,6 +5,9 @@ export type ApiQueryKey = readonly [
 ];
 
 export const queryKeys = {
+  dashboard: {
+    summary: (): ApiQueryKey => ["dashboard", "summary", {}],
+  },
   dla: {
     balance: (): ApiQueryKey => ["dla", "balance", {}],
     ledger: (cursor: string | null = null): ApiQueryKey => [
