@@ -56,7 +56,9 @@ type ModuleDeps struct {
 	Logger        *slog.Logger
 	Clock         clock.Clock
 	Bus           *bus.Bus
+	MoneyFXPool   *pgxpool.Pool
 	InvoicingPool *pgxpool.Pool
+	TodayRate     invoicing.TodayRateFunc
 	LedgerPool    *pgxpool.Pool
 }
 
@@ -249,6 +251,16 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		jurisdictionOpenAPIFragment(),
 	}
 
+	moneyFXModule, err := moneyfx.New(moneyfx.Config{
+		Pool:  moneyFXPool,
+		Clock: clk,
+	})
+	if err != nil {
+		return nil, err
+	}
+	modules = append(modules, moneyFXModule.HTTPModule())
+	fragments = append(fragments, moneyFXModule.OpenAPIFragment())
+
 	ledgerBuilder := buildLedgerModule
 	if deps.ModuleBuilders != nil && deps.ModuleBuilders[ledger.ModuleName] != nil {
 		ledgerBuilder = deps.ModuleBuilders[ledger.ModuleName]
@@ -277,7 +289,9 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		Logger:        logger,
 		Clock:         clk,
 		Bus:           eventBus,
+		MoneyFXPool:   moneyFXPool,
 		InvoicingPool: invoicingPool,
+		TodayRate:     moneyFXModule.TodayRate,
 		LedgerPool:    ledgerPool,
 	})
 	if err != nil {
@@ -353,6 +367,7 @@ func OpenAPIDocument(version string) map[string]any {
 		version,
 		identity.OpenAPIFragment(),
 		jurisdictionOpenAPIFragment(),
+		moneyfx.OpenAPIFragment(),
 		ledger.OpenAPIFragment(),
 		invoicing.OpenAPIFragment(),
 	)
@@ -375,8 +390,9 @@ func buildLedgerModule(_ context.Context, deps ModuleDeps) (Module, error) {
 
 func buildInvoicingModule(_ context.Context, deps ModuleDeps) (Module, error) {
 	invoicingModule, err := invoicing.New(invoicing.Config{
-		Pool:  deps.InvoicingPool,
-		Clock: deps.Clock,
+		Pool:      deps.InvoicingPool,
+		Clock:     deps.Clock,
+		TodayRate: deps.TodayRate,
 	})
 	if err != nil {
 		return Module{}, err
