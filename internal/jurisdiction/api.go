@@ -169,7 +169,7 @@ func AdvisorRules() []AdvisorRule {
 	if pack == nil {
 		return nil
 	}
-	return append([]AdvisorRule(nil), pack.AdvisorRules...)
+	return cloneAdvisorRules(pack.AdvisorRules)
 }
 
 func activePackSnapshot() (*Pack, error) {

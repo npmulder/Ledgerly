@@ -711,10 +711,13 @@ director_loans:
 advisor_rules:
   - id: test-rule
     severity: amber
-    fact_query: test.facts
+    surfaces: [dashboard, reports]
+    fact_query: [balance]
     condition: balance > 0
     text_template: Review the test balance before filing
-    cta: open_test_review
+    cta:
+      label: Open test review
+      action: test.openReview
 `, s455, warn, remedy)
 
 	if err := jurisdiction.LoadActiveFromFS(fstest.MapFS{

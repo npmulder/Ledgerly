@@ -230,28 +230,64 @@ func validateAdvisorRules(file string, rules []AdvisorRule) error {
 	if len(rules) == 0 {
 		return fieldError(file, "advisor_rules", "advisor_rules", "must contain at least one rule")
 	}
+	seenIDs := make(map[string]struct{}, len(rules))
 	for index, rule := range rules {
 		path := fmt.Sprintf("advisor_rules[%d]", index)
-		if strings.TrimSpace(rule.ID) == "" {
+		ruleID := strings.TrimSpace(rule.ID)
+		if ruleID == "" {
 			return fieldError(file, path+".id", "id", "must not be empty")
 		}
-		if strings.TrimSpace(rule.Severity) == "" {
-			return fieldError(file, path+".severity", "severity", "must not be empty")
+		if _, ok := seenIDs[ruleID]; ok {
+			return fieldError(file, path+".id", "id", fmt.Sprintf("duplicate advisor rule id %q", ruleID))
 		}
-		if strings.TrimSpace(rule.FactQuery) == "" {
-			return fieldError(file, path+".fact_query", "fact_query", "must not be empty")
+		seenIDs[ruleID] = struct{}{}
+		switch strings.TrimSpace(rule.Severity) {
+		case "teal", "amber":
+		default:
+			return fieldError(file, path+".severity", "severity", "must be teal or amber")
+		}
+		if len(rule.Surfaces) == 0 {
+			return fieldError(file, path+".surfaces", "surfaces", "must contain at least one surface")
+		}
+		for surfaceIndex, surface := range rule.Surfaces {
+			if !validAdvisorSurface(strings.TrimSpace(surface)) {
+				return fieldError(file, fmt.Sprintf("%s.surfaces[%d]", path, surfaceIndex), "surface", "must be dashboard, invoices, banking, dla, dividends, or reports")
+			}
+		}
+		if len(rule.FactQuery) == 0 {
+			return fieldError(file, path+".fact_query", "fact_query", "must contain at least one fact key")
+		}
+		for factIndex, fact := range rule.FactQuery {
+			if strings.TrimSpace(fact) == "" {
+				return fieldError(file, fmt.Sprintf("%s.fact_query[%d]", path, factIndex), "fact_key", "must not be empty")
+			}
 		}
 		if strings.TrimSpace(rule.Condition) == "" {
 			return fieldError(file, path+".condition", "condition", "must not be empty")
 		}
+		if err := validateAdvisorConditionSyntax(rule.Condition); err != nil {
+			return fieldError(file, path+".condition", "condition", err.Error())
+		}
 		if strings.TrimSpace(rule.TextTemplate) == "" {
 			return fieldError(file, path+".text_template", "text_template", "must not be empty")
 		}
-		if strings.TrimSpace(rule.CTA) == "" {
-			return fieldError(file, path+".cta", "cta", "must not be empty")
+		if strings.TrimSpace(rule.CTA.Label) == "" {
+			return fieldError(file, path+".cta.label", "label", "must not be empty")
+		}
+		if strings.TrimSpace(rule.CTA.Action) == "" {
+			return fieldError(file, path+".cta.action", "action", "must not be empty")
 		}
 	}
 	return nil
+}
+
+func validAdvisorSurface(value string) bool {
+	switch value {
+	case "dashboard", "invoices", "banking", "dla", "dividends", "reports":
+		return true
+	default:
+		return false
+	}
 }
 
 func validateRate(file, path, field string, rate Rate) error {

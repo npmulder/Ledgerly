@@ -99,10 +99,17 @@ type OverdrawnPolicy struct {
 }
 
 type AdvisorRule struct {
-	ID           string `yaml:"id"`
-	Severity     string `yaml:"severity"`
-	FactQuery    string `yaml:"fact_query"`
-	Condition    string `yaml:"condition"`
-	TextTemplate string `yaml:"text_template"`
-	CTA          string `yaml:"cta"`
+	ID           string     `yaml:"id"`
+	Severity     string     `yaml:"severity"`
+	Surfaces     []string   `yaml:"surfaces"`
+	FactQuery    []string   `yaml:"fact_query"`
+	Condition    string     `yaml:"condition"`
+	TextTemplate string     `yaml:"text_template"`
+	CTA          AdvisorCTA `yaml:"cta"`
+}
+
+type AdvisorCTA struct {
+	Label  string         `yaml:"label"`
+	Action string         `yaml:"action"`
+	Params map[string]any `yaml:"params,omitempty"`
 }
