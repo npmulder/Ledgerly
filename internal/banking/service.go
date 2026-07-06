@@ -74,7 +74,7 @@ func NewService(pool *pgxpool.Pool, ledgerEnsurer LedgerAccountEnsurer, opts ...
 	for _, opt := range opts {
 		opt(service)
 	}
-	if service.payeeRuleAutoPostThreshold <= 0 {
+	if service.payeeRuleAutoPostThreshold < 0 {
 		service.payeeRuleAutoPostThreshold = DefaultPayeeRuleAutoPostThreshold
 	}
 	if len(service.dlaPersonalPatterns) == 0 {

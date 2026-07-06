@@ -385,6 +385,53 @@ WHERE txn_id = $1
 	return suggestion, nil
 }
 
+func (s Store) ClearActiveSuggestion(ctx context.Context, tx db.Tx, txnID TransactionID, actor string) error {
+	actor = strings.TrimSpace(actor)
+	if txnID <= 0 {
+		return fmt.Errorf("banking: suggestion transaction id is required: %w", ErrInvalidSuggestion)
+	}
+	if actor == "" {
+		return fmt.Errorf("banking: suggestion clear actor is required: %w", ErrInvalidSuggestion)
+	}
+	txn, err := s.TransactionForUpdate(ctx, tx, txnID)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE suggestions
+SET superseded_at = now()
+WHERE txn_id = $1
+	AND superseded_at IS NULL`,
+		int64(txnID),
+	); err != nil {
+		return fmt.Errorf("banking: clear active suggestion for transaction %d: %w", txnID, err)
+	}
+	if txn.State != TransactionStateSuggested {
+		return nil
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE transactions
+SET state = $2
+WHERE id = $1`,
+		int64(txn.ID),
+		string(TransactionStateUnreconciled),
+	); err != nil {
+		return fmt.Errorf("banking: return transaction %d to unreconciled: %w", txn.ID, err)
+	}
+	if _, err := scanStateChangeRow(tx.QueryRow(ctx, `
+INSERT INTO transaction_state_changes (txn_id, from_state, to_state, actor)
+VALUES ($1, $2, $3, $4)
+RETURNING id, txn_id, from_state, to_state, changed_at, actor`,
+		int64(txn.ID),
+		string(TransactionStateSuggested),
+		string(TransactionStateUnreconciled),
+		actor,
+	)); err != nil {
+		return fmt.Errorf("banking: record suggestion clear state change for transaction %d: %w", txn.ID, err)
+	}
+	return nil
+}
+
 func (Store) SuggestionsForTransaction(ctx context.Context, tx db.Tx, txnID TransactionID) ([]Suggestion, error) {
 	rows, err := tx.Query(ctx, suggestionSelectSQL()+`
 WHERE txn_id = $1

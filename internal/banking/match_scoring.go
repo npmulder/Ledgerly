@@ -237,7 +237,24 @@ func referenceContainsInvoiceNumber(reference string, number string) bool {
 	if normalizedReference == "" || normalizedNumber == "" {
 		return false
 	}
-	return strings.Contains(normalizedReference, normalizedNumber)
+	referenceTokens := strings.Fields(normalizedReference)
+	numberTokens := strings.Fields(normalizedNumber)
+	if len(numberTokens) == 0 || len(numberTokens) > len(referenceTokens) {
+		return false
+	}
+	for start := 0; start <= len(referenceTokens)-len(numberTokens); start++ {
+		matched := true
+		for offset, token := range numberTokens {
+			if referenceTokens[start+offset] != token {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) payeeRuleDecision(ctx context.Context, tx db.Tx, txn Transaction) (*suggestionDecision, error) {

@@ -2,6 +2,7 @@ package banking
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strconv"
 	"strings"
@@ -40,6 +41,12 @@ func TestInvoiceScorerTable(t *testing.T) {
 	}
 	if exact.score < 0.98 {
 		t.Fatalf("exact score = %.3f, want >= 0.98", exact.score)
+	}
+	if referenceContainsInvoiceNumber("Payment INV-10", "INV-1") {
+		t.Fatal("referenceContainsInvoiceNumber() matched INV-1 inside INV-10")
+	}
+	if !referenceContainsInvoiceNumber("Payment INV-1", "INV-1") {
+		t.Fatal("referenceContainsInvoiceNumber() did not match exact invoice token sequence")
 	}
 
 	amountOnly := base
@@ -196,6 +203,18 @@ func TestPayeeRuleLearningAndImportMatchIncrementsTimesApplied(t *testing.T) {
 	assertLastEngineRun(t, ctx, pool, MatchEngineTriggerImportCompletion, []TransactionID{secondTxn})
 }
 
+func TestPayeeRuleAutoPostThresholdZeroDisablesAutoPost(t *testing.T) {
+	service := NewService(nil, nil, WithPayeeRuleAutoPostThreshold(0))
+	input := payeeRuleSuggestionInput(1, PayeeRule{
+		Matcher:      "saas vendor ltd",
+		AccountCode:  "6200-software",
+		TimesApplied: 99,
+	}, service.payeeRuleAutoPostThreshold)
+	if input.AutoPostable {
+		t.Fatalf("auto_postable = true, want false when threshold is disabled")
+	}
+}
+
 func TestMatchEngineInvoiceSentManualRefreshPriorityAndDeterminism(t *testing.T) {
 	pool, ledgerPool := temporaryMigratedBankingDatabase(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -275,6 +294,129 @@ func TestMatchEngineInvoiceSentManualRefreshPriorityAndDeterminism(t *testing.T)
 	}
 }
 
+func TestInvoiceSentUsesPublisherTransactionRollback(t *testing.T) {
+	pool, ledgerPool := temporaryMigratedBankingDatabase(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	candidates := &mutableInvoiceCandidates{}
+	service := NewService(pool, ledger.New(ledgerPool), WithInvoiceCandidates(candidates))
+	account, err := service.CreateAccount(ctx, AccountInput{
+		Name:     "Revolut GBP",
+		Provider: ProviderRevolut,
+		Currency: "GBP",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount() error = %v", err)
+	}
+	txnID := importSingleBankingTxn(t, ctx, pool, service, account.ID, revolutTestTxn{
+		Date:      time.Date(2026, 7, 21, 9, 0, 0, 0, time.UTC),
+		ID:        "invoice-sent-rollback",
+		Payee:     "ACME Consulting",
+		Reference: "Payment INV-2026-21",
+		Amount:    money.Money{Amount: 210000, Currency: "GBP"},
+	})
+	candidates.items = []InvoiceMatchCandidate{{
+		InvoiceID:  "invoice-21",
+		Number:     "INV-2026-21",
+		ClientName: "ACME Consulting",
+		IssueDate:  time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC),
+		DueDate:    time.Date(2026, 7, 31, 0, 0, 0, 0, time.UTC),
+		TermsDays:  30,
+		Amount:     money.Money{Amount: 210000, Currency: "GBP"},
+		Status:     "sent",
+	}}
+
+	eventBus := bus.New()
+	service.SubscribeEvents(eventBus)
+	forced := errors.New("force rollback")
+	eventBus.Subscribe(invoicing.InvoiceSentName, func(context.Context, db.Tx, bus.Event) error {
+		return forced
+	})
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin publisher transaction: %v", err)
+	}
+	err = eventBus.Publish(ctx, tx, invoicing.InvoiceSent{InvoiceID: "invoice-21"})
+	if !errors.Is(err, forced) {
+		t.Fatalf("Publish() error = %v, want forced rollback", err)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatalf("rollback publisher transaction: %v", err)
+	}
+
+	history, err := service.SuggestionsForTransaction(ctx, txnID)
+	if err != nil {
+		t.Fatalf("SuggestionsForTransaction() error = %v", err)
+	}
+	if len(history) != 0 {
+		t.Fatalf("suggestions after rolled back InvoiceSent = %#v, want none", history)
+	}
+	var invoiceSentRuns int
+	if err := pool.QueryRow(ctx, `
+SELECT count(*)::integer
+FROM match_engine_runs
+WHERE trigger = 'invoicing.InvoiceSent'`).Scan(&invoiceSentRuns); err != nil {
+		t.Fatalf("count InvoiceSent runs: %v", err)
+	}
+	if invoiceSentRuns != 0 {
+		t.Fatalf("InvoiceSent runs after rollback = %d, want 0", invoiceSentRuns)
+	}
+}
+
+func TestManualRefreshClearsStaleSuggestionWhenDecisionDisappears(t *testing.T) {
+	pool, ledgerPool := temporaryMigratedBankingDatabase(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	candidates := &mutableInvoiceCandidates{}
+	service := NewService(pool, ledger.New(ledgerPool), WithInvoiceCandidates(candidates))
+	account, err := service.CreateAccount(ctx, AccountInput{
+		Name:     "Revolut GBP",
+		Provider: ProviderRevolut,
+		Currency: "GBP",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount() error = %v", err)
+	}
+	txnID := importSingleBankingTxn(t, ctx, pool, service, account.ID, revolutTestTxn{
+		Date:      time.Date(2026, 7, 22, 9, 0, 0, 0, time.UTC),
+		ID:        "stale-suggestion-clear",
+		Payee:     "ACME Consulting",
+		Reference: "Payment INV-2026-22",
+		Amount:    money.Money{Amount: 220000, Currency: "GBP"},
+	})
+	candidates.items = []InvoiceMatchCandidate{{
+		InvoiceID:  "invoice-22",
+		Number:     "INV-2026-22",
+		ClientName: "ACME Consulting",
+		IssueDate:  time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC),
+		DueDate:    time.Date(2026, 7, 31, 0, 0, 0, 0, time.UTC),
+		TermsDays:  30,
+		Amount:     money.Money{Amount: 220000, Currency: "GBP"},
+		Status:     "sent",
+	}}
+	if _, err := service.ManualRefresh(ctx); err != nil {
+		t.Fatalf("ManualRefresh() with invoice candidate error = %v", err)
+	}
+	if active := activeSuggestion(t, mustSuggestions(t, ctx, service, txnID)); active.Kind != SuggestionKindInvoiceMatch {
+		t.Fatalf("active suggestion kind = %q, want invoice-match", active.Kind)
+	}
+	assertStoredTransactionState(t, ctx, pool, txnID, TransactionStateSuggested)
+
+	candidates.items = nil
+	if _, err := service.ManualRefresh(ctx); err != nil {
+		t.Fatalf("ManualRefresh() without candidate error = %v", err)
+	}
+	history := mustSuggestions(t, ctx, service, txnID)
+	for _, suggestion := range history {
+		if suggestion.SupersededAt == nil {
+			t.Fatalf("active suggestion after candidate disappeared = %#v, want none", suggestion)
+		}
+	}
+	assertStoredTransactionState(t, ctx, pool, txnID, TransactionStateUnreconciled)
+}
+
 type staticDirectorNames []string
 
 func (s staticDirectorNames) DirectorNames(context.Context) ([]string, error) {
@@ -319,6 +461,15 @@ func activeSuggestion(t *testing.T, suggestions []Suggestion) Suggestion {
 		t.Fatalf("active suggestions = %#v, want one active", active)
 	}
 	return active[0]
+}
+
+func mustSuggestions(t *testing.T, ctx context.Context, service *Service, txnID TransactionID) []Suggestion {
+	t.Helper()
+	suggestions, err := service.SuggestionsForTransaction(ctx, txnID)
+	if err != nil {
+		t.Fatalf("SuggestionsForTransaction(%d) error = %v", txnID, err)
+	}
+	return suggestions
 }
 
 func assertLastEngineRun(t *testing.T, ctx context.Context, pool queryRower, trigger MatchEngineTrigger, ids []TransactionID) {

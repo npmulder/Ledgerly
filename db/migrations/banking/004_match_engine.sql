@@ -15,6 +15,46 @@ CREATE INDEX IF NOT EXISTS match_engine_runs_trigger_created_idx
 ALTER TABLE banking.suggestions
 	ADD COLUMN IF NOT EXISTS auto_postable boolean NOT NULL DEFAULT false;
 
+WITH duplicate_payee_rules AS (
+	SELECT
+		matcher,
+		match_mode,
+		account_code,
+		min(id) AS keep_id,
+		sum(times_applied)::integer AS times_applied,
+		max(last_applied_at) AS last_applied_at,
+		bool_or(created_from = 'recode') AS has_recode
+	FROM banking.payee_rules
+	GROUP BY matcher, match_mode, account_code
+	HAVING count(*) > 1
+)
+UPDATE banking.payee_rules p
+SET times_applied = d.times_applied,
+	last_applied_at = d.last_applied_at,
+	created_from = CASE
+		WHEN d.has_recode THEN 'recode'::banking.payee_rule_created_from
+		ELSE p.created_from
+	END
+FROM duplicate_payee_rules d
+WHERE p.id = d.keep_id;
+
+WITH duplicate_payee_rules AS (
+	SELECT
+		matcher,
+		match_mode,
+		account_code,
+		min(id) AS keep_id
+	FROM banking.payee_rules
+	GROUP BY matcher, match_mode, account_code
+	HAVING count(*) > 1
+)
+DELETE FROM banking.payee_rules p
+USING duplicate_payee_rules d
+WHERE p.matcher = d.matcher
+	AND p.match_mode = d.match_mode
+	AND p.account_code = d.account_code
+	AND p.id <> d.keep_id;
+
 CREATE UNIQUE INDEX IF NOT EXISTS payee_rules_matcher_mode_account_uidx
 	ON banking.payee_rules (matcher, match_mode, account_code);
 

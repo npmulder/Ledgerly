@@ -14,18 +14,25 @@ func (s *Service) SubscribeEvents(eventBus *bus.Bus) {
 	if s == nil || eventBus == nil {
 		return
 	}
-	eventBus.Subscribe(invoicing.InvoiceSentName, func(ctx context.Context, _ db.Tx, evt bus.Event) error {
+	eventBus.Subscribe(invoicing.InvoiceSentName, func(ctx context.Context, tx db.Tx, evt bus.Event) error {
 		sent, err := invoiceSentEvent(evt)
 		if err != nil {
 			return err
 		}
-		_, err = s.HandleInvoiceSent(ctx, sent)
+		_, err = s.handleInvoiceSentTx(ctx, tx, sent)
 		return err
 	})
 }
 
 func (s *Service) HandleInvoiceSent(ctx context.Context, evt invoicing.InvoiceSent) (MatchEngineRun, error) {
 	return s.RunMatchEngine(ctx, MatchEngineTriggerInvoiceSent, nil)
+}
+
+func (s *Service) handleInvoiceSentTx(ctx context.Context, tx db.Tx, evt invoicing.InvoiceSent) (MatchEngineRun, error) {
+	if tx == nil {
+		return s.HandleInvoiceSent(ctx, evt)
+	}
+	return s.runMatchEngineTx(ctx, tx, MatchEngineTriggerInvoiceSent, nil)
 }
 
 func (s *Service) ManualRefresh(ctx context.Context) (MatchEngineRun, error) {
@@ -91,6 +98,9 @@ func (s *Service) runMatchEngineTx(ctx context.Context, tx db.Tx, trigger MatchE
 			return MatchEngineRun{}, err
 		}
 		if decision == nil {
+			if err := s.store.ClearActiveSuggestion(ctx, tx, txn.ID, matchEngineCreatedBy(run.ID)); err != nil {
+				return MatchEngineRun{}, err
+			}
 			continue
 		}
 		input := decision.input
