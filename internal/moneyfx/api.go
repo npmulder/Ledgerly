@@ -9,6 +9,7 @@ import (
 
 	"github.com/npmulder/ledgerly/internal/moneyfx/money"
 	"github.com/npmulder/ledgerly/internal/platform/clock"
+	"github.com/npmulder/ledgerly/internal/platform/db"
 	httpserver "github.com/npmulder/ledgerly/internal/platform/http"
 )
 
@@ -41,6 +42,21 @@ func (m *Module) RateOn(ctx context.Context, date time.Time, from string, to str
 // TodayRate returns the latest stored rate and lookup timestamp.
 func (m *Module) TodayRate(ctx context.Context, from string, to string) (Rate, time.Time, error) {
 	return m.service.TodayRate(ctx, from, to)
+}
+
+// Lock resolves and appends an immutable ECB rate lock inside tx.
+func (m *Module) Lock(ctx context.Context, tx db.Tx, ref LockRef, from string, to string, date time.Time) (RateLock, error) {
+	return m.service.Lock(ctx, tx, ref, from, to, date)
+}
+
+// GetLock returns a stored immutable rate lock by id.
+func (m *Module) GetLock(ctx context.Context, id LockID) (RateLock, error) {
+	return m.service.GetLock(ctx, id)
+}
+
+// ActiveLockFor returns the newest lock row for ref.
+func (m *Module) ActiveLockFor(ctx context.Context, ref LockRef) (RateLock, error) {
+	return m.service.ActiveLockFor(ctx, ref)
 }
 
 // ToGBP converts m to presentational GBP using the rate for date.
