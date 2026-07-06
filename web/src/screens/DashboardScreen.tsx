@@ -26,11 +26,11 @@ import { queryKeys } from "@/api/queryKeys";
 import type { BadgeVariant } from "@/components";
 import {
   Badge,
+  AdvisorPanel,
   Button,
   Card,
   EmptyState,
   PageTitle,
-  Panel,
   StatCard,
   Table,
   TableBody,
@@ -93,8 +93,13 @@ export function DashboardScreen() {
       });
     },
     onSuccess: (invoice) => {
-      queryClient.setQueryData(queryKeys.invoicing.invoice(invoice.id), invoice);
-      queryClient.invalidateQueries({ queryKey: queryKeys.invoicing.invoices() });
+      queryClient.setQueryData(
+        queryKeys.invoicing.invoice(invoice.id),
+        invoice,
+      );
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.invoicing.invoices(),
+      });
       navigate(`/invoices/${encodeURIComponent(invoice.id)}`);
     },
   });
@@ -168,8 +173,11 @@ export function DashboardScreen() {
               <RecentInvoices invoices={summary.recentInvoices} />
               <ToReconcilePreview toReconcile={summary.toReconcile} />
             </div>
-            <aside className="dashboard-side-stack" aria-label="Dashboard side panel">
-              <AdvisorPlaceholder />
+            <aside
+              className="dashboard-side-stack"
+              aria-label="Dashboard side panel"
+            >
+              <AdvisorPanel surface="dashboard" />
               <RateCard rate={summary.rate} today={today} />
             </aside>
           </section>
@@ -238,9 +246,7 @@ function DLAStat({ dla }: { readonly dla: DashboardDLA | null }) {
   return (
     <StatCard
       className={
-        isOverdrawn
-          ? "dashboard-stat-card--amber"
-          : "dashboard-stat-card--teal"
+        isOverdrawn ? "dashboard-stat-card--amber" : "dashboard-stat-card--teal"
       }
       label="Director's loan"
       secondary={isOverdrawn ? "Overdrawn" : "Company owes you"}
@@ -421,23 +427,6 @@ function ReviewQueueLink({
   );
 }
 
-function AdvisorPlaceholder() {
-  return (
-    <Panel
-      aria-label="Advisor panel placeholder"
-      className="dashboard-advisor-placeholder"
-      eyebrow="Advisor"
-      title="Isle of Man rules"
-      variant="advisor"
-    >
-      <div aria-hidden="true" className="dashboard-advisor-placeholder__bar" />
-      <div aria-hidden="true" className="dashboard-advisor-placeholder__bar" />
-      <div aria-hidden="true" className="dashboard-advisor-placeholder__bar" />
-      <div aria-hidden="true" className="dashboard-advisor-placeholder__bar" />
-    </Panel>
-  );
-}
-
 function RateCard({
   rate,
   today,
@@ -491,16 +480,15 @@ function useToday() {
     function scheduleMidnightRefresh() {
       const now = new Date();
       const nextUTCDate = new Date(
-        Date.UTC(
-          now.getUTCFullYear(),
-          now.getUTCMonth(),
-          now.getUTCDate() + 1,
-        ),
+        Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1),
       );
-      timerID = window.setTimeout(() => {
-        setToday(new Date());
-        scheduleMidnightRefresh();
-      }, nextUTCDate.getTime() - now.getTime() + 1000);
+      timerID = window.setTimeout(
+        () => {
+          setToday(new Date());
+          scheduleMidnightRefresh();
+        },
+        nextUTCDate.getTime() - now.getTime() + 1000,
+      );
     }
 
     scheduleMidnightRefresh();

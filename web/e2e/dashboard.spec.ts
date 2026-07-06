@@ -74,6 +74,28 @@ test("renders seeded dashboard, raises retainer invoice, and follows list links"
   await expect(page.getByRole("heading", { name: "Banking" })).toBeVisible();
 });
 
+test("dashboard advisor refresh pulls a newly seeded insight", async ({
+  page,
+}) => {
+  const state = dashboardState();
+  await page.clock.setFixedTime(new Date("2026-07-06T09:00:00Z"));
+  await mockDashboardApi(page, state);
+
+  await page.goto("/");
+
+  const panel = page.getByRole("region", { name: "Advisor panel" });
+  await expect(panel).toContainText("No insights — all caught up");
+
+  await panel.getByRole("button", { name: "Advisor actions" }).click();
+  await page.getByRole("menuitem", { name: "Refresh insights" }).click();
+
+  await expect(panel).toContainText("Freshly seeded dashboard insight");
+  await page.screenshot({
+    fullPage: true,
+    path: "test-results/dashboard-advisor-refresh.png",
+  });
+});
+
 async function mockDashboardApi(
   page: Parameters<typeof test>[0]["page"],
   state: DashboardState,
@@ -107,6 +129,34 @@ async function mockDashboardApi(
       await fulfillJson(route, { clients: clientsFixture() });
       return;
     }
+    if (path === "/api/advisor/insights" && request.method() === "GET") {
+      const surface = new URL(request.url()).searchParams.get("surface");
+      await fulfillJson(route, {
+        insights:
+          surface === "dashboard" || surface === "banking"
+            ? activeAdvisorInsights(state, surface)
+            : [],
+      });
+      return;
+    }
+    if (
+      path.startsWith("/api/advisor/insights/") &&
+      path.endsWith("/dismiss") &&
+      request.method() === "POST"
+    ) {
+      const key = decodeURIComponent(path.split("/").at(-2) ?? "");
+      state.dismissedAdvisorKeys.add(key);
+      await fulfillJson(route, undefined, 204);
+      return;
+    }
+    if (path === "/api/advisor/refresh" && request.method() === "POST") {
+      if (!state.refreshSeeded) {
+        state.refreshSeeded = true;
+        state.advisorInsights.push(dashboardAdvisorInsight());
+      }
+      await fulfillJson(route, advisorRefreshResponse());
+      return;
+    }
     if (path === "/api/invoicing/invoices" && request.method() === "POST") {
       state.createRequests.push(JSON.parse(request.postData() ?? "{}"));
       const draft = invoiceFixture({ id: "inv_retainer", lines: [] });
@@ -117,7 +167,10 @@ async function mockDashboardApi(
     if (path.startsWith("/api/invoicing/invoices/")) {
       const invoiceID = decodeURIComponent(path.split("/").at(-1) ?? "");
       if (request.method() === "GET") {
-        await fulfillJson(route, state.invoices.get(invoiceID) ?? invoiceFixture());
+        await fulfillJson(
+          route,
+          state.invoices.get(invoiceID) ?? invoiceFixture(),
+        );
         return;
       }
       if (request.method() === "PATCH") {
@@ -141,18 +194,75 @@ async function mockDashboardApi(
 }
 
 type DashboardState = {
+  advisorInsights: DashboardAdvisorInsight[];
   createRequests: unknown[];
+  dismissedAdvisorKeys: Set<string>;
   invoices: Map<string, InvoicingInvoice>;
   patchRequests: InvoicingInvoicePatch[];
+  refreshSeeded: boolean;
 };
 
 function dashboardState(): DashboardState {
   const invoices = new Map<string, InvoicingInvoice>();
   invoices.set("inv_2026_07", invoiceFixture({ id: "inv_2026_07" }));
   return {
+    advisorInsights: [],
     createRequests: [],
+    dismissedAdvisorKeys: new Set(),
     invoices,
     patchRequests: [],
+    refreshSeeded: false,
+  };
+}
+
+type DashboardAdvisorInsight = {
+  bindings: Record<string, unknown>;
+  created_at: string;
+  cta: { action: string; label: string; params?: Record<string, unknown> };
+  key: string;
+  rendered_text: string;
+  rule_id: string;
+  severity: "amber" | "teal";
+  surfaces: string[];
+};
+
+function activeAdvisorInsights(state: DashboardState, surface: string | null) {
+  return state.advisorInsights.filter(
+    (insight) =>
+      !state.dismissedAdvisorKeys.has(insight.key) &&
+      (!surface || insight.surfaces.includes(surface)),
+  );
+}
+
+function dashboardAdvisorInsight(): DashboardAdvisorInsight {
+  return {
+    bindings: {},
+    created_at: "2026-07-06T09:00:00Z",
+    cta: {
+      action: "navigate:/reports",
+      label: "Open reports",
+    },
+    key: "dashboard-refresh-insight",
+    rendered_text: "Freshly seeded dashboard insight",
+    rule_id: "filing_deadline_window",
+    severity: "amber",
+    surfaces: ["dashboard"],
+  };
+}
+
+function advisorRefreshResponse() {
+  return {
+    run: {
+      duration_ms: 1,
+      finished_at: "2026-07-06T09:00:01Z",
+      id: 1,
+      insights_created: 1,
+      insights_resolved: 0,
+      insights_superseded: 0,
+      started_at: "2026-07-06T09:00:00Z",
+      trigger: "manual.RefreshNow",
+      warnings: [],
+    },
   };
 }
 
@@ -390,7 +500,7 @@ function identityProfile() {
 
 async function fulfillJson(route: Route, body: unknown, status = 200) {
   await route.fulfill({
-    body: JSON.stringify(body),
+    body: status === 204 ? "" : JSON.stringify(body),
     contentType: "application/json",
     status,
   });

@@ -4,9 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/npmulder/ledgerly/internal/platform/db"
 )
@@ -15,6 +18,9 @@ const (
 	ResolutionSuperseded     = "superseded"
 	ResolutionNoLongerFiring = "no_longer_firing"
 )
+
+// ErrInsightNotFound reports that an insight key is not currently active.
+var ErrInsightNotFound = errors.New("advisor: insight not found")
 
 // Store owns advisor persistence. SQL qualifies advisor objects so callers can
 // share transactions from any module pool.
@@ -102,14 +108,26 @@ func (Store) Dismiss(ctx context.Context, tx db.Tx, key InsightKey, dismissedAt 
 	if dismissedAt.IsZero() {
 		dismissedAt = time.Now().UTC()
 	}
-	if _, err := tx.Exec(ctx, `
+	var dismissedKey string
+	if err := tx.QueryRow(ctx, `
+WITH active AS (
+	SELECT key
+	FROM advisor.insights
+	WHERE key = $1
+		AND resolved_at IS NULL
+)
 INSERT INTO advisor.dismissals (insight_key, dismissed_at)
-VALUES ($1, $2)
+SELECT key, $2
+FROM active
 ON CONFLICT (insight_key) DO UPDATE
-SET dismissed_at = EXCLUDED.dismissed_at`,
+SET dismissed_at = EXCLUDED.dismissed_at
+RETURNING insight_key`,
 		string(key),
 		dismissedAt.UTC(),
-	); err != nil {
+	).Scan(&dismissedKey); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrInsightNotFound
+		}
 		return fmt.Errorf("advisor: dismiss insight %s: %w", key, err)
 	}
 	return nil
@@ -136,7 +154,13 @@ LEFT JOIN advisor.dismissals d ON d.insight_key = i.key
 WHERE i.resolved_at IS NULL
 	AND d.insight_key IS NULL
 	AND ($1 = '' OR $1 = ANY(i.surfaces))
-ORDER BY i.created_at, i.key`,
+ORDER BY CASE i.severity
+	WHEN 'amber' THEN 0
+	WHEN 'teal' THEN 1
+	ELSE 2
+END,
+	i.created_at DESC,
+	i.key`,
 		string(surface),
 	)
 	if err != nil {

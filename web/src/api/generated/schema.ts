@@ -4,6 +4,66 @@
  */
 
 export interface paths {
+    "/api/advisor/insights": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List active advisor insights
+         * @description Returns active, undismissed advisor insights for an optional surface, ordered amber first, then teal, then newest first.
+         */
+        get: operations["advisorListInsights"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/advisor/insights/{key}/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dismiss an advisor insight
+         * @description Suppresses an active advisor insight until its underlying facts change and produce a different key.
+         */
+        post: operations["advisorDismissInsight"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/advisor/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Refresh advisor insights now
+         * @description Runs the advisor RefreshNow evaluator synchronously and returns the recorded evaluation run.
+         */
+        post: operations["advisorRefresh"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/banking/accounts": {
         parameters: {
             query?: never;
@@ -1076,6 +1136,56 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        AdvisorCTA: {
+            action: string;
+            label: string;
+            params?: {
+                [key: string]: unknown;
+            };
+        };
+        AdvisorEvaluationRun: {
+            /** Format: int64 */
+            duration_ms: number;
+            error?: string;
+            /** Format: date-time */
+            finished_at: string;
+            /** Format: int64 */
+            id: number;
+            insights_created: number;
+            insights_resolved: number;
+            insights_superseded: number;
+            /** Format: date-time */
+            started_at: string;
+            trigger: string;
+            warnings: components["schemas"]["AdvisorWarning"][];
+        };
+        AdvisorInsight: {
+            bindings: {
+                [key: string]: unknown;
+            };
+            /** Format: date-time */
+            created_at: string;
+            cta: components["schemas"]["AdvisorCTA"];
+            key: string;
+            rendered_text: string;
+            rule_id: string;
+            severity: components["schemas"]["AdvisorSeverity"];
+            surfaces: components["schemas"]["AdvisorSurface"][];
+        };
+        AdvisorInsightsResponse: {
+            insights: components["schemas"]["AdvisorInsight"][];
+        };
+        AdvisorRefreshResponse: {
+            run: components["schemas"]["AdvisorEvaluationRun"];
+        };
+        /** @enum {string} */
+        AdvisorSeverity: "amber" | "teal";
+        /** @enum {string} */
+        AdvisorSurface: "dashboard" | "invoices" | "banking" | "dla" | "dividends" | "reports";
+        AdvisorWarning: {
+            message: string;
+            rule_id: string;
+        };
         BankDetails: {
             bank_name: string;
             bic: string;
@@ -2039,6 +2149,124 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    advisorListInsights: {
+        parameters: {
+            query?: {
+                /** @description Advisor display surface. */
+                surface?: "dashboard" | "invoices" | "banking" | "dla" | "dividends" | "reports";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Active advisor insights */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdvisorInsightsResponse"];
+                };
+            };
+            /** @description Invalid advisor query */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    advisorDismissInsight: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Advisor insight key. */
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Insight dismissed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid advisor dismiss request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Insight was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    advisorRefresh: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Advisor evaluation run */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdvisorRefreshResponse"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     bankingListAccounts: {
         parameters: {
             query?: never;

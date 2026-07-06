@@ -572,6 +572,10 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 	}
 	closeFuncs = append(closeFuncs, stopAdvisorListener)
 
+	advisorHTTPModule := advisor.NewHTTPModule(advisorService)
+	modules = append(modules, advisorHTTPModule.HTTPModule())
+	fragments = append(fragments, advisorHTTPModule.OpenAPIFragment())
+
 	modules = append(modules, dashboardHTTPModule(dashboardDependencies{
 		clock:     clk,
 		ledger:    ledgerService,
@@ -666,6 +670,7 @@ func OpenAPIDocument(version string) map[string]any {
 		invoicing.OpenAPIFragment(),
 		reports.OpenAPIFragment(),
 		dividends.OpenAPIFragment(),
+		advisor.OpenAPIFragment(),
 		dashboardOpenAPIFragment(),
 	)
 }

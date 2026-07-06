@@ -1,5 +1,10 @@
-import { PageTitle } from "@/components";
+import { AdvisorStrip, PageTitle } from "@/components";
 
 export function BankingScreen() {
-  return <PageTitle>Banking</PageTitle>;
+  return (
+    <div className="banking-screen">
+      <PageTitle>Banking</PageTitle>
+      <AdvisorStrip surface="banking" />
+    </div>
+  );
 }

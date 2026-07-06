@@ -12,6 +12,13 @@ export type InvoicesQueryParams = {
 };
 
 export const queryKeys = {
+  advisor: {
+    insights: (surface: string): ApiQueryKey => [
+      "advisor",
+      "insights",
+      { surface },
+    ],
+  },
   dashboard: {
     summary: (): ApiQueryKey => ["dashboard", "summary", {}],
   },
