@@ -13,17 +13,24 @@ import (
 
 	"github.com/npmulder/ledgerly/internal/ledger"
 	"github.com/npmulder/ledgerly/internal/moneyfx/money"
+	"github.com/npmulder/ledgerly/internal/platform/bus"
 )
 
 type Service struct {
 	pool                       *pgxpool.Pool
 	ledger                     LedgerAccountEnsurer
+	ledgerJournal              LedgerJournal
+	moneyFX                    MoneyFX
+	invoices                   InvoiceSettler
+	dla                        DLAFileDrawer
+	eventBus                   *bus.Bus
 	store                      Store
 	parsers                    map[Provider]StatementParser
 	invoiceCandidates          InvoiceCandidateSource
 	directorNames              DirectorNameSource
 	payeeRuleAutoPostThreshold int
 	dlaPersonalPatterns        []string
+	reconciliationHooks        ReconciliationCommandHooks
 }
 
 type ServiceOption func(*Service)
@@ -62,10 +69,49 @@ func WithDLAPersonalPatterns(patterns []string) ServiceOption {
 	}
 }
 
+func WithLedgerJournal(journal LedgerJournal) ServiceOption {
+	return func(s *Service) {
+		s.ledgerJournal = journal
+	}
+}
+
+func WithMoneyFX(fx MoneyFX) ServiceOption {
+	return func(s *Service) {
+		s.moneyFX = fx
+	}
+}
+
+func WithInvoicingSettler(settler InvoiceSettler) ServiceOption {
+	return func(s *Service) {
+		s.invoices = settler
+	}
+}
+
+func WithDLAFileDrawer(drawer DLAFileDrawer) ServiceOption {
+	return func(s *Service) {
+		s.dla = drawer
+	}
+}
+
+func WithEventBus(eventBus *bus.Bus) ServiceOption {
+	return func(s *Service) {
+		s.eventBus = eventBus
+	}
+}
+
+func WithReconciliationCommandHooks(hooks ReconciliationCommandHooks) ServiceOption {
+	return func(s *Service) {
+		s.reconciliationHooks = hooks
+	}
+}
+
 func NewService(pool *pgxpool.Pool, ledgerEnsurer LedgerAccountEnsurer, opts ...ServiceOption) *Service {
+	ledgerJournal, _ := ledgerEnsurer.(LedgerJournal)
 	service := &Service{
 		pool:                       pool,
 		ledger:                     ledgerEnsurer,
+		ledgerJournal:              ledgerJournal,
+		eventBus:                   bus.New(),
 		store:                      Store{},
 		parsers:                    defaultParserSnapshot(),
 		invoiceCandidates:          defaultInvoiceCandidateSource(),

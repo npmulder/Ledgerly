@@ -497,6 +497,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/invoicing/invoices/{id}/remind": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send an overdue invoice reminder
+         * @description Emails a plain-text overdue reminder with the stored invoice PDF attached and records the manual send.
+         */
+        post: operations["invoicingSendInvoiceReminder"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/invoicing/invoices/{id}/revert": {
         parameters: {
             query?: never;
@@ -1115,6 +1135,8 @@ export interface components {
             day_rate: components["schemas"]["InvoicingMoneyAmount"] | null;
             /** @enum {string} */
             default_currency: "EUR" | "GBP";
+            /** Format: email */
+            email: string | null;
             id: string;
             name: string;
             retainer_amount: components["schemas"]["InvoicingMoneyAmount"] | null;
@@ -1129,6 +1151,8 @@ export interface components {
             day_rate?: components["schemas"]["InvoicingMoneyAmount"] | null;
             /** @enum {string} */
             default_currency?: "EUR" | "GBP";
+            /** Format: email */
+            email?: string | null;
             name?: string;
             retainer_amount?: components["schemas"]["InvoicingMoneyAmount"] | null;
             /** @enum {integer} */
@@ -1142,6 +1166,8 @@ export interface components {
             day_rate?: components["schemas"]["InvoicingMoneyAmount"] | null;
             /** @enum {string} */
             default_currency: "EUR" | "GBP";
+            /** Format: email */
+            email?: string | null;
             name: string;
             retainer_amount?: components["schemas"]["InvoicingMoneyAmount"] | null;
             /** @enum {integer} */
@@ -1188,6 +1214,7 @@ export interface components {
             lock_id: string | null;
             number: string | null;
             pdf_asset: string | null;
+            reminders?: components["schemas"]["InvoicingReminder"][];
             /** Format: date-time */
             sent_at?: string | null;
             settled_amount: components["schemas"]["InvoicingMoney"] | null;
@@ -1318,6 +1345,15 @@ export interface components {
             amount_minor: number;
             /** @enum {string} */
             currency: "EUR" | "GBP";
+        };
+        InvoicingReminder: {
+            invoice_id: string;
+            /** Format: date-time */
+            sent_at: string;
+        };
+        InvoicingReminderResult: {
+            invoice: components["schemas"]["InvoicingInvoice"];
+            reminder: components["schemas"]["InvoicingReminder"];
         };
         InvoicingSendInvoiceResult: {
             invoice: components["schemas"]["InvoicingInvoice"];
@@ -2995,6 +3031,55 @@ export interface operations {
                 };
                 content: {
                     "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    invoicingSendInvoiceReminder: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Reminder sent */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvoicingReminderResult"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Invoice was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Reminder cannot be sent */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ValidationProblem"];
                 };
             };
         };

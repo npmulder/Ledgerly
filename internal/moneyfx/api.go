@@ -48,6 +48,11 @@ func (m *Module) TodayRate(ctx context.Context, from string, to string) (Rate, t
 	return m.service.TodayRate(ctx, from, to)
 }
 
+// RateStaleness returns the latest stored ECB rate date and stale status.
+func (m *Module) RateStaleness(ctx context.Context) (RateStaleness, error) {
+	return m.service.RateStaleness(ctx)
+}
+
 // Lock resolves and appends an immutable ECB rate lock inside tx.
 func (m *Module) Lock(ctx context.Context, tx db.Tx, ref LockRef, from string, to string, date time.Time) (RateLock, error) {
 	return m.service.Lock(ctx, tx, ref, from, to, date)
@@ -66,6 +71,11 @@ func (m *Module) ActiveLockFor(ctx context.Context, ref LockRef) (RateLock, erro
 // ToGBP converts m to presentational GBP using the rate for date.
 func (m *Module) ToGBP(ctx context.Context, amount money.Money, date time.Time) (money.Money, error) {
 	return m.service.ToGBP(ctx, amount, date)
+}
+
+// RealisedFXAmount reads the realised-FX dedupe amount for invoiceID inside tx.
+func (m *Module) RealisedFXAmount(ctx context.Context, tx db.Tx, invoiceID string) (money.Money, error) {
+	return m.service.RealisedFXAmount(ctx, tx, invoiceID)
 }
 
 // HTTPModule returns the platform route mount for this module.

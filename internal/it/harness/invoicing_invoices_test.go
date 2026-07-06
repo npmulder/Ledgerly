@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -1007,6 +1008,18 @@ func (s *recordingPDFAssetStore) StoreInvoicePDF(_ context.Context, pdf []byte) 
 	defer s.mu.Unlock()
 	s.bytes = append(s.bytes, append([]byte{}, pdf...))
 	return fmt.Sprintf("/api/identity/assets/test-pdf-%d", len(s.bytes)), nil
+}
+
+func (s *recordingPDFAssetStore) LoadInvoicePDF(_ context.Context, assetURL string) ([]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	raw := strings.TrimPrefix(strings.TrimSpace(assetURL), "/api/identity/assets/test-pdf-")
+	index, err := strconv.Atoi(raw)
+	if err != nil || index < 1 || index > len(s.bytes) {
+		return nil, fmt.Errorf("test PDF asset %q not found", assetURL)
+	}
+	return append([]byte{}, s.bytes[index-1]...), nil
 }
 
 func (s *recordingPDFAssetStore) callCount() int {

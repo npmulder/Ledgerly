@@ -111,6 +111,7 @@ type ClientFormState = {
   country: string;
   dayRateAmount: string;
   defaultCurrency: ClientCurrency;
+  email: string;
   line1: string;
   line2: string;
   locality: string;
@@ -795,6 +796,15 @@ function ClientsSettings() {
                   value={formDraft.name}
                 />
               </Field>
+              <Field label="Billing email">
+                <Input
+                  inputMode="email"
+                  name="email"
+                  onChange={handleClientFieldChange("email")}
+                  type="email"
+                  value={formDraft.email}
+                />
+              </Field>
               <Field label="Currency">
                 <Select
                   name="default_currency"
@@ -1268,6 +1278,7 @@ function emptyClientForm(): ClientFormState {
     country: "",
     dayRateAmount: "",
     defaultCurrency: "GBP",
+    email: "",
     line1: "",
     line2: "",
     locality: "",
@@ -1286,6 +1297,7 @@ function clientToForm(client: InvoicingClient): ClientFormState {
     country: client.address.country,
     dayRateAmount: moneyInputValue(client.day_rate),
     defaultCurrency: client.default_currency,
+    email: client.email ?? "",
     line1: client.address.line1,
     line2: client.address.line2,
     locality: client.address.locality,
@@ -1311,6 +1323,7 @@ function formToClientRequest(form: ClientFormState): InvoicingClientRequest {
     },
     day_rate: moneyFromInput(form.dayRateAmount, form.defaultCurrency),
     default_currency: form.defaultCurrency,
+    email: form.email.trim() || null,
     name: form.name.trim(),
     retainer_amount: moneyFromInput(
       form.retainerAmount,
@@ -1409,7 +1422,7 @@ function clientAddressSummary(client: InvoicingClient) {
     countryName(client.address.country),
   ].filter(Boolean);
   const vat = client.vat_number ? `VAT ${client.vat_number}` : "";
-  return [...place, vat].filter(Boolean).join(" · ");
+  return [...place, client.email, vat].filter(Boolean).join(" · ");
 }
 
 function countryName(country: string) {

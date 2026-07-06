@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	netmail "net/mail"
 	"strings"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/npmulder/ledgerly/internal/platform/clock"
 	"github.com/npmulder/ledgerly/internal/platform/db"
 	httpserver "github.com/npmulder/ledgerly/internal/platform/http"
+	"github.com/npmulder/ledgerly/internal/platform/mail"
 )
 
 // ModuleName is the database schema, HTTP route segment, and event namespace.
@@ -71,6 +73,7 @@ type Config struct {
 	PDFEngine           InvoicePDFEngine
 	PDFBaseURL          string
 	PDFRetryBackoff     time.Duration
+	Mailer              mail.Sender
 	Logger              *slog.Logger
 }
 
@@ -111,6 +114,7 @@ func New(cfg Config) (*Module, error) {
 			WithInvoicePDFEngine(cfg.PDFEngine),
 			WithInvoicePDFBaseURL(cfg.PDFBaseURL),
 			WithInvoicePDFRetryBackoff(cfg.PDFRetryBackoff),
+			WithReminderMailer(cfg.Mailer),
 			WithLogger(cfg.Logger),
 		),
 	}, nil
@@ -129,10 +133,36 @@ func (m *Module) OpenAPIFragment() httpserver.OpenAPIFragment {
 	return OpenAPIFragment()
 }
 
+// OverdueInvoices returns advisor-facing facts for currently overdue invoices.
+func (m *Module) OverdueInvoices(ctx context.Context) ([]OverdueInvoiceFact, error) {
+	return m.service.OverdueInvoices(ctx)
+}
+
+// Client returns one invoicing client by id.
+func (m *Module) Client(ctx context.Context, id string) (Client, error) {
+	return m.service.Client(ctx, id)
+}
+
+// Invoice returns one invoice by id.
+func (m *Module) Invoice(ctx context.Context, id string) (Invoice, error) {
+	return m.service.Invoice(ctx, id)
+}
+
+// InvoiceByNumber returns one invoice by public invoice number.
+func (m *Module) InvoiceByNumber(ctx context.Context, number string) (Invoice, error) {
+	return m.service.InvoiceByNumber(ctx, number)
+}
+
+// InvoiceVATContextBySendEntryID returns VAT context for a sent-invoice posting.
+func (m *Module) InvoiceVATContextBySendEntryID(ctx context.Context, entryID ledger.EntryID) (InvoiceVATContext, error) {
+	return m.service.InvoiceVATContextBySendEntryID(ctx, entryID)
+}
+
 // Client is invoicing's client reference-data record.
 type Client struct {
 	ID              string       `json:"id"`
 	Name            string       `json:"name"`
+	Email           *string      `json:"email"`
 	Address         Address      `json:"address"`
 	VATNumber       *string      `json:"vat_number"`
 	DefaultCurrency Currency     `json:"default_currency"`
@@ -190,6 +220,17 @@ func normalizeClient(client Client) (Client, error) {
 	client.Name = strings.TrimSpace(client.Name)
 	if client.Name == "" {
 		fields = append(fields, FieldError{Pointer: "/name", Detail: "is required"})
+	}
+
+	if client.Email != nil {
+		email := strings.ToLower(strings.TrimSpace(*client.Email))
+		if email == "" {
+			client.Email = nil
+		} else if parsed, err := netmail.ParseAddress(email); err != nil {
+			fields = append(fields, FieldError{Pointer: "/email", Detail: "must be a valid email address"})
+		} else {
+			client.Email = &parsed.Address
+		}
 	}
 
 	client.Address = normalizeAddress(client.Address)

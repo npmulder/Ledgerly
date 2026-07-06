@@ -145,6 +145,9 @@ func TestFilingCalendarDaysUntilAcrossYearSweep(t *testing.T) {
 			if filing.DaysUntil != wantDays {
 				t.Fatalf("%s on %s DaysUntil = %d, want %d", filing.Key, now.Format(time.DateOnly), filing.DaysUntil, wantDays)
 			}
+			if filing.WarnWindow != window {
+				t.Fatalf("%s on %s WarnWindow = %d, want %d", filing.Key, now.Format(time.DateOnly), filing.WarnWindow, window)
+			}
 			if got, want := filing.Status, wantStatus(wantDays, window); got != want {
 				t.Fatalf("%s on %s Status = %q, want %q", filing.Key, now.Format(time.DateOnly), got, want)
 			}
@@ -262,6 +265,9 @@ func assertFiling(t *testing.T, got Filing, key string, label string, authority 
 	}
 	if got.Status != status {
 		t.Fatalf("%s Status = %q, want %q", key, got.Status, status)
+	}
+	if got.WarnWindow == 0 {
+		t.Fatalf("%s WarnWindow = 0, want configured warning window", key)
 	}
 }
 

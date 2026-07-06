@@ -10,6 +10,7 @@ import (
 
 	"github.com/npmulder/ledgerly/internal/moneyfx/money"
 	"github.com/npmulder/ledgerly/internal/platform/clock"
+	"github.com/npmulder/ledgerly/internal/platform/db"
 )
 
 const (
@@ -26,6 +27,10 @@ var ErrNoRate = errors.New("moneyfx: no rate")
 // as a soft presentation failure.
 var ErrRateUnavailable = ErrNoRate
 
+// ErrRealisedFXNotFound reports a missing realised-FX dedupe row for a
+// settlement that should already have been handled in the caller transaction.
+var ErrRealisedFXNotFound = errors.New("moneyfx: realised FX not found")
+
 // Rate is an exact FX multiplier from one currency into another.
 type Rate struct {
 	From     string    `json:"from"`
@@ -33,6 +38,13 @@ type Rate struct {
 	Value    string    `json:"value"`
 	RateDate time.Time `json:"rate_date"`
 	Source   string    `json:"source"`
+}
+
+// RateStaleness is the advisor-facing read model for ECB rate freshness.
+type RateStaleness struct {
+	LastDate  *time.Time
+	Stale     bool
+	StaleDays int
 }
 
 // Rat parses the exact rate value for use with money.MulRat.
@@ -168,6 +180,51 @@ func (s *Service) TodayRate(ctx context.Context, from string, to string) (Rate, 
 	return rate, fetchedAt, nil
 }
 
+// RateStaleness returns the latest stored ECB rate date and whether that date
+// is stale under the same rule used by the ECB fetcher.
+func (s *Service) RateStaleness(ctx context.Context) (RateStaleness, error) {
+	if err := ctx.Err(); err != nil {
+		return RateStaleness{}, err
+	}
+	if s == nil || s.store == nil {
+		return RateStaleness{}, fmt.Errorf("moneyfx: rate store is required")
+	}
+	lastDate, ok, err := s.store.LatestRateDate(ctx)
+	if err != nil {
+		return RateStaleness{}, err
+	}
+	if !ok {
+		return RateStaleness{Stale: true, StaleDays: 1}, nil
+	}
+	normalized := normalizeRateDate(lastDate)
+	now := s.nowUTC()
+	stale := ratesAreStale(normalized, now, ECBLocation())
+	return RateStaleness{
+		LastDate:  &normalized,
+		Stale:     stale,
+		StaleDays: staleDayCount(normalized, now, ECBLocation(), stale),
+	}, nil
+}
+
+func staleDayCount(lastDate time.Time, now time.Time, location *time.Location, stale bool) int {
+	if !stale {
+		return 0
+	}
+	if location == nil {
+		location = time.UTC
+	}
+	today := civilDateIn(now, location)
+	last := civilDateIn(lastDate, location)
+	if !today.After(last) {
+		return 1
+	}
+	days := int(today.Sub(last).Hours() / 24)
+	if days < 1 {
+		return 1
+	}
+	return days
+}
+
 // ToGBP converts m into GBP using the ECB rate for date. GBP inputs are already
 // presentational GBP and are returned unchanged.
 func (s *Service) ToGBP(ctx context.Context, m money.Money, date time.Time) (money.Money, error) {
@@ -189,6 +246,18 @@ func (s *Service) ToGBP(ctx context.Context, m money.Money, date time.Time) (mon
 	converted := m.MulRat(rat)
 	converted.Currency = "GBP"
 	return converted, nil
+}
+
+// RealisedFXAmount returns the stored realised-FX GBP amount for invoiceID
+// inside the caller's transaction.
+func (s *Service) RealisedFXAmount(ctx context.Context, tx db.Tx, invoiceID string) (money.Money, error) {
+	if err := ctx.Err(); err != nil {
+		return money.Money{}, err
+	}
+	if s == nil || s.realised == nil {
+		return money.Money{}, fmt.Errorf("moneyfx: realised FX store is required")
+	}
+	return s.realised.RealisedFXAmount(ctx, tx, invoiceID)
 }
 
 func (s *Service) eurBaseRate(ctx context.Context, date time.Time, currency string) (*big.Rat, error) {

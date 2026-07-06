@@ -1,0 +1,11 @@
+Hello,
+
+This is a polite reminder that invoice INV-2025-01 is 9 days overdue.
+
+Amount due: £1,200.00
+Due date: 2 May 2025
+
+If payment has already been arranged, thank you and please disregard this message.
+
+Kind regards,
+NPM Limited

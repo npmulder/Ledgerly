@@ -22,6 +22,7 @@ func (Store) ListClients(ctx context.Context, tx db.Tx, includeArchived bool) ([
 	query := `
 SELECT id,
 	name,
+	email,
 	address,
 	vat_number,
 	default_currency,
@@ -70,6 +71,7 @@ func (Store) InsertClient(ctx context.Context, tx db.Tx, client Client) (Client,
 INSERT INTO clients (
 	id,
 	name,
+	email,
 	address,
 	vat_number,
 	default_currency,
@@ -82,18 +84,20 @@ INSERT INTO clients (
 ) VALUES (
 	$1,
 	$2,
-	$3::jsonb,
-	$4,
+	$3,
+	$4::jsonb,
 	$5,
 	$6,
 	$7,
 	$8,
 	$9,
 	$10,
-	$11
+	$11,
+	$12
 )
 RETURNING id,
 	name,
+	email,
 	address,
 	vat_number,
 	default_currency,
@@ -107,6 +111,7 @@ RETURNING id,
 	archived_at`,
 		client.ID,
 		client.Name,
+		nullableString(client.Email),
 		string(values.address),
 		nullableString(client.VATNumber),
 		string(client.DefaultCurrency),
@@ -128,18 +133,20 @@ func (Store) UpdateClient(ctx context.Context, tx db.Tx, client Client) (Client,
 	return scanClientRow(tx.QueryRow(ctx, `
 UPDATE clients
 SET name = $2,
-	address = $3::jsonb,
-	vat_number = $4,
-	default_currency = $5,
-	terms_days = $6,
-	vat_treatment = $7,
-	retainer_amount_minor = $8,
-	retainer_currency = $9,
-	day_rate_amount_minor = $10,
-	day_rate_currency = $11
+	email = $3,
+	address = $4::jsonb,
+	vat_number = $5,
+	default_currency = $6,
+	terms_days = $7,
+	vat_treatment = $8,
+	retainer_amount_minor = $9,
+	retainer_currency = $10,
+	day_rate_amount_minor = $11,
+	day_rate_currency = $12
 WHERE id = $1
 RETURNING id,
 	name,
+	email,
 	address,
 	vat_number,
 	default_currency,
@@ -153,6 +160,7 @@ RETURNING id,
 	archived_at`,
 		client.ID,
 		client.Name,
+		nullableString(client.Email),
 		string(values.address),
 		nullableString(client.VATNumber),
 		string(client.DefaultCurrency),
@@ -182,6 +190,7 @@ WHERE id = $1`, id)
 func selectClientSQL() string {
 	return `SELECT id,
 	name,
+	email,
 	address,
 	vat_number,
 	default_currency,
@@ -247,6 +256,7 @@ func scanClientRow(row clientRow) (Client, error) {
 	var (
 		client           Client
 		address          []byte
+		email            sql.NullString
 		vatNumber        sql.NullString
 		defaultCurrency  string
 		vatTreatment     string
@@ -259,6 +269,7 @@ func scanClientRow(row clientRow) (Client, error) {
 	err := row.Scan(
 		&client.ID,
 		&client.Name,
+		&email,
 		&address,
 		&vatNumber,
 		&defaultCurrency,
@@ -279,6 +290,9 @@ func scanClientRow(row clientRow) (Client, error) {
 	}
 	if err := json.Unmarshal(address, &client.Address); err != nil {
 		return Client{}, fmt.Errorf("invoicing: unmarshal client address: %w", err)
+	}
+	if email.Valid {
+		client.Email = &email.String
 	}
 	if vatNumber.Valid {
 		client.VATNumber = &vatNumber.String
@@ -327,7 +341,12 @@ func (s Store) Invoice(ctx context.Context, tx db.Tx, id string) (Invoice, error
 	if err != nil {
 		return Invoice{}, err
 	}
+	reminders, err := s.InvoiceReminders(ctx, tx, id)
+	if err != nil {
+		return Invoice{}, err
+	}
 	invoice.Lines = lines
+	invoice.Reminders = reminders
 	return invoice, nil
 }
 
@@ -373,6 +392,53 @@ func (s Store) InvoiceForUpdate(ctx context.Context, tx db.Tx, id string) (Invoi
 	}
 	invoice.Lines = lines
 	return invoice, nil
+}
+
+func (Store) InvoiceReminders(ctx context.Context, tx db.Tx, invoiceID string) ([]InvoiceReminder, error) {
+	rows, err := tx.Query(ctx, `
+SELECT invoice_id, sent_at
+FROM invoicing.reminders
+WHERE invoice_id = $1
+ORDER BY sent_at DESC`, invoiceID)
+	if err != nil {
+		return nil, fmt.Errorf("invoicing: list invoice reminders: %w", err)
+	}
+	defer rows.Close()
+
+	reminders, err := pgx.CollectRows(rows, scanInvoiceReminder)
+	if err != nil {
+		return nil, fmt.Errorf("invoicing: collect invoice reminders: %w", err)
+	}
+	return reminders, nil
+}
+
+func (Store) ReminderSentOnDate(ctx context.Context, tx db.Tx, invoiceID string, date time.Time) (bool, error) {
+	var exists bool
+	start := dateOnly(date).UTC()
+	end := start.AddDate(0, 0, 1)
+	if err := tx.QueryRow(ctx, `
+SELECT EXISTS (
+	SELECT 1
+	FROM invoicing.reminders
+	WHERE invoice_id = $1
+		AND sent_at >= $2
+		AND sent_at < $3
+)`, invoiceID, start, end).Scan(&exists); err != nil {
+		return false, fmt.Errorf("invoicing: check invoice reminder rate limit: %w", err)
+	}
+	return exists, nil
+}
+
+func (Store) InsertReminder(ctx context.Context, tx db.Tx, invoiceID string, sentAt time.Time) (InvoiceReminder, error) {
+	return scanInvoiceReminderRow(tx.QueryRow(ctx, `
+INSERT INTO invoicing.reminders (
+	invoice_id,
+	sent_at
+) VALUES (
+	$1,
+	$2
+)
+RETURNING invoice_id, sent_at`, invoiceID, sentAt.UTC()))
 }
 
 func (Store) InvoiceLines(ctx context.Context, tx db.Tx, invoiceID string) ([]InvoiceLine, error) {
@@ -847,6 +913,19 @@ func scanInvoiceLine(row pgx.CollectableRow) (InvoiceLine, error) {
 	line.UnitPrice.Currency = currency
 	line.ID = invoiceLineClientID(line.InvoiceID, line.ID)
 	return line, nil
+}
+
+func scanInvoiceReminder(row pgx.CollectableRow) (InvoiceReminder, error) {
+	return scanInvoiceReminderRow(row)
+}
+
+func scanInvoiceReminderRow(row clientRow) (InvoiceReminder, error) {
+	var reminder InvoiceReminder
+	if err := row.Scan(&reminder.InvoiceID, &reminder.SentAt); err != nil {
+		return InvoiceReminder{}, fmt.Errorf("invoicing: scan invoice reminder: %w", err)
+	}
+	reminder.SentAt = reminder.SentAt.UTC()
+	return reminder, nil
 }
 
 func invoiceLineStorageID(invoiceID string, clientLineID string) string {

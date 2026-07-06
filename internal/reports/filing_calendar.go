@@ -68,12 +68,13 @@ func (s *Service) FilingCalendarContext(ctx context.Context) ([]Filing, error) {
 		}
 		daysUntil := wholeDaysBetween(today, deadline.DueDate)
 		filings = append(filings, Filing{
-			Key:       deadline.Key,
-			Label:     deadline.Label,
-			Authority: deadline.Authority,
-			DueDate:   deadline.DueDate,
-			DaysUntil: daysUntil,
-			Status:    filingStatus(daysUntil, warningWindowDays),
+			Key:        deadline.Key,
+			Label:      deadline.Label,
+			Authority:  deadline.Authority,
+			DueDate:    deadline.DueDate,
+			DaysUntil:  daysUntil,
+			Status:     filingStatus(daysUntil, warningWindowDays),
+			WarnWindow: warningWindowDays,
 		})
 	}
 	sort.Slice(filings, func(i, j int) bool {
