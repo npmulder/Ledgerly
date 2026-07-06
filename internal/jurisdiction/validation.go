@@ -230,11 +230,17 @@ func validateAdvisorRules(file string, rules []AdvisorRule) error {
 	if len(rules) == 0 {
 		return fieldError(file, "advisor_rules", "advisor_rules", "must contain at least one rule")
 	}
+	seenIDs := make(map[string]struct{}, len(rules))
 	for index, rule := range rules {
 		path := fmt.Sprintf("advisor_rules[%d]", index)
-		if strings.TrimSpace(rule.ID) == "" {
+		ruleID := strings.TrimSpace(rule.ID)
+		if ruleID == "" {
 			return fieldError(file, path+".id", "id", "must not be empty")
 		}
+		if _, ok := seenIDs[ruleID]; ok {
+			return fieldError(file, path+".id", "id", fmt.Sprintf("duplicate advisor rule id %q", ruleID))
+		}
+		seenIDs[ruleID] = struct{}{}
 		switch strings.TrimSpace(rule.Severity) {
 		case "teal", "amber":
 		default:

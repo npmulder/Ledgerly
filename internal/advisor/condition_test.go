@@ -91,6 +91,13 @@ func TestConditionGrammarTable(t *testing.T) {
 				},
 			},
 		},
+		{
+			name:      "nested named string map fact",
+			condition: "group.flag = true",
+			facts: Facts{
+				"group": Facts{"flag": true},
+			},
+		},
 	}
 
 	for _, tt := range tests {

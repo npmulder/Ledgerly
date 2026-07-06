@@ -35,13 +35,6 @@ func Evaluate(rules []RuleDef, facts Facts, now time.Time) (Delta, error) {
 		if err != nil {
 			return Delta{}, err
 		}
-		if missing := missingFact(rule, ctx); missing != "" {
-			delta.Warnings = append(delta.Warnings, Warning{
-				RuleID:  rule.ID,
-				Message: fmt.Sprintf("missing required fact %q", missing),
-			})
-			continue
-		}
 
 		result, err := rule.condition.eval(ctx)
 		if err != nil {
@@ -137,15 +130,6 @@ func ensureCompiled(rule RuleDef) (RuleDef, error) {
 		return rule, nil
 	}
 	return CompileRule(rule)
-}
-
-func missingFact(rule RuleDef, ctx *conditionContext) FactKey {
-	for _, key := range rule.FactQuery {
-		if _, ok := ctx.resolve(string(key)); !ok {
-			return key
-		}
-	}
-	return ""
 }
 
 func factBindings(rule RuleDef, ctx *conditionContext) (map[string]any, map[string]any, []byte, error) {

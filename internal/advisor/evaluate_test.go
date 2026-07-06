@@ -83,6 +83,52 @@ func TestTemplateErrorSkipsOnlyBadRule(t *testing.T) {
 	}
 }
 
+func TestEvaluateFalseRuleWithMissingRenderBindingStillEvaluatesRule(t *testing.T) {
+	rule := compileTestRule(t, RuleDef{
+		ID:           "false-with-missing-render-binding",
+		Severity:     SeverityAmber,
+		Surfaces:     []Surface{SurfaceInvoices},
+		FactQuery:    []FactKey{"client_name", "count"},
+		Condition:    "count > 0",
+		TextTemplate: "{{ client_name }} has overdue invoices",
+		CTA:          CTA{Label: "Open", Action: "test.open"},
+	})
+
+	delta, err := Evaluate([]RuleDef{rule}, Facts{"count": 0}, time.Date(2026, 7, 6, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("Evaluate() error = %v", err)
+	}
+	if len(delta.Warnings) != 0 {
+		t.Fatalf("warnings = %#v, want none", delta.Warnings)
+	}
+	if len(delta.Insights) != 0 {
+		t.Fatalf("insights length = %d, want 0", len(delta.Insights))
+	}
+	if len(delta.EvaluatedRuleIDs) != 1 || delta.EvaluatedRuleIDs[0] != "false-with-missing-render-binding" {
+		t.Fatalf("EvaluatedRuleIDs = %#v, want false rule marked evaluated", delta.EvaluatedRuleIDs)
+	}
+}
+
+func TestCompileRulesRejectsDuplicateIDs(t *testing.T) {
+	rule := RuleDef{
+		ID:           "duplicate",
+		Severity:     SeverityAmber,
+		Surfaces:     []Surface{SurfaceDashboard},
+		FactQuery:    []FactKey{"amount"},
+		Condition:    "amount > 0",
+		TextTemplate: "Amount {{ amount }}",
+		CTA:          CTA{Label: "Open", Action: "test.open"},
+	}
+
+	_, err := CompileRules([]RuleDef{rule, rule})
+	if err == nil {
+		t.Fatal("CompileRules() error = nil, want duplicate rule id error")
+	}
+	if !strings.Contains(err.Error(), `duplicate rule id "duplicate"`) {
+		t.Fatalf("CompileRules() error = %v, want duplicate rule id", err)
+	}
+}
+
 func TestCompileJurisdictionRules(t *testing.T) {
 	if err := jurisdiction.LoadActive(jurisdiction.DefaultSelector); err != nil {
 		t.Fatalf("LoadActive() error = %v", err)

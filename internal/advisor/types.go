@@ -148,11 +148,16 @@ func CompileRule(rule RuleDef) (RuleDef, error) {
 // CompileRules validates and compiles multiple rule definitions.
 func CompileRules(rules []RuleDef) ([]RuleDef, error) {
 	compiled := make([]RuleDef, len(rules))
+	seen := make(map[string]struct{}, len(rules))
 	for index, rule := range rules {
 		next, err := CompileRule(rule)
 		if err != nil {
 			return nil, fmt.Errorf("compile rule %d: %w", index, err)
 		}
+		if _, ok := seen[next.ID]; ok {
+			return nil, fmt.Errorf("compile rule %d: duplicate rule id %q", index, next.ID)
+		}
+		seen[next.ID] = struct{}{}
 		compiled[index] = next
 	}
 	return compiled, nil
@@ -283,9 +288,24 @@ func cloneAnyMap(in map[string]any) map[string]any {
 	}
 	out := make(map[string]any, len(in))
 	for key, value := range in {
-		out[key] = value
+		out[key] = cloneAnyValue(value)
 	}
 	return out
+}
+
+func cloneAnyValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		return cloneAnyMap(typed)
+	case []any:
+		out := make([]any, len(typed))
+		for index, nested := range typed {
+			out[index] = cloneAnyValue(nested)
+		}
+		return out
+	default:
+		return value
+	}
 }
 
 func formatFactValue(value any) any {

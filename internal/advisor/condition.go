@@ -233,10 +233,18 @@ func resolvePart(value any, part string) (any, bool) {
 	}
 	switch reflected.Kind() {
 	case reflect.Map:
-		if reflected.Type().Key().Kind() != reflect.String {
+		keyType := reflected.Type().Key()
+		if keyType.Kind() != reflect.String {
 			return nil, false
 		}
-		next := reflected.MapIndex(reflect.ValueOf(part))
+		key := reflect.ValueOf(part)
+		if !key.Type().AssignableTo(keyType) {
+			if !key.Type().ConvertibleTo(keyType) {
+				return nil, false
+			}
+			key = key.Convert(keyType)
+		}
+		next := reflected.MapIndex(key)
 		if !next.IsValid() {
 			return nil, false
 		}
