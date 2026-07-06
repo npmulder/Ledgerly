@@ -4,6 +4,13 @@ export type ApiQueryKey = readonly [
   params: Record<string, unknown>,
 ];
 
+export type InvoicesQueryParams = {
+  readonly limit?: number;
+  readonly offset?: number;
+  readonly search?: string;
+  readonly status?: string;
+};
+
 export const queryKeys = {
   dashboard: {
     summary: (): ApiQueryKey => ["dashboard", "summary", {}],
@@ -29,7 +36,16 @@ export const queryKeys = {
       { includeArchived },
     ],
     invoice: (id: string): ApiQueryKey => ["invoicing", "invoice", { id }],
-    invoices: (): ApiQueryKey => ["invoicing", "invoices", {}],
+    invoices: ({
+      limit = 50,
+      offset = 0,
+      search = "",
+      status = "all",
+    }: InvoicesQueryParams = {}): ApiQueryKey => [
+      "invoicing",
+      "invoices",
+      { limit, offset, search, status },
+    ],
   },
   jurisdiction: {
     pack: (): ApiQueryKey => ["jurisdiction", "pack", {}],

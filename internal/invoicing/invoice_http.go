@@ -153,6 +153,18 @@ func (h invoiceHandler) sendInvoice(w nethttp.ResponseWriter, r *nethttp.Request
 	})
 }
 
+func (h invoiceHandler) remindInvoice(w nethttp.ResponseWriter, r *nethttp.Request) {
+	result, err := h.service.SendReminder(r.Context(), invoiceIDParam(r))
+	if err != nil {
+		writeInvoiceError(w, r, err)
+		return
+	}
+	writeInvoiceJSON(w, nethttp.StatusOK, ReminderResult{
+		Invoice:  invoiceForResponse(result.Invoice),
+		Reminder: result.Reminder,
+	})
+}
+
 func (h invoiceHandler) revertInvoice(w nethttp.ResponseWriter, r *nethttp.Request) {
 	invoice, err := h.service.RevertToDraft(r.Context(), invoiceIDParam(r))
 	if err != nil {

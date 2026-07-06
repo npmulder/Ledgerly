@@ -53,7 +53,8 @@ type TaxBand struct {
 }
 
 type DividendYear struct {
-	Withholding string `yaml:"withholding"`
+	Withholding                 string `yaml:"withholding"`
+	PersonalTaxSetAsideTemplate string `yaml:"personal_tax_set_aside_template"`
 }
 
 type VAT struct {

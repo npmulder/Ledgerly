@@ -1,11 +1,13 @@
 package dla
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/npmulder/ledgerly/internal/ledger"
+	"github.com/npmulder/ledgerly/internal/moneyfx/money"
 	"github.com/npmulder/ledgerly/internal/platform/bus"
 	"github.com/npmulder/ledgerly/internal/platform/clock"
 	httpserver "github.com/npmulder/ledgerly/internal/platform/http"
@@ -56,4 +58,14 @@ func (m *Module) HTTPModule() httpserver.Module {
 // OpenAPIFragment returns the module's OpenAPI contribution.
 func (m *Module) OpenAPIFragment() httpserver.OpenAPIFragment {
 	return OpenAPIFragment()
+}
+
+// CurrentBalance returns the current DLA balance and advisor-facing status.
+func (m *Module) CurrentBalance(ctx context.Context) (money.Money, Status, error) {
+	return m.service.CurrentBalance(ctx)
+}
+
+// SuggestedClearanceAmount returns the amount needed to clear an overdrawn DLA.
+func (m *Module) SuggestedClearanceAmount(ctx context.Context) (money.Money, error) {
+	return m.service.SuggestedClearanceAmount(ctx)
 }

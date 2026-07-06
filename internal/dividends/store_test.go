@@ -21,3 +21,20 @@ func TestNormalizeDeclarationRejectsInconsistentShareTotal(t *testing.T) {
 		t.Fatalf("normalizeDeclaration() error = %v, want ErrInvalidDeclaration", err)
 	}
 }
+
+func TestPerShareAmountUsesDirectDivisibilityForLargeShareCounts(t *testing.T) {
+	got, err := perShareAmount(money.Money{Amount: 9_223_372_036_854_775_806, Currency: "GBP"}, 9_223_372_036_854_775_806)
+	if err != nil {
+		t.Fatalf("perShareAmount() error = %v", err)
+	}
+	if got != (money.Money{Amount: 1, Currency: "GBP"}) {
+		t.Fatalf("perShareAmount() = %+v, want GBP 0.01", got)
+	}
+}
+
+func TestPerShareAmountRejectsNonUniformSplit(t *testing.T) {
+	_, err := perShareAmount(money.Money{Amount: 100, Currency: "GBP"}, 3)
+	if !errors.Is(err, ErrInvalidDeclaration) {
+		t.Fatalf("perShareAmount() error = %v, want ErrInvalidDeclaration", err)
+	}
+}

@@ -335,6 +335,7 @@ function clientsFixture({ retainer = true }: { retainer?: boolean } = {}) {
       created_at: "2026-07-01T00:00:00Z",
       day_rate: null,
       default_currency: "EUR",
+      email: "billing@contoso.example",
       id: "client_contoso",
       name: "Contoso GmbH",
       retainer_amount: retainer

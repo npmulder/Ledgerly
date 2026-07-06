@@ -30,6 +30,7 @@ type clientHandler struct {
 
 type clientRequest struct {
 	Name            string       `json:"name"`
+	Email           *string      `json:"email"`
 	Address         Address      `json:"address"`
 	VATNumber       *string      `json:"vat_number"`
 	DefaultCurrency Currency     `json:"default_currency"`
@@ -57,6 +58,7 @@ type clientPatch struct {
 	name            *string
 	address         *Address
 	vatNumber       nullableStringPatch
+	email           nullableStringPatch
 	defaultCurrency *Currency
 	termsDays       *int
 	vatTreatment    *VATTreatment
@@ -79,6 +81,7 @@ func (m *Module) RegisterRoutes(r chi.Router) {
 	r.Get("/invoices/{id}", invoices.getInvoice)
 	r.Patch("/invoices/{id}", invoices.patchInvoice)
 	r.Post("/invoices/{id}/send", invoices.sendInvoice)
+	r.Post("/invoices/{id}/remind", invoices.remindInvoice)
 	r.Post("/invoices/{id}/revert", invoices.revertInvoice)
 	r.Get("/invoices/{id}/print", invoices.getInvoicePrintPayload)
 	r.Get("/invoices/{id}/pdf/preview", invoices.previewInvoicePDF)
@@ -179,6 +182,7 @@ func (r clientRequest) client(id string) Client {
 	return Client{
 		ID:              id,
 		Name:            r.Name,
+		Email:           r.Email,
 		Address:         r.Address,
 		VATNumber:       r.VATNumber,
 		DefaultCurrency: r.DefaultCurrency,
@@ -198,6 +202,9 @@ func (p clientPatch) apply(client Client) Client {
 	}
 	if p.vatNumber.set {
 		client.VATNumber = p.vatNumber.value
+	}
+	if p.email.set {
+		client.Email = p.email.value
 	}
 	if p.defaultCurrency != nil {
 		client.DefaultCurrency = *p.defaultCurrency
@@ -252,6 +259,17 @@ func decodeClientPatch(w nethttp.ResponseWriter, r *nethttp.Request) (clientPatc
 				continue
 			}
 			patch.vatNumber.value = &vatNumber
+		case "email":
+			patch.email.set = true
+			if isClientJSONNull(value) {
+				continue
+			}
+			var email string
+			if err := decodeClientStrict(value, &email); err != nil {
+				fieldErrors = append(fieldErrors, FieldError{Pointer: "/email", Detail: "must be a string or null"})
+				continue
+			}
+			patch.email.value = &email
 		case "default_currency":
 			var currency Currency
 			if err := decodeClientStrict(value, &currency); err != nil {

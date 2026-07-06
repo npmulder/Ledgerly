@@ -84,6 +84,26 @@ func (s *Service) FileDrawing(ctx context.Context, tx db.Tx, src TxnRef) error {
 	}, true)
 }
 
+// RecordExternalCredit appends a presentation-ledger credit created by another
+// module that already posted the authoritative ledger entry in tx.
+func (s *Service) RecordExternalCredit(
+	ctx context.Context,
+	tx db.Tx,
+	ref string,
+	date time.Time,
+	amount money.Money,
+	description string,
+) error {
+	if tx == nil {
+		return fmt.Errorf("dla: record external credit requires transaction: %w", ErrInvalidEntry)
+	}
+	normalized, err := normalizeExternalCredit(ref, date, amount, description)
+	if err != nil {
+		return err
+	}
+	return s.appendPresentationEntry(ctx, tx, normalized)
+}
+
 // AddEntry appends a manual repayment or expense-owed entry in its own transaction.
 func (s *Service) AddEntry(ctx context.Context, e NewEntry) (err error) {
 	if s.pool == nil {
@@ -192,6 +212,38 @@ func (s *Service) appendEntry(ctx context.Context, tx db.Tx, entry NewEntry, all
 		return err
 	}
 	if _, err := s.ledger.Post(ctx, tx, journalEntryFor(normalized)); err != nil {
+		return err
+	}
+	if !publishTransition {
+		return nil
+	}
+	if err := s.publishTransition(ctx, tx, preBalance, postBalance); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *Service) appendPresentationEntry(ctx context.Context, tx db.Tx, normalized NewEntry) error {
+	if err := lockBalanceMutation(ctx, tx); err != nil {
+		return err
+	}
+	currentDate, err := s.currentDate()
+	if err != nil {
+		return err
+	}
+	preBalance, err := s.store.CurrentBalanceAsOf(ctx, tx, currentDate)
+	if err != nil {
+		return err
+	}
+	publishTransition := !normalized.Date.After(currentDate)
+	postBalance := preBalance
+	if publishTransition {
+		postBalance, err = balanceAfterEntry(preBalance, normalized)
+		if err != nil {
+			return err
+		}
+	}
+	if _, err := s.store.InsertEntry(ctx, tx, normalized); err != nil {
 		return err
 	}
 	if !publishTransition {
@@ -334,6 +386,32 @@ func normalizeNewEntry(entry NewEntry, allowDrawing bool) (NewEntry, error) {
 	}
 
 	return normalized, nil
+}
+
+func normalizeExternalCredit(ref string, date time.Time, amount money.Money, description string) (NewEntry, error) {
+	normalizedDate, err := normalizeDate(date)
+	if err != nil {
+		return NewEntry{}, err
+	}
+	normalizedAmount, err := normalizeAmount(amount)
+	if err != nil {
+		return NewEntry{}, err
+	}
+	source := strings.TrimSpace(ref)
+	if source == "" {
+		return NewEntry{}, fmt.Errorf("dla: source is required: %w", ErrInvalidEntry)
+	}
+	normalizedDescription := strings.TrimSpace(description)
+	if normalizedDescription == "" {
+		return NewEntry{}, fmt.Errorf("dla: description is required: %w", ErrInvalidEntry)
+	}
+	return NewEntry{
+		Date:        normalizedDate,
+		Kind:        EntryKindExpenseOwed,
+		Description: normalizedDescription,
+		Amount:      normalizedAmount,
+		Source:      source,
+	}, nil
 }
 
 func normalizeLedgerFilter(filter LedgerFilter) (LedgerFilter, error) {

@@ -41,6 +41,9 @@ func TestLoadFromFSEmbeddedFixture(t *testing.T) {
 	if pack.Tax.Dividends["2025-26"].Withholding != "test-withholding" {
 		t.Fatalf("dividend withholding not loaded: %#v", pack.Tax.Dividends)
 	}
+	if pack.Tax.Dividends["2025-26"].PersonalTaxSetAsideTemplate != "test set aside {{ estimate }}" {
+		t.Fatalf("dividend set-aside template not loaded: %#v", pack.Tax.Dividends)
+	}
 	if pack.Tax.VAT.Regime != "test-shared" {
 		t.Fatalf("VAT regime = %q, want test-shared", pack.Tax.VAT.Regime)
 	}
@@ -221,6 +224,20 @@ func TestValidationFailuresNameFilePathAndField(t *testing.T) {
 			wantPath:  "tax.corporate_income.2025-26.standard_rate",
 			wantField: "standard_rate",
 			wantText:  "between 0 and 1",
+		},
+		{
+			name:      "missing dividend set-aside template",
+			pack:      strings.Replace(valid, "      personal_tax_set_aside_template: 'test set aside {{ estimate }}'\n", "", 1),
+			wantPath:  "tax.dividends.2025-26.personal_tax_set_aside_template",
+			wantField: "personal_tax_set_aside_template",
+			wantText:  "must not be empty",
+		},
+		{
+			name:      "dividend set-aside template missing estimate placeholder",
+			pack:      strings.Replace(valid, "{{ estimate }}", "{{ amount }}", 1),
+			wantPath:  "tax.dividends.2025-26.personal_tax_set_aside_template",
+			wantField: "personal_tax_set_aside_template",
+			wantText:  "must contain {{ estimate }}",
 		},
 		{
 			name: "unordered bands",

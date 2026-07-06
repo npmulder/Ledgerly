@@ -232,6 +232,11 @@ func (s *Service) invoiceListItems(ctx context.Context, records []invoiceListRec
 		if err != nil {
 			return nil, err
 		}
+		approxGBP, err := s.invoiceListApproxGBP(ctx, computed)
+		if err != nil {
+			return nil, err
+		}
+		computed.Totals.ApproxGBP = approxGBP
 		items = append(items, InvoiceListItem{
 			ID:          computed.ID,
 			Number:      computed.Number,
@@ -248,6 +253,44 @@ func (s *Service) invoiceListItems(ctx context.Context, records []invoiceListRec
 		})
 	}
 	return items, nil
+}
+
+func (s *Service) invoiceListApproxGBP(ctx context.Context, invoice Invoice) (*InvoiceGBPApprox, error) {
+	total := invoice.Totals.Total
+	if total.Currency == string(CurrencyGBP) {
+		return nil, nil
+	}
+	if invoice.LockID != nil {
+		lockID, err := strconv.ParseInt(strings.TrimSpace(*invoice.LockID), 10, 64)
+		if err != nil || lockID <= 0 {
+			return nil, fmt.Errorf("invoicing: invalid invoice lock id %q", *invoice.LockID)
+		}
+		if s.rateLocks == nil {
+			return nil, fmt.Errorf("invoicing: rate lock reader is required for locked invoice list totals")
+		}
+		lock, err := s.rateLocks.RateLock(ctx, lockID)
+		if err != nil {
+			return nil, err
+		}
+		amount, err := convertInvoiceTotalGBP(total, lock.Rate)
+		if err != nil {
+			return nil, err
+		}
+		rateDate := dateOnly(invoice.IssueDate).UTC()
+		return &InvoiceGBPApprox{
+			Amount: amount,
+			Rate: FXRate{
+				From:     total.Currency,
+				To:       string(CurrencyGBP),
+				Value:    lock.Rate,
+				RateDate: rateDate,
+				Source:   "locked",
+			},
+			AsOf:   rateDate,
+			Locked: true,
+		}, nil
+	}
+	return s.approxGBP(ctx, total)
 }
 
 func (s *Service) invoiceTotalGBP(ctx context.Context, invoice Invoice) (Money, bool, error) {

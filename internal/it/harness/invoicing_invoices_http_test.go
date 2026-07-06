@@ -124,6 +124,23 @@ func TestInvoicingInvoiceHTTPRoundTripAutosaveSendPDFAndRevert(t *testing.T) {
 		t.Fatalf("send locked rate = %+v, want 0.85", sent.LockedRate)
 	}
 
+	sentList := performInvoiceRequest(t, h, nethttp.MethodGet, "/api/invoicing/invoices?status=sent&search=contoso&limit=10&offset=0", nil, true)
+	if sentList.StatusCode != nethttp.StatusOK {
+		t.Fatalf("sent list invoices status = %d, want %d; body=%s", sentList.StatusCode, nethttp.StatusOK, sentList.BodyString())
+	}
+	sentListBody := decodeInvoicesResponse(t, sentList)
+	if sentListBody.TotalCount != 1 || len(sentListBody.Invoices) != 1 {
+		t.Fatalf("sent list response = total %d invoices %+v, want one sent invoice", sentListBody.TotalCount, sentListBody.Invoices)
+	}
+	sentListApprox := sentListBody.Invoices[0].Totals.ApproxGBP
+	if sentListApprox == nil {
+		t.Fatal("sent list approx GBP = nil, want locked row approximation")
+	}
+	assertMoney(t, sentListApprox.Amount, 17_000, "GBP")
+	if !sentListApprox.Locked || sentListApprox.Rate.Value != "0.85" {
+		t.Fatalf("sent list approx GBP = %+v, want locked 0.85 rate", sentListApprox)
+	}
+
 	revert := performInvoiceRequest(t, h, nethttp.MethodPost, "/api/invoicing/invoices/"+draft.ID+"/revert", nil, true)
 	if revert.StatusCode != nethttp.StatusOK {
 		t.Fatalf("revert invoice status = %d, want %d; body=%s", revert.StatusCode, nethttp.StatusOK, revert.BodyString())
