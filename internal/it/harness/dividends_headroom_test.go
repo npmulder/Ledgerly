@@ -355,6 +355,10 @@ func (dividendsTestInvoicing) InvoiceByNumber(context.Context, string) (invoicin
 	return invoicing.Invoice{}, errors.New("unexpected invoice lookup")
 }
 
+func (dividendsTestInvoicing) InvoiceVATContextBySendEntryID(context.Context, ledger.EntryID) (invoicing.InvoiceVATContext, error) {
+	return invoicing.InvoiceVATContext{}, errors.New("unexpected invoice VAT context lookup")
+}
+
 func (dividendsTestInvoicing) Client(context.Context, string) (invoicing.Client, error) {
 	return invoicing.Client{}, errors.New("unexpected client lookup")
 }
