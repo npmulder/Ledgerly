@@ -27,8 +27,11 @@ func TestJurisdictionPackageHasNoInternalModuleImports(t *testing.T) {
 	}
 
 	for _, importPath := range pkg.Imports {
+		if importPath == "github.com/npmulder/ledgerly/internal/moneyfx/money" {
+			continue
+		}
 		if strings.HasPrefix(importPath, "github.com/npmulder/ledgerly/internal/") {
-			t.Fatalf("jurisdiction imports internal dependency %q; package must remain a leaf", importPath)
+			t.Fatalf("jurisdiction imports internal dependency %q; package must remain a leaf except for the shared money value type", importPath)
 		}
 	}
 }
