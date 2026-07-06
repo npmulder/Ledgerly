@@ -83,6 +83,23 @@ func DividendWithholding(taxYear string) (string, error) {
 	return year.Withholding, nil
 }
 
+// DividendPersonalTaxSetAsideMessage renders the pack-owned validation-strip
+// wording for a marginal personal tax set-aside estimate.
+func DividendPersonalTaxSetAsideMessage(taxYear string, estimate Money) (string, error) {
+	pack, err := activePackSnapshot()
+	if err != nil {
+		return "", err
+	}
+	if estimate.Currency != pack.Meta.Currency {
+		return "", UnsupportedCurrencyError{Got: estimate.Currency, Want: pack.Meta.Currency}
+	}
+	year, ok := pack.Tax.Dividends[taxYear]
+	if !ok {
+		return "", UnknownTaxYearError{TaxYear: taxYear, Path: "tax.dividends"}
+	}
+	return strings.ReplaceAll(year.PersonalTaxSetAsideTemplate, "{{ estimate }}", estimate.Format()), nil
+}
+
 // VATStandardRate returns the VAT standard rate for a tax year.
 func VATStandardRate(taxYear string) (Rate, error) {
 	pack, err := activePackSnapshot()

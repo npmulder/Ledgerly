@@ -67,6 +67,18 @@ func TestIsleOfManAccessorsReturnHandoffValues2025_26(t *testing.T) {
 			},
 		},
 		{
+			name: "dividend personal tax set-aside message",
+			check: func(t *testing.T) {
+				got, err := DividendPersonalTaxSetAsideMessage("2025-26", Money{Amount: 1_500, Currency: "GBP"})
+				if err != nil {
+					t.Fatalf("DividendPersonalTaxSetAsideMessage() error = %v", err)
+				}
+				if got != "set aside personally £15.00" {
+					t.Fatalf("DividendPersonalTaxSetAsideMessage() = %q, want set aside personally £15.00", got)
+				}
+			},
+		},
+		{
 			name: "VAT standard rate",
 			check: func(t *testing.T) {
 				got, err := VATStandardRate("2025-26")
@@ -301,6 +313,13 @@ func TestTaxYearAccessorsReturnTypedErrorForUnknownTaxYear(t *testing.T) {
 			name: "dividend withholding",
 			call: func() error {
 				_, err := DividendWithholding("2099-00")
+				return err
+			},
+		},
+		{
+			name: "dividend personal tax set-aside message",
+			call: func() error {
+				_, err := DividendPersonalTaxSetAsideMessage("2099-00", Money{Amount: 1, Currency: "GBP"})
 				return err
 			},
 		},

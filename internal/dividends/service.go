@@ -398,8 +398,11 @@ func (s *Service) validateAt(
 			PriorEstimate: priorEstimate,
 			TotalEstimate: totalEstimate,
 			Marginal:      marginal,
-			Message:       fmt.Sprintf("set aside personally %s", marginal.Format()),
 		},
+	}
+	result.PersonalTax.Message, err = jurisdiction.DividendPersonalTaxSetAsideMessage(taxYear, marginal)
+	if err != nil {
+		return ValidationResult{}, err
 	}
 
 	if !headroom.Distributable {
@@ -514,38 +517,14 @@ func perShareAmount(amount money.Money, shares int64) (money.Money, error) {
 	if shares <= 0 {
 		return money.Money{}, fmt.Errorf("dividends: shares must be positive: %w", ErrInvalidDeclaration)
 	}
-	maxInt := int64(int(^uint(0) >> 1))
-	if shares > maxInt {
-		return money.Money{}, fmt.Errorf("dividends: shares %d exceed allocation limit: %w", shares, ErrInvalidDeclaration)
+	if amount.Amount%shares != 0 {
+		return money.Money{}, fmt.Errorf("dividends: amount %s cannot be represented as a uniform per-share amount across %d shares: %w",
+			amount.Format(),
+			shares,
+			ErrInvalidDeclaration,
+		)
 	}
-	ratios := make([]int, int(shares))
-	for i := range ratios {
-		ratios[i] = 1
-	}
-	allocations := amount.Allocate(ratios)
-	if len(allocations) == 0 {
-		return money.Money{}, fmt.Errorf("dividends: no share allocations: %w", ErrInvalidDeclaration)
-	}
-
-	perShare := allocations[0]
-	total := money.Zero(amount.Currency)
-	for i, allocation := range allocations {
-		next, err := total.Add(allocation)
-		if err != nil {
-			return money.Money{}, fmt.Errorf("dividends: sum share allocation %d: %w", i, err)
-		}
-		total = next
-		if allocation != perShare {
-			return money.Money{}, fmt.Errorf("dividends: amount %s cannot be represented as a uniform per-share amount across %d shares: %w",
-				amount.Format(),
-				shares,
-				ErrInvalidDeclaration,
-			)
-		}
-	}
-	if total != amount {
-		return money.Money{}, fmt.Errorf("dividends: share allocations sum to %+v, want %+v: %w", total, amount, ErrInvalidDeclaration)
-	}
+	perShare := money.Money{Amount: amount.Amount / shares, Currency: amount.Currency}
 	if perShare.Amount <= 0 {
 		return money.Money{}, fmt.Errorf("dividends: per share amount must be positive: %w", ErrInvalidDeclaration)
 	}
