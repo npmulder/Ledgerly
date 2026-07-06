@@ -459,6 +459,11 @@ type DividendsAddress struct {
 	Region     string `json:"region"`
 }
 
+// DividendsAmountRequest defines model for DividendsAmountRequest.
+type DividendsAmountRequest struct {
+	Amount DividendsMoney `json:"amount"`
+}
+
 // DividendsCompanySnapshot defines model for DividendsCompanySnapshot.
 type DividendsCompanySnapshot struct {
 	CompanyNumber    string           `json:"company_number"`
@@ -490,6 +495,12 @@ type DividendsDocumentPayload struct {
 	Declaration DividendsDeclaration `json:"declaration"`
 }
 
+// DividendsFieldError defines model for DividendsFieldError.
+type DividendsFieldError struct {
+	Detail  string `json:"detail"`
+	Pointer string `json:"pointer"`
+}
+
 // DividendsHeadroomBreakdown defines model for DividendsHeadroomBreakdown.
 type DividendsHeadroomBreakdown struct {
 	AsOf          time.Time            `json:"as_of"`
@@ -497,6 +508,11 @@ type DividendsHeadroomBreakdown struct {
 	Distributable bool                 `json:"distributable"`
 	FinancialYear string               `json:"financial_year"`
 	Lines         []DividendsMoneyLine `json:"lines"`
+}
+
+// DividendsHistoryResponse defines model for DividendsHistoryResponse.
+type DividendsHistoryResponse struct {
+	Declarations []DividendsDeclaration `json:"declarations"`
 }
 
 // DividendsMoney defines model for DividendsMoney.
@@ -511,6 +527,15 @@ type DividendsMoneyLine struct {
 	Label  string         `json:"label"`
 }
 
+// DividendsPersonalTaxValidation defines model for DividendsPersonalTaxValidation.
+type DividendsPersonalTaxValidation struct {
+	Marginal     DividendsMoney `json:"marginal"`
+	Message      string         `json:"message"`
+	PriorYtd     DividendsMoney `json:"prior_ytd"`
+	TaxYear      string         `json:"tax_year"`
+	WithDividend DividendsMoney `json:"with_dividend"`
+}
+
 // DividendsShareholderSnapshot defines model for DividendsShareholderSnapshot.
 type DividendsShareholderSnapshot struct {
 	Class  string `json:"class"`
@@ -518,11 +543,42 @@ type DividendsShareholderSnapshot struct {
 	Shares int64  `json:"shares"`
 }
 
+// DividendsValidationProblem defines model for DividendsValidationProblem.
+type DividendsValidationProblem struct {
+	Detail               *string                `json:"detail,omitempty"`
+	DistributableTotal   *DividendsMoney        `json:"distributable_total,omitempty"`
+	Errors               []DividendsFieldError  `json:"errors"`
+	Instance             *string                `json:"instance,omitempty"`
+	Status               int32                  `json:"status"`
+	Title                string                 `json:"title"`
+	Type                 string                 `json:"type"`
+	AdditionalProperties map[string]interface{} `json:"-"`
+}
+
+// DividendsValidationResult defines model for DividendsValidationResult.
+type DividendsValidationResult struct {
+	Amount             DividendsMoney                 `json:"amount"`
+	Distributable      bool                           `json:"distributable"`
+	DistributableTotal DividendsMoney                 `json:"distributable_total"`
+	Headroom           DividendsHeadroomBreakdown     `json:"headroom"`
+	PersonalTax        DividendsPersonalTaxValidation `json:"personal_tax"`
+	Withholding        DividendsWithholdingValidation `json:"withholding"`
+	WithinHeadroom     bool                           `json:"within_headroom"`
+}
+
 // DividendsWithholdingSnapshot defines model for DividendsWithholdingSnapshot.
 type DividendsWithholdingSnapshot struct {
 	Note    string `json:"note"`
 	Policy  string `json:"policy"`
 	TaxYear string `json:"tax_year"`
+}
+
+// DividendsWithholdingValidation defines model for DividendsWithholdingValidation.
+type DividendsWithholdingValidation struct {
+	Applies       bool   `json:"applies"`
+	Informational bool   `json:"informational"`
+	Policy        string `json:"policy"`
+	TaxYear       string `json:"tax_year"`
 }
 
 // FieldError defines model for FieldError.
@@ -1289,6 +1345,12 @@ type ReportsGetVATReturnParams struct {
 	Period string `form:"period" json:"period"`
 }
 
+// DividendsDeclareAmountJSONRequestBody defines body for DividendsDeclareAmount for application/json ContentType.
+type DividendsDeclareAmountJSONRequestBody = DividendsAmountRequest
+
+// DividendsValidateAmountJSONRequestBody defines body for DividendsValidateAmount for application/json ContentType.
+type DividendsValidateAmountJSONRequestBody = DividendsAmountRequest
+
 // DlaCreateEntryJSONRequestBody defines body for DlaCreateEntry for application/json ContentType.
 type DlaCreateEntryJSONRequestBody = DLAEntryRequest
 
@@ -1415,6 +1477,156 @@ func (a DLAValidationProblem) MarshalJSON() ([]byte, error) {
 		object["detail"], err = json.Marshal(a.Detail)
 		if err != nil {
 			return nil, fmt.Errorf("error marshaling 'detail': %w", err)
+		}
+	}
+
+	object["errors"], err = json.Marshal(a.Errors)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'errors': %w", err)
+	}
+
+	if a.Instance != nil {
+		object["instance"], err = json.Marshal(a.Instance)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'instance': %w", err)
+		}
+	}
+
+	object["status"], err = json.Marshal(a.Status)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'status': %w", err)
+	}
+
+	object["title"], err = json.Marshal(a.Title)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'title': %w", err)
+	}
+
+	object["type"], err = json.Marshal(a.Type)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'type': %w", err)
+	}
+
+	for fieldName, field := range a.AdditionalProperties {
+		object[fieldName], err = json.Marshal(field)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
+		}
+	}
+	return json.Marshal(object)
+}
+
+// Getter for additional properties for DividendsValidationProblem. Returns the specified
+// element and whether it was found
+func (a DividendsValidationProblem) Get(fieldName string) (value interface{}, found bool) {
+	if a.AdditionalProperties != nil {
+		value, found = a.AdditionalProperties[fieldName]
+	}
+	return
+}
+
+// Setter for additional properties for DividendsValidationProblem
+func (a *DividendsValidationProblem) Set(fieldName string, value interface{}) {
+	if a.AdditionalProperties == nil {
+		a.AdditionalProperties = make(map[string]interface{})
+	}
+	a.AdditionalProperties[fieldName] = value
+}
+
+// Override default JSON handling for DividendsValidationProblem to handle AdditionalProperties
+func (a *DividendsValidationProblem) UnmarshalJSON(b []byte) error {
+	object := make(map[string]json.RawMessage)
+	err := json.Unmarshal(b, &object)
+	if err != nil {
+		return err
+	}
+
+	if raw, found := object["detail"]; found {
+		err = json.Unmarshal(raw, &a.Detail)
+		if err != nil {
+			return fmt.Errorf("error reading 'detail': %w", err)
+		}
+		delete(object, "detail")
+	}
+
+	if raw, found := object["distributable_total"]; found {
+		err = json.Unmarshal(raw, &a.DistributableTotal)
+		if err != nil {
+			return fmt.Errorf("error reading 'distributable_total': %w", err)
+		}
+		delete(object, "distributable_total")
+	}
+
+	if raw, found := object["errors"]; found {
+		err = json.Unmarshal(raw, &a.Errors)
+		if err != nil {
+			return fmt.Errorf("error reading 'errors': %w", err)
+		}
+		delete(object, "errors")
+	}
+
+	if raw, found := object["instance"]; found {
+		err = json.Unmarshal(raw, &a.Instance)
+		if err != nil {
+			return fmt.Errorf("error reading 'instance': %w", err)
+		}
+		delete(object, "instance")
+	}
+
+	if raw, found := object["status"]; found {
+		err = json.Unmarshal(raw, &a.Status)
+		if err != nil {
+			return fmt.Errorf("error reading 'status': %w", err)
+		}
+		delete(object, "status")
+	}
+
+	if raw, found := object["title"]; found {
+		err = json.Unmarshal(raw, &a.Title)
+		if err != nil {
+			return fmt.Errorf("error reading 'title': %w", err)
+		}
+		delete(object, "title")
+	}
+
+	if raw, found := object["type"]; found {
+		err = json.Unmarshal(raw, &a.Type)
+		if err != nil {
+			return fmt.Errorf("error reading 'type': %w", err)
+		}
+		delete(object, "type")
+	}
+
+	if len(object) != 0 {
+		a.AdditionalProperties = make(map[string]interface{})
+		for fieldName, fieldBuf := range object {
+			var fieldVal interface{}
+			err := json.Unmarshal(fieldBuf, &fieldVal)
+			if err != nil {
+				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
+			}
+			a.AdditionalProperties[fieldName] = fieldVal
+		}
+	}
+	return nil
+}
+
+// Override default JSON handling for DividendsValidationProblem to handle AdditionalProperties
+func (a DividendsValidationProblem) MarshalJSON() ([]byte, error) {
+	var err error
+	object := make(map[string]json.RawMessage)
+
+	if a.Detail != nil {
+		object["detail"], err = json.Marshal(a.Detail)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'detail': %w", err)
+		}
+	}
+
+	if a.DistributableTotal != nil {
+		object["distributable_total"], err = json.Marshal(a.DistributableTotal)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'distributable_total': %w", err)
 		}
 	}
 
@@ -1799,6 +2011,28 @@ type ClientInterface interface {
 	// DividendsGetVoucherPDF request
 	DividendsGetVoucherPDF(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// DividendsDeclareAmountWithBody request with any body
+	DividendsDeclareAmountWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	DividendsDeclareAmount(ctx context.Context, body DividendsDeclareAmountJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DividendsGetHeadroom request
+	DividendsGetHeadroom(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DividendsGetHistory request
+	DividendsGetHistory(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DividendsValidateAmountWithBody request with any body
+	DividendsValidateAmountWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	DividendsValidateAmount(ctx context.Context, body DividendsValidateAmountJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DividendsGetMinutesPDFByID request
+	DividendsGetMinutesPDFByID(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DividendsGetVoucherPDFByID request
+	DividendsGetVoucherPDFByID(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// DlaGetBalance request
 	DlaGetBalance(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -1997,6 +2231,102 @@ func (c *Client) DividendsGetDeclarationDocumentPayload(ctx context.Context, id 
 
 func (c *Client) DividendsGetVoucherPDF(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDividendsGetVoucherPDFRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DividendsDeclareAmountWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDividendsDeclareAmountRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DividendsDeclareAmount(ctx context.Context, body DividendsDeclareAmountJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDividendsDeclareAmountRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DividendsGetHeadroom(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDividendsGetHeadroomRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DividendsGetHistory(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDividendsGetHistoryRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DividendsValidateAmountWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDividendsValidateAmountRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DividendsValidateAmount(ctx context.Context, body DividendsValidateAmountJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDividendsValidateAmountRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DividendsGetMinutesPDFByID(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDividendsGetMinutesPDFByIDRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DividendsGetVoucherPDFByID(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDividendsGetVoucherPDFByIDRequest(c.Server, id)
 	if err != nil {
 		return nil, err
 	}
@@ -2777,6 +3107,208 @@ func NewDividendsGetVoucherPDFRequest(server string, id string) (*http.Request, 
 	}
 
 	operationPath := fmt.Sprintf("/api/dividends/declarations/%s/voucher", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewDividendsDeclareAmountRequest calls the generic DividendsDeclareAmount builder with application/json body
+func NewDividendsDeclareAmountRequest(server string, body DividendsDeclareAmountJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewDividendsDeclareAmountRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewDividendsDeclareAmountRequestWithBody generates requests for DividendsDeclareAmount with any type of body
+func NewDividendsDeclareAmountRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/dividends/declare")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDividendsGetHeadroomRequest generates requests for DividendsGetHeadroom
+func NewDividendsGetHeadroomRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/dividends/headroom")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewDividendsGetHistoryRequest generates requests for DividendsGetHistory
+func NewDividendsGetHistoryRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/dividends/history")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewDividendsValidateAmountRequest calls the generic DividendsValidateAmount builder with application/json body
+func NewDividendsValidateAmountRequest(server string, body DividendsValidateAmountJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewDividendsValidateAmountRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewDividendsValidateAmountRequestWithBody generates requests for DividendsValidateAmount with any type of body
+func NewDividendsValidateAmountRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/dividends/validate")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDividendsGetMinutesPDFByIDRequest generates requests for DividendsGetMinutesPDFByID
+func NewDividendsGetMinutesPDFByIDRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/dividends/%s/minutes", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewDividendsGetVoucherPDFByIDRequest generates requests for DividendsGetVoucherPDFByID
+func NewDividendsGetVoucherPDFByIDRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/dividends/%s/voucher", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -4622,6 +5154,28 @@ type ClientWithResponsesInterface interface {
 	// DividendsGetVoucherPDFWithResponse request
 	DividendsGetVoucherPDFWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DividendsGetVoucherPDFResponse, error)
 
+	// DividendsDeclareAmountWithBodyWithResponse request with any body
+	DividendsDeclareAmountWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DividendsDeclareAmountResponse, error)
+
+	DividendsDeclareAmountWithResponse(ctx context.Context, body DividendsDeclareAmountJSONRequestBody, reqEditors ...RequestEditorFn) (*DividendsDeclareAmountResponse, error)
+
+	// DividendsGetHeadroomWithResponse request
+	DividendsGetHeadroomWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*DividendsGetHeadroomResponse, error)
+
+	// DividendsGetHistoryWithResponse request
+	DividendsGetHistoryWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*DividendsGetHistoryResponse, error)
+
+	// DividendsValidateAmountWithBodyWithResponse request with any body
+	DividendsValidateAmountWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DividendsValidateAmountResponse, error)
+
+	DividendsValidateAmountWithResponse(ctx context.Context, body DividendsValidateAmountJSONRequestBody, reqEditors ...RequestEditorFn) (*DividendsValidateAmountResponse, error)
+
+	// DividendsGetMinutesPDFByIDWithResponse request
+	DividendsGetMinutesPDFByIDWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DividendsGetMinutesPDFByIDResponse, error)
+
+	// DividendsGetVoucherPDFByIDWithResponse request
+	DividendsGetVoucherPDFByIDWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DividendsGetVoucherPDFByIDResponse, error)
+
 	// DlaGetBalanceWithResponse request
 	DlaGetBalanceWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*DlaGetBalanceResponse, error)
 
@@ -4800,7 +5354,7 @@ type DividendsRenderDeclarationDocumentsResponse struct {
 	JSON200                   *DividendsDeclaration
 	ApplicationproblemJSON401 *Problem
 	ApplicationproblemJSON404 *Problem
-	ApplicationproblemJSON422 *ValidationProblem
+	ApplicationproblemJSON422 *DividendsValidationProblem
 }
 
 // Status returns HTTPResponse.Status
@@ -4823,7 +5377,7 @@ type DividendsGetMinutesPDFResponse struct {
 	Body                      []byte
 	HTTPResponse              *http.Response
 	ApplicationproblemJSON401 *Problem
-	ApplicationproblemJSON404 *ValidationProblem
+	ApplicationproblemJSON404 *DividendsValidationProblem
 }
 
 // Status returns HTTPResponse.Status
@@ -4848,7 +5402,7 @@ type DividendsGetDeclarationDocumentPayloadResponse struct {
 	JSON200                   *DividendsDocumentPayload
 	ApplicationproblemJSON401 *Problem
 	ApplicationproblemJSON404 *Problem
-	ApplicationproblemJSON422 *ValidationProblem
+	ApplicationproblemJSON422 *DividendsValidationProblem
 }
 
 // Status returns HTTPResponse.Status
@@ -4871,7 +5425,7 @@ type DividendsGetVoucherPDFResponse struct {
 	Body                      []byte
 	HTTPResponse              *http.Response
 	ApplicationproblemJSON401 *Problem
-	ApplicationproblemJSON404 *ValidationProblem
+	ApplicationproblemJSON404 *DividendsValidationProblem
 }
 
 // Status returns HTTPResponse.Status
@@ -4884,6 +5438,150 @@ func (r DividendsGetVoucherPDFResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r DividendsGetVoucherPDFResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type DividendsDeclareAmountResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON201                   *DividendsDeclaration
+	ApplicationproblemJSON400 *Problem
+	ApplicationproblemJSON401 *Problem
+	ApplicationproblemJSON413 *Problem
+	ApplicationproblemJSON422 *DividendsValidationProblem
+}
+
+// Status returns HTTPResponse.Status
+func (r DividendsDeclareAmountResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DividendsDeclareAmountResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type DividendsGetHeadroomResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON200                   *DividendsHeadroomBreakdown
+	ApplicationproblemJSON401 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r DividendsGetHeadroomResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DividendsGetHeadroomResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type DividendsGetHistoryResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON200                   *DividendsHistoryResponse
+	ApplicationproblemJSON401 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r DividendsGetHistoryResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DividendsGetHistoryResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type DividendsValidateAmountResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON200                   *DividendsValidationResult
+	ApplicationproblemJSON400 *Problem
+	ApplicationproblemJSON401 *Problem
+	ApplicationproblemJSON413 *Problem
+	ApplicationproblemJSON422 *DividendsValidationProblem
+}
+
+// Status returns HTTPResponse.Status
+func (r DividendsValidateAmountResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DividendsValidateAmountResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type DividendsGetMinutesPDFByIDResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	ApplicationproblemJSON401 *Problem
+	ApplicationproblemJSON404 *DividendsValidationProblem
+}
+
+// Status returns HTTPResponse.Status
+func (r DividendsGetMinutesPDFByIDResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DividendsGetMinutesPDFByIDResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type DividendsGetVoucherPDFByIDResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	ApplicationproblemJSON401 *Problem
+	ApplicationproblemJSON404 *DividendsValidationProblem
+}
+
+// Status returns HTTPResponse.Status
+func (r DividendsGetVoucherPDFByIDResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DividendsGetVoucherPDFByIDResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -5987,6 +6685,76 @@ func (c *ClientWithResponses) DividendsGetVoucherPDFWithResponse(ctx context.Con
 	return ParseDividendsGetVoucherPDFResponse(rsp)
 }
 
+// DividendsDeclareAmountWithBodyWithResponse request with arbitrary body returning *DividendsDeclareAmountResponse
+func (c *ClientWithResponses) DividendsDeclareAmountWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DividendsDeclareAmountResponse, error) {
+	rsp, err := c.DividendsDeclareAmountWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDividendsDeclareAmountResponse(rsp)
+}
+
+func (c *ClientWithResponses) DividendsDeclareAmountWithResponse(ctx context.Context, body DividendsDeclareAmountJSONRequestBody, reqEditors ...RequestEditorFn) (*DividendsDeclareAmountResponse, error) {
+	rsp, err := c.DividendsDeclareAmount(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDividendsDeclareAmountResponse(rsp)
+}
+
+// DividendsGetHeadroomWithResponse request returning *DividendsGetHeadroomResponse
+func (c *ClientWithResponses) DividendsGetHeadroomWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*DividendsGetHeadroomResponse, error) {
+	rsp, err := c.DividendsGetHeadroom(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDividendsGetHeadroomResponse(rsp)
+}
+
+// DividendsGetHistoryWithResponse request returning *DividendsGetHistoryResponse
+func (c *ClientWithResponses) DividendsGetHistoryWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*DividendsGetHistoryResponse, error) {
+	rsp, err := c.DividendsGetHistory(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDividendsGetHistoryResponse(rsp)
+}
+
+// DividendsValidateAmountWithBodyWithResponse request with arbitrary body returning *DividendsValidateAmountResponse
+func (c *ClientWithResponses) DividendsValidateAmountWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DividendsValidateAmountResponse, error) {
+	rsp, err := c.DividendsValidateAmountWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDividendsValidateAmountResponse(rsp)
+}
+
+func (c *ClientWithResponses) DividendsValidateAmountWithResponse(ctx context.Context, body DividendsValidateAmountJSONRequestBody, reqEditors ...RequestEditorFn) (*DividendsValidateAmountResponse, error) {
+	rsp, err := c.DividendsValidateAmount(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDividendsValidateAmountResponse(rsp)
+}
+
+// DividendsGetMinutesPDFByIDWithResponse request returning *DividendsGetMinutesPDFByIDResponse
+func (c *ClientWithResponses) DividendsGetMinutesPDFByIDWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DividendsGetMinutesPDFByIDResponse, error) {
+	rsp, err := c.DividendsGetMinutesPDFByID(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDividendsGetMinutesPDFByIDResponse(rsp)
+}
+
+// DividendsGetVoucherPDFByIDWithResponse request returning *DividendsGetVoucherPDFByIDResponse
+func (c *ClientWithResponses) DividendsGetVoucherPDFByIDWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DividendsGetVoucherPDFByIDResponse, error) {
+	rsp, err := c.DividendsGetVoucherPDFByID(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDividendsGetVoucherPDFByIDResponse(rsp)
+}
+
 // DlaGetBalanceWithResponse request returning *DlaGetBalanceResponse
 func (c *ClientWithResponses) DlaGetBalanceWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*DlaGetBalanceResponse, error) {
 	rsp, err := c.DlaGetBalance(ctx, reqEditors...)
@@ -6522,7 +7290,7 @@ func ParseDividendsRenderDeclarationDocumentsResponse(rsp *http.Response) (*Divi
 		response.ApplicationproblemJSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ValidationProblem
+		var dest DividendsValidationProblem
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -6555,7 +7323,7 @@ func ParseDividendsGetMinutesPDFResponse(rsp *http.Response) (*DividendsGetMinut
 		response.ApplicationproblemJSON401 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest ValidationProblem
+		var dest DividendsValidationProblem
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -6602,7 +7370,7 @@ func ParseDividendsGetDeclarationDocumentPayloadResponse(rsp *http.Response) (*D
 		response.ApplicationproblemJSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ValidationProblem
+		var dest DividendsValidationProblem
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -6635,7 +7403,247 @@ func ParseDividendsGetVoucherPDFResponse(rsp *http.Response) (*DividendsGetVouch
 		response.ApplicationproblemJSON401 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest ValidationProblem
+		var dest DividendsValidationProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDividendsDeclareAmountResponse parses an HTTP response from a DividendsDeclareAmountWithResponse call
+func ParseDividendsDeclareAmountResponse(rsp *http.Response) (*DividendsDeclareAmountResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DividendsDeclareAmountResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest DividendsDeclaration
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest DividendsValidationProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDividendsGetHeadroomResponse parses an HTTP response from a DividendsGetHeadroomWithResponse call
+func ParseDividendsGetHeadroomResponse(rsp *http.Response) (*DividendsGetHeadroomResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DividendsGetHeadroomResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DividendsHeadroomBreakdown
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDividendsGetHistoryResponse parses an HTTP response from a DividendsGetHistoryWithResponse call
+func ParseDividendsGetHistoryResponse(rsp *http.Response) (*DividendsGetHistoryResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DividendsGetHistoryResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DividendsHistoryResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDividendsValidateAmountResponse parses an HTTP response from a DividendsValidateAmountWithResponse call
+func ParseDividendsValidateAmountResponse(rsp *http.Response) (*DividendsValidateAmountResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DividendsValidateAmountResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DividendsValidationResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest DividendsValidationProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDividendsGetMinutesPDFByIDResponse parses an HTTP response from a DividendsGetMinutesPDFByIDWithResponse call
+func ParseDividendsGetMinutesPDFByIDResponse(rsp *http.Response) (*DividendsGetMinutesPDFByIDResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DividendsGetMinutesPDFByIDResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest DividendsValidationProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDividendsGetVoucherPDFByIDResponse parses an HTTP response from a DividendsGetVoucherPDFByIDWithResponse call
+func ParseDividendsGetVoucherPDFByIDResponse(rsp *http.Response) (*DividendsGetVoucherPDFByIDResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DividendsGetVoucherPDFByIDResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest DividendsValidationProblem
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
