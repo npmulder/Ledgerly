@@ -4,7 +4,7 @@ import { cx } from "@/components/utils";
 
 type CardElement = "article" | "div" | "section";
 
-export type CardProps = HTMLAttributes<HTMLElement> & {
+export type CardProps = Omit<HTMLAttributes<HTMLElement>, "title"> & {
   readonly actions?: ReactNode;
   readonly as?: CardElement;
   readonly children: ReactNode;
@@ -37,7 +37,7 @@ export function Card({
 
 export type PanelVariant = "default" | "advisor";
 
-export type PanelProps = HTMLAttributes<HTMLElement> & {
+export type PanelProps = Omit<HTMLAttributes<HTMLElement>, "title"> & {
   readonly children: ReactNode;
   readonly eyebrow?: ReactNode;
   readonly title?: ReactNode;
