@@ -81,7 +81,7 @@ type identExpr struct {
 func (e identExpr) eval(ctx *conditionContext) (conditionValue, error) {
 	raw, ok := ctx.resolve(e.key)
 	if !ok {
-		return conditionValue{}, unknownFactError{key: e.key}
+		return conditionValue{}, unknownFactError(e)
 	}
 	value, err := conditionValueFromFact(raw)
 	if err != nil {
