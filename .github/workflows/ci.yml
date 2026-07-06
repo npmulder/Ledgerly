@@ -183,6 +183,12 @@ jobs:
       - name: Unit tests
         run: task test
 
+      - name: Money package coverage
+        run: |
+          go test ./internal/moneyfx/money -covermode=count -coverprofile=/tmp/moneyfx-money.cover
+          total="$(go tool cover -func=/tmp/moneyfx-money.cover | awk '/^total:/ {print $3}')"
+          test "$total" = "100.0%"
+
   golden-snapshots:
     name: golden snapshots
     runs-on: ubuntu-latest
