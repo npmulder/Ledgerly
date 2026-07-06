@@ -26,7 +26,7 @@ var (
 		"app":          dependencySet("dla", "identity", "invoicing", "jurisdiction", "ledger", "moneyfx"),
 		"banking":      dependencySet("ledger", "moneyfx", "invoicing", "dla"),
 		"cli":          dependencySet(),
-		"dividends":    dependencySet("ledger", "reports", "jurisdiction", "identity"),
+		"dividends":    dependencySet("ledger", "reports", "jurisdiction", "identity", "dla"),
 		"dla":          dependencySet("ledger", "jurisdiction"),
 		"identity":     dependencySet(),
 		"invoicing":    dependencySet("moneyfx", "ledger", "jurisdiction", "identity"),
