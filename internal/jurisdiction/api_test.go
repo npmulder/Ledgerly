@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestIsleOfManAccessorsReturnHandoffValues2025_26(t *testing.T) {
@@ -243,6 +244,44 @@ func TestTaxYearAccessorsReturnTypedErrorForUnknownTaxYear(t *testing.T) {
 			}
 			if unknownYear.TaxYear != "2099-00" {
 				t.Fatalf("UnknownTaxYearError.TaxYear = %q, want 2099-00", unknownYear.TaxYear)
+			}
+		})
+	}
+}
+
+func TestTaxYearForDateUsesActivePackYearEnd(t *testing.T) {
+	loadIsleOfManForAccessors(t)
+
+	tests := []struct {
+		name string
+		date time.Time
+		want string
+	}{
+		{
+			name: "first day after year end starts new key",
+			date: time.Date(2025, 4, 6, 12, 0, 0, 0, time.UTC),
+			want: "2025-26",
+		},
+		{
+			name: "year end date belongs to ending key",
+			date: time.Date(2026, 4, 5, 12, 0, 0, 0, time.UTC),
+			want: "2025-26",
+		},
+		{
+			name: "next day starts following key",
+			date: time.Date(2026, 4, 6, 12, 0, 0, 0, time.UTC),
+			want: "2026-27",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := TaxYearForDate(tt.date)
+			if err != nil {
+				t.Fatalf("TaxYearForDate() error = %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("TaxYearForDate() = %q, want %q", got, tt.want)
 			}
 		})
 	}

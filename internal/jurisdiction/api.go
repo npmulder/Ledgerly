@@ -3,6 +3,7 @@ package jurisdiction
 import (
 	"errors"
 	"fmt"
+	"time"
 )
 
 // ErrNoActivePack means accessors were called before startup installed a pack.
@@ -84,6 +85,30 @@ func VATStandardRate(taxYear string) (Rate, error) {
 	return year.StandardRate, nil
 }
 
+// VATStandardRateForDate returns the VAT standard rate for the active pack tax
+// year containing date.
+func VATStandardRateForDate(date time.Time) (Rate, string, error) {
+	taxYear, err := TaxYearForDate(date)
+	if err != nil {
+		return "", "", err
+	}
+	rate, err := VATStandardRate(taxYear)
+	if err != nil {
+		return "", taxYear, err
+	}
+	return rate, taxYear, nil
+}
+
+// TaxYearForDate resolves a date into the active pack's tax-year key, for
+// example 2025-26.
+func TaxYearForDate(date time.Time) (string, error) {
+	pack, err := activePackSnapshot()
+	if err != nil {
+		return "", err
+	}
+	return taxYearForDate(date, pack.Tax.YearEnd)
+}
+
 // ReverseChargeWording returns invoice wording for a reverse-charge kind.
 func ReverseChargeWording(kind string) (Wording, error) {
 	pack, err := activePackSnapshot()
@@ -95,6 +120,27 @@ func ReverseChargeWording(kind string) (Wording, error) {
 		return Wording{}, UnknownReverseChargeKindError{Kind: kind}
 	}
 	return wording, nil
+}
+
+func taxYearForDate(date time.Time, yearEnd YearEnd) (string, error) {
+	if date.IsZero() {
+		return "", fmt.Errorf("jurisdiction: date is required")
+	}
+	if err := validateYearEnd(yearEnd); err != nil {
+		return "", err
+	}
+
+	year, _, _ := date.UTC().Date()
+	yearEndDate := time.Date(year, yearEnd.Month, yearEnd.Day, 0, 0, 0, 0, time.UTC)
+	dateOnly := time.Date(year, date.UTC().Month(), date.UTC().Day(), 0, 0, 0, 0, time.UTC)
+
+	startYear := year - 1
+	endYear := year
+	if dateOnly.After(yearEndDate) {
+		startYear = year
+		endYear = year + 1
+	}
+	return fmt.Sprintf("%04d-%02d", startYear, endYear%100), nil
 }
 
 // FilingRules returns declarative filing rules. Use FilingDeadlines to resolve
