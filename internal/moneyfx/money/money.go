@@ -213,10 +213,11 @@ func ParseAmount(input, currency string) (Money, error) {
 	}
 
 	sign := int64(1)
+	signSeen := false
 	var ok bool
-	s, sign, _ = consumeSign(s, sign)
+	s, sign, signSeen, _ = consumeSign(s, sign, signSeen)
 	s = stripCurrencyPrefix(strings.TrimSpace(s), currency, info)
-	s, sign, ok = consumeSign(strings.TrimSpace(s), sign)
+	s, sign, _, ok = consumeSign(strings.TrimSpace(s), sign, signSeen)
 	if !ok {
 		return Money{}, fmt.Errorf("money: parse amount %q: repeated sign", input)
 	}
@@ -373,20 +374,20 @@ func padRight(s string, width int) string {
 	return s + strings.Repeat("0", width-len(s))
 }
 
-func consumeSign(s string, current int64) (string, int64, bool) {
+func consumeSign(s string, current int64, consumed bool) (string, int64, bool, bool) {
 	switch {
 	case strings.HasPrefix(s, "+"):
-		if current != 1 {
-			return s, current, false
+		if consumed {
+			return s, current, consumed, false
 		}
-		return strings.TrimSpace(strings.TrimPrefix(s, "+")), 1, true
+		return strings.TrimSpace(strings.TrimPrefix(s, "+")), 1, true, true
 	case strings.HasPrefix(s, "-"):
-		if current != 1 {
-			return s, current, false
+		if consumed {
+			return s, current, consumed, false
 		}
-		return strings.TrimSpace(strings.TrimPrefix(s, "-")), -1, true
+		return strings.TrimSpace(strings.TrimPrefix(s, "-")), -1, true, true
 	default:
-		return s, current, true
+		return s, current, consumed, true
 	}
 }
 
