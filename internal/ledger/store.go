@@ -381,6 +381,53 @@ END, p.currency`, from, to)
 	return balances, nil
 }
 
+// TrialBalance sums every posting on or before asOf to check the full-ledger
+// double-entry invariant.
+func (Store) TrialBalance(ctx context.Context, tx db.Tx, asOf time.Time) (TrialBalance, error) {
+	rows, err := tx.Query(ctx, `
+SELECT currency, COALESCE(sum(amount), 0)::bigint, COALESCE(sum(amount_gbp), 0)::bigint
+FROM ledger.postings
+WHERE entry_date <= $1
+GROUP BY currency
+ORDER BY currency`, asOf)
+	if err != nil {
+		return TrialBalance{}, fmt.Errorf("ledger: trial balance: %w", err)
+	}
+	defer rows.Close()
+
+	report := TrialBalance{
+		AsOf:      asOf,
+		Status:    TrialBalanceStatusBalanced,
+		AmountGBP: money.Money{Currency: "GBP"},
+	}
+	for rows.Next() {
+		var (
+			currency  string
+			amount    int64
+			amountGBP int64
+		)
+		if err := rows.Scan(&currency, &amount, &amountGBP); err != nil {
+			return TrialBalance{}, fmt.Errorf("ledger: scan trial balance: %w", err)
+		}
+		report.Native = append(report.Native, money.Money{Amount: amount, Currency: currency})
+		totalGBP, err := addMinorUnits(report.AmountGBP.Amount, amountGBP)
+		if err != nil {
+			return TrialBalance{}, fmt.Errorf("ledger: trial balance GBP overflow: %w", ErrInvalidMoney)
+		}
+		report.AmountGBP.Amount = totalGBP
+		if amount != 0 {
+			report.Status = TrialBalanceStatusOutOfBalance
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return TrialBalance{}, fmt.Errorf("ledger: collect trial balance: %w", err)
+	}
+	if report.AmountGBP.Amount != 0 {
+		report.Status = TrialBalanceStatusOutOfBalance
+	}
+	return report, nil
+}
+
 // Entries loads journal entries matching filter and attaches all postings for
 // each matched entry.
 func (Store) Entries(ctx context.Context, tx db.Tx, filter EntryFilter) ([]JournalEntry, error) {

@@ -134,6 +134,18 @@ func (s *Service) BalancesByType(ctx context.Context, from time.Time, to time.Ti
 	return s.store.BalancesByType(ctx, s.pool, normalizedFrom, normalizedTo)
 }
 
+// TrialBalance returns the full-ledger invariant status as of a date.
+func (s *Service) TrialBalance(ctx context.Context, asOf time.Time) (TrialBalance, error) {
+	if s.pool == nil {
+		return TrialBalance{}, fmt.Errorf("ledger: trial balance requires pool")
+	}
+	normalizedAsOf, err := normalizeEntryDate(asOf)
+	if err != nil {
+		return TrialBalance{}, err
+	}
+	return s.store.TrialBalance(ctx, s.pool, normalizedAsOf)
+}
+
 // Entries returns journal entries with postings for browse/export. Filters use
 // inclusive date bounds, stable ordering by date then id, and keyset pagination
 // through EntryFilter.After.

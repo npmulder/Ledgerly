@@ -19,10 +19,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/lib/pq"
 
-	"github.com/npmulder/ledgerly/internal/demo"
 	"github.com/npmulder/ledgerly/internal/identity"
 	"github.com/npmulder/ledgerly/internal/invoicing"
 	"github.com/npmulder/ledgerly/internal/jurisdiction"
+	"github.com/npmulder/ledgerly/internal/ledger"
 	"github.com/npmulder/ledgerly/internal/platform/bus"
 	"github.com/npmulder/ledgerly/internal/platform/clock"
 	"github.com/npmulder/ledgerly/internal/platform/config"
@@ -52,8 +52,8 @@ type ModuleDeps struct {
 	Logger        *slog.Logger
 	Clock         clock.Clock
 	Bus           *bus.Bus
-	DemoPool      *pgxpool.Pool
 	InvoicingPool *pgxpool.Pool
+	LedgerPool    *pgxpool.Pool
 }
 
 // Module is a module contribution to the HTTP router and in-process bus.
@@ -73,8 +73,8 @@ type Dependencies struct {
 	HealthCloser io.Closer
 
 	IdentityPool  *pgxpool.Pool
-	DemoPool      *pgxpool.Pool
 	InvoicingPool *pgxpool.Pool
+	LedgerPool    *pgxpool.Pool
 
 	Bus        *bus.Bus
 	BusOptions []bus.Option
@@ -107,8 +107,8 @@ type App struct {
 
 	HealthDB        httpserver.Pinger
 	IdentityPool    *pgxpool.Pool
-	DemoPool        *pgxpool.Pool
 	InvoicingPool   *pgxpool.Pool
+	LedgerPool      *pgxpool.Pool
 	IdentityService *identity.Service
 
 	jobs   map[string]Job
@@ -159,7 +159,7 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 	if err != nil {
 		return nil, err
 	}
-	demoPool, err := modulePool(ctx, cfg.Runtime.DatabaseURL, demo.ModuleName, deps.DemoPool, openPool, &closeFuncs)
+	ledgerPool, err := modulePool(ctx, cfg.Runtime.DatabaseURL, ledger.ModuleName, deps.LedgerPool, openPool, &closeFuncs)
 	if err != nil {
 		return nil, err
 	}
@@ -213,6 +213,26 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		jurisdictionOpenAPIFragment(),
 	}
 
+	ledgerBuilder := buildLedgerModule
+	if deps.ModuleBuilders != nil && deps.ModuleBuilders[ledger.ModuleName] != nil {
+		ledgerBuilder = deps.ModuleBuilders[ledger.ModuleName]
+	}
+	ledgerModule, err := ledgerBuilder(ctx, ModuleDeps{
+		Logger:        logger,
+		Clock:         clk,
+		Bus:           eventBus,
+		InvoicingPool: invoicingPool,
+		LedgerPool:    ledgerPool,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if ledgerModule.SubscribeEvents != nil {
+		ledgerModule.SubscribeEvents(eventBus)
+	}
+	modules = append(modules, ledgerModule.HTTPModule)
+	fragments = append(fragments, ledgerModule.OpenAPIFragment)
+
 	invoicingBuilder := buildInvoicingModule
 	if deps.ModuleBuilders != nil && deps.ModuleBuilders[invoicing.ModuleName] != nil {
 		invoicingBuilder = deps.ModuleBuilders[invoicing.ModuleName]
@@ -221,8 +241,8 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		Logger:        logger,
 		Clock:         clk,
 		Bus:           eventBus,
-		DemoPool:      demoPool,
 		InvoicingPool: invoicingPool,
+		LedgerPool:    ledgerPool,
 	})
 	if err != nil {
 		return nil, err
@@ -232,26 +252,6 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 	}
 	modules = append(modules, invoicingModule.HTTPModule)
 	fragments = append(fragments, invoicingModule.OpenAPIFragment)
-
-	demoBuilder := buildDemoModule
-	if deps.ModuleBuilders != nil && deps.ModuleBuilders[demo.ModuleName] != nil {
-		demoBuilder = deps.ModuleBuilders[demo.ModuleName]
-	}
-	demoModule, err := demoBuilder(ctx, ModuleDeps{
-		Logger:        logger,
-		Clock:         clk,
-		Bus:           eventBus,
-		DemoPool:      demoPool,
-		InvoicingPool: invoicingPool,
-	})
-	if err != nil {
-		return nil, err
-	}
-	if demoModule.SubscribeEvents != nil {
-		demoModule.SubscribeEvents(eventBus)
-	}
-	modules = append(modules, demoModule.HTTPModule)
-	fragments = append(fragments, demoModule.OpenAPIFragment)
 
 	staticAssets, err := loadStaticAssets(deps)
 	if err != nil {
@@ -275,8 +275,8 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		Clock:           clk,
 		HealthDB:        healthDB,
 		IdentityPool:    identityPool,
-		DemoPool:        demoPool,
 		InvoicingPool:   invoicingPool,
+		LedgerPool:      ledgerPool,
 		IdentityService: identityService,
 		jobs:            copyJobs(deps.Jobs),
 		closer: func() error {
@@ -295,9 +295,24 @@ func OpenAPIDocument(version string) map[string]any {
 		version,
 		identity.OpenAPIFragment(),
 		jurisdictionOpenAPIFragment(),
+		ledger.OpenAPIFragment(),
 		invoicing.OpenAPIFragment(),
-		demo.OpenAPIFragment(),
 	)
+}
+
+func buildLedgerModule(_ context.Context, deps ModuleDeps) (Module, error) {
+	ledgerModule, err := ledger.NewModule(ledger.Config{
+		Pool:  deps.LedgerPool,
+		Bus:   deps.Bus,
+		Clock: deps.Clock,
+	})
+	if err != nil {
+		return Module{}, err
+	}
+	return Module{
+		HTTPModule:      ledgerModule.HTTPModule(),
+		OpenAPIFragment: ledgerModule.OpenAPIFragment(),
+	}, nil
 }
 
 func buildInvoicingModule(_ context.Context, deps ModuleDeps) (Module, error) {
@@ -311,21 +326,6 @@ func buildInvoicingModule(_ context.Context, deps ModuleDeps) (Module, error) {
 	return Module{
 		HTTPModule:      invoicingModule.HTTPModule(),
 		OpenAPIFragment: invoicingModule.OpenAPIFragment(),
-	}, nil
-}
-
-func buildDemoModule(_ context.Context, deps ModuleDeps) (Module, error) {
-	demoModule, err := demo.New(demo.Config{
-		Pool: deps.DemoPool,
-		Bus:  deps.Bus,
-	})
-	if err != nil {
-		return Module{}, err
-	}
-	return Module{
-		HTTPModule:      demoModule.HTTPModule(),
-		OpenAPIFragment: demoModule.OpenAPIFragment(),
-		SubscribeEvents: demoModule.SubscribeEvents,
 	}, nil
 }
 

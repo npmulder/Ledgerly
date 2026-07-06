@@ -6,9 +6,17 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/npmulder/ledgerly/internal/moneyfx/money"
+	"github.com/npmulder/ledgerly/internal/platform/bus"
+	"github.com/npmulder/ledgerly/internal/platform/clock"
 	"github.com/npmulder/ledgerly/internal/platform/db"
+	httpserver "github.com/npmulder/ledgerly/internal/platform/http"
 )
+
+// ModuleName is the database schema, HTTP route segment, and event namespace.
+const ModuleName = "ledger"
 
 // EntryID identifies an immutable journal entry.
 type EntryID int64
@@ -94,6 +102,22 @@ type AccountBalance struct {
 	AmountGBP   money.Money
 }
 
+// TrialBalanceStatus describes whether the ledger balances as of a date.
+type TrialBalanceStatus string
+
+const (
+	TrialBalanceStatusBalanced     TrialBalanceStatus = "balanced"
+	TrialBalanceStatusOutOfBalance TrialBalanceStatus = "out_of_balance"
+)
+
+// TrialBalance is the full-ledger double-entry invariant report as of a date.
+type TrialBalance struct {
+	AsOf      time.Time
+	Status    TrialBalanceStatus
+	Native    []money.Money
+	AmountGBP money.Money
+}
+
 // EntryCursor identifies the last entry from a previous Entries page. Entries
 // returns rows ordered by date then id, and an EntryCursor resumes strictly
 // after that tuple.
@@ -144,9 +168,51 @@ type Ledger interface {
 	Reverse(ctx context.Context, tx db.Tx, id EntryID, reason string) (EntryID, error)
 	AccountBalance(ctx context.Context, code AccountCode, asOf time.Time) (AccountBalance, error)
 	BalancesByType(ctx context.Context, from time.Time, to time.Time) ([]AccountBalance, error)
+	TrialBalance(ctx context.Context, asOf time.Time) (TrialBalance, error)
 	Entries(ctx context.Context, filter EntryFilter) ([]JournalEntry, error)
 	EnsureAccount(ctx context.Context, tx db.Tx, spec AccountSpec) (AccountCode, error)
 	Accounts(ctx context.Context) ([]Account, error)
+}
+
+// Config contains the platform dependencies required by the ledger HTTP module.
+type Config struct {
+	Pool  *pgxpool.Pool
+	Bus   *bus.Bus
+	Clock clock.Clock
+}
+
+// Module is the read-only HTTP wiring surface for ledger browse/report APIs.
+type Module struct {
+	service *Service
+	clock   clock.Clock
+}
+
+// New assembles the ledger module without registering side effects globally.
+func NewModule(cfg Config) (*Module, error) {
+	if cfg.Pool == nil {
+		return nil, fmt.Errorf("ledger: pool is required")
+	}
+	clk := cfg.Clock
+	if clk == nil {
+		clk = clock.New()
+	}
+	return &Module{
+		service: New(cfg.Pool, cfg.Bus),
+		clock:   clk,
+	}, nil
+}
+
+// HTTPModule returns the platform route mount for the ledger read endpoints.
+func (m *Module) HTTPModule() httpserver.Module {
+	return httpserver.Module{
+		Name:           ModuleName,
+		RegisterRoutes: m.RegisterRoutes,
+	}
+}
+
+// OpenAPIFragment returns the module's OpenAPI contribution.
+func (m *Module) OpenAPIFragment() httpserver.OpenAPIFragment {
+	return OpenAPIFragment()
 }
 
 var (

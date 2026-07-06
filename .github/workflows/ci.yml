@@ -49,8 +49,8 @@ jobs:
           docker compose logs db
           exit 1
 
-      - name: IT-0 demo walking skeleton
-        run: go test -tags=integration ./cmd/ledgerly -run TestDemoWalkingSkeletonE2E -count=1
+      - name: Ledger read surface
+        run: go test -tags=integration ./internal/it/harness -run TestLedgerReadSurfaceE2E -count=1
 
       - name: Integration tests
         run: task test:integration
