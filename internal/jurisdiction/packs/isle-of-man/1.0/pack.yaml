@@ -78,8 +78,8 @@ advisor_rules:
   - id: filing_deadline_window
     severity: amber
     surfaces: [dashboard, reports]
-    fact_query: [authority, due_date, filing_name, warn_window]
-    condition: due_date - today <= warn_window
+    fact_query: [authority, due_date, filing_name]
+    condition: due_date - today <= 30
     text_template: '{{ filing_name }} due {{ due_date }} - file with {{ authority }}.'
     cta:
       label: Open filing calendar
