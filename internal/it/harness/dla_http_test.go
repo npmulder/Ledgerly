@@ -14,6 +14,7 @@ import (
 
 	"github.com/npmulder/ledgerly/internal/dla"
 	"github.com/npmulder/ledgerly/internal/it/harness"
+	"github.com/npmulder/ledgerly/internal/ledger"
 	httpserver "github.com/npmulder/ledgerly/internal/platform/http"
 )
 
@@ -258,6 +259,86 @@ func TestHTTPDLARejectsInvalidManualEntryAccounts(t *testing.T) {
 				t.Fatalf("problem errors = %+v, want detail containing %q", problem.Errors, test.wantDetail)
 			}
 		})
+	}
+}
+
+func TestHTTPDLARejectsManualAccountCurrencyMismatch(t *testing.T) {
+	fixture := newDLAHTTPFixture(t, time.Date(2026, 7, 6, 12, 0, 0, 0, time.UTC))
+	ledgerService := ledger.New(fixture.harness.LedgerPool, fixture.harness.Bus)
+	ensureLedgerAccount(t, fixture.ctx, fixture.harness.LedgerPool, ledgerService, ledger.AccountSpec{
+		Code:     "1000-cash-eur",
+		Name:     "DLA HTTP cash EUR",
+		Type:     ledger.AccountTypeAsset,
+		Currency: stringPtr("EUR"),
+	})
+	ensureLedgerAccount(t, fixture.ctx, fixture.harness.LedgerPool, ledgerService, ledger.AccountSpec{
+		Code:     "5015-software-eur",
+		Name:     "Software EUR",
+		Type:     ledger.AccountTypeExpense,
+		Currency: stringPtr("EUR"),
+	})
+
+	for _, test := range []struct {
+		name    string
+		body    map[string]any
+		pointer string
+	}{
+		{
+			name: "repayment account currency mismatch",
+			body: map[string]any{
+				"date":              "2026-07-05",
+				"kind":              string(dla.EntryKindRepayment),
+				"description":       "Director repaid the loan",
+				"amount":            map[string]any{"amount_minor": 1000, "currency": "GBP"},
+				"cash_account_code": "1000-cash-eur",
+			},
+			pointer: "/cash_account_code",
+		},
+		{
+			name: "expense account currency mismatch",
+			body: map[string]any{
+				"date":             "2026-07-05",
+				"kind":             string(dla.EntryKindExpenseOwed),
+				"description":      "Director paid software personally",
+				"amount":           map[string]any{"amount_minor": 1000, "currency": "GBP"},
+				"expense_category": "5015-software-eur",
+			},
+			pointer: "/expense_category",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			response := performDLARequest(t, fixture.harness, nethttp.MethodPost, "/api/dla/entries", mustJSON(t, test.body), true)
+			if response.StatusCode != nethttp.StatusUnprocessableEntity {
+				t.Fatalf("status = %d, want %d; body=%s", response.StatusCode, nethttp.StatusUnprocessableEntity, response.BodyString())
+			}
+			problem := decodeDLAProblem(t, response)
+			assertDLAProblemPointers(t, problem, test.pointer)
+			if len(problem.Errors) != 1 || !strings.Contains(problem.Errors[0].Detail, "currency") {
+				t.Fatalf("problem errors = %+v, want currency detail", problem.Errors)
+			}
+		})
+	}
+}
+
+func TestHTTPDLARejectsReservedManualSourceRefs(t *testing.T) {
+	fixture := newDLAHTTPFixture(t, time.Date(2026, 7, 6, 12, 0, 0, 0, time.UTC))
+	body := map[string]any{
+		"date":              "2026-07-05",
+		"kind":              string(dla.EntryKindRepayment),
+		"description":       "Director repaid the loan",
+		"amount":            map[string]any{"amount_minor": 1000, "currency": "GBP"},
+		"cash_account_code": string(dlaCashAccount),
+		"source_ref":        "banking:txn-123",
+	}
+
+	response := performDLARequest(t, fixture.harness, nethttp.MethodPost, "/api/dla/entries", mustJSON(t, body), true)
+	if response.StatusCode != nethttp.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d; body=%s", response.StatusCode, nethttp.StatusUnprocessableEntity, response.BodyString())
+	}
+	problem := decodeDLAProblem(t, response)
+	assertDLAProblemPointers(t, problem, "/source_ref")
+	if len(problem.Errors) != 1 || !strings.Contains(problem.Errors[0].Detail, "manual:") {
+		t.Fatalf("problem errors = %+v, want manual source_ref detail", problem.Errors)
 	}
 }
 

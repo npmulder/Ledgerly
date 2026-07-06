@@ -270,6 +270,9 @@ func (r entryRequest) newEntry(today time.Time) (NewEntry, []fieldError, bool) {
 	amount := parseEntryRequestAmount(r.Amount, &fields)
 
 	source := strings.TrimSpace(r.SourceRef)
+	if source != "" && !strings.HasPrefix(source, "manual:") {
+		fields = append(fields, fieldError{Pointer: "/source_ref", Detail: "must be omitted or start with manual:"})
+	}
 	entry := NewEntry{
 		Date:        date,
 		Kind:        kind,
@@ -342,9 +345,9 @@ func (h dlaHandler) validateEntryAccounts(ctx context.Context, entry NewEntry) (
 
 	switch entry.Kind {
 	case EntryKindRepayment:
-		return validateManualCounterparty(byCode, entry.CashAccountCode, "/cash_account_code", isCashBankAssetAccount, "must be a cash or bank asset account"), nil
+		return validateManualCounterparty(byCode, entry.CashAccountCode, entry.Amount.Currency, "/cash_account_code", isCashBankAssetAccount, "must be a cash or bank asset account"), nil
 	case EntryKindExpenseOwed:
-		return validateManualCounterparty(byCode, entry.ExpenseAccountCode, "/expense_category", isExpenseAccount, "must be an expense account"), nil
+		return validateManualCounterparty(byCode, entry.ExpenseAccountCode, entry.Amount.Currency, "/expense_category", isExpenseAccount, "must be an expense account"), nil
 	default:
 		return nil, nil
 	}
@@ -353,6 +356,7 @@ func (h dlaHandler) validateEntryAccounts(ctx context.Context, entry NewEntry) (
 func validateManualCounterparty(
 	accounts map[ledger.AccountCode]ledger.Account,
 	code ledger.AccountCode,
+	currency string,
 	pointer string,
 	accept func(ledger.Account) bool,
 	detail string,
@@ -367,6 +371,9 @@ func validateManualCounterparty(
 	}
 	if !accept(account) {
 		return []fieldError{{Pointer: pointer, Detail: detail}}
+	}
+	if account.Currency != nil && *account.Currency != currency {
+		return []fieldError{{Pointer: pointer, Detail: "account currency does not match amount currency"}}
 	}
 	return nil
 }
@@ -501,6 +508,13 @@ func writeDLAError(w nethttp.ResponseWriter, r *nethttp.Request, err error, acco
 		writeDLAValidation(w, r, []fieldError{{
 			Pointer: accountPointer,
 			Detail:  "does not match a ledger account",
+		}})
+		return
+	}
+	if errors.Is(err, ledger.ErrAccountCurrencyMismatch) && accountPointer != "" {
+		writeDLAValidation(w, r, []fieldError{{
+			Pointer: accountPointer,
+			Detail:  "account currency does not match amount currency",
 		}})
 		return
 	}

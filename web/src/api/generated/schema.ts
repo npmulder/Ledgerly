@@ -477,16 +477,16 @@ export interface components {
         /** @description Manual DLA entry request. kind=drawing is included so clients can receive a typed rejection; accepted manual kinds are repayment and expense-owed. */
         DLAEntryRequest: {
             amount: components["schemas"]["DLAMoney"];
-            /** @description Required for repayment entries. */
+            /** @description Required for repayment entries; must resolve to a cash or bank asset account with matching currency. */
             cash_account_code?: string;
             /** Format: date */
             date: string;
             description: string;
-            /** @description Required for expense-owed entries; use the target ledger expense account code. */
+            /** @description Required for expense-owed entries; use the target ledger expense account code with matching currency. */
             expense_category?: string;
             /** @enum {string} */
             kind: "repayment" | "expense-owed" | "drawing";
-            /** @description Optional idempotency/source reference. If omitted, the server generates a manual source_ref and returns it. */
+            /** @description Optional idempotency/source reference. If supplied, it must start with manual:. If omitted, the server generates a manual source_ref and returns it. */
             source_ref?: string;
         };
         DLAFieldError: {
