@@ -1,10 +1,18 @@
 package harness_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	nethttp "net/http"
 	"reflect"
+	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -14,8 +22,10 @@ import (
 	"github.com/npmulder/ledgerly/internal/it"
 	"github.com/npmulder/ledgerly/internal/it/harness"
 	"github.com/npmulder/ledgerly/internal/it/testdb"
+	"github.com/npmulder/ledgerly/internal/jurisdiction"
 	"github.com/npmulder/ledgerly/internal/ledger"
 	"github.com/npmulder/ledgerly/internal/moneyfx/money"
+	"github.com/npmulder/ledgerly/internal/platform/bus"
 	"github.com/npmulder/ledgerly/internal/platform/db"
 )
 
@@ -107,6 +117,182 @@ func TestDLAEntriesPostLedgerShapesAndRunningBalance(t *testing.T) {
 		{account: dlaCashAccount, amount: 4_000},
 		{account: dla.DLAAccountCode, amount: -4_000},
 	})
+	it.AssertLedgerBalanced(t, fixture.harness)
+}
+
+func TestDLAStatusPolicyAndTransitionEvents(t *testing.T) {
+	t.Cleanup(func() {
+		if err := jurisdiction.LoadActive(jurisdiction.DefaultSelector); err != nil {
+			t.Fatalf("restore default jurisdiction pack: %v", err)
+		}
+	})
+	fixture := newDLAFixture(t)
+	entryDate := fixture.harness.Clock.Now()
+
+	var wentOverdrawn []dla.WentOverdrawn
+	fixture.harness.Bus.Subscribe(dla.WentOverdrawnName, func(ctx context.Context, tx db.Tx, evt bus.Event) error {
+		event := evt.(dla.WentOverdrawn)
+		balance, err := (dla.Store{}).CurrentBalance(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if balance != event.Balance {
+			return fmt.Errorf("event balance = %#v, transaction balance = %#v", event.Balance, balance)
+		}
+		wentOverdrawn = append(wentOverdrawn, event)
+		return nil
+	})
+
+	var backInCredit []dla.BackInCredit
+	fixture.harness.Bus.Subscribe(dla.BackInCreditName, func(ctx context.Context, tx db.Tx, evt bus.Event) error {
+		event := evt.(dla.BackInCredit)
+		balance, err := (dla.Store{}).CurrentBalance(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if balance != event.Balance {
+			return fmt.Errorf("event balance = %#v, transaction balance = %#v", event.Balance, balance)
+		}
+		backInCredit = append(backInCredit, event)
+		return nil
+	})
+
+	assertCurrentBalance(t, fixture.dla, gbp(0), dla.StatusCredit)
+
+	if err := fixture.dla.AddEntry(fixture.ctx, dla.NewEntry{
+		Date:               entryDate,
+		Kind:               dla.EntryKindExpenseOwed,
+		Description:        "Personally paid equipment",
+		Amount:             gbp(5_000),
+		Source:             "manual:expense-credit-start",
+		ExpenseAccountCode: "5010-software",
+	}); err != nil {
+		t.Fatalf("AddEntry(expense-owed) error = %v", err)
+	}
+	assertCurrentBalance(t, fixture.dla, gbp(5_000), dla.StatusCredit)
+	assertDLAEventCounts(t, wentOverdrawn, backInCredit, 0, 0)
+
+	fixture.fileDrawingFromBanking(t, dla.TxnRef{
+		Ref:             "banking:cross-overdrawn",
+		Date:            entryDate.AddDate(0, 0, 1),
+		Amount:          gbp(6_000),
+		CashAccountCode: dlaCashAccount,
+	})
+	assertCurrentBalance(t, fixture.dla, gbp(-1_000), dla.StatusOverdrawn)
+	assertDLAEventCounts(t, wentOverdrawn, backInCredit, 1, 0)
+	if wentOverdrawn[0].Balance != gbp(-1_000) {
+		t.Fatalf("WentOverdrawn balance = %#v, want %#v", wentOverdrawn[0].Balance, gbp(-1_000))
+	}
+
+	fixture.fileDrawingFromBanking(t, dla.TxnRef{
+		Ref:             "banking:further-overdrawn",
+		Date:            entryDate.AddDate(0, 0, 2),
+		Amount:          gbp(500),
+		CashAccountCode: dlaCashAccount,
+	})
+	assertCurrentBalance(t, fixture.dla, gbp(-1_500), dla.StatusOverdrawn)
+	assertDLAEventCounts(t, wentOverdrawn, backInCredit, 1, 0)
+	clearance, err := fixture.dla.SuggestedClearanceAmount(fixture.ctx)
+	if err != nil {
+		t.Fatalf("SuggestedClearanceAmount() error = %v", err)
+	}
+	if clearance != gbp(1_500) {
+		t.Fatalf("SuggestedClearanceAmount() = %#v, want %#v", clearance, gbp(1_500))
+	}
+
+	if err := fixture.dla.AddEntry(fixture.ctx, dla.NewEntry{
+		Date:            entryDate.AddDate(0, 0, 3),
+		Kind:            dla.EntryKindRepayment,
+		Description:     "Director clears balance",
+		Amount:          gbp(1_500),
+		Source:          "manual:repayment-back-to-zero",
+		CashAccountCode: dlaCashAccount,
+	}); err != nil {
+		t.Fatalf("AddEntry(repayment) error = %v", err)
+	}
+	assertCurrentBalance(t, fixture.dla, gbp(0), dla.StatusCredit)
+	assertDLAEventCounts(t, wentOverdrawn, backInCredit, 1, 1)
+	if backInCredit[0].Balance != gbp(0) {
+		t.Fatalf("BackInCredit balance = %#v, want %#v", backInCredit[0].Balance, gbp(0))
+	}
+	clearance, err = fixture.dla.SuggestedClearanceAmount(fixture.ctx)
+	if err != nil {
+		t.Fatalf("SuggestedClearanceAmount() after zero error = %v", err)
+	}
+	if clearance != gbp(0) {
+		t.Fatalf("SuggestedClearanceAmount() after zero = %#v, want %#v", clearance, gbp(0))
+	}
+
+	status, err := fixture.dla.CurrentStatus(fixture.ctx)
+	if err != nil {
+		t.Fatalf("CurrentStatus() error = %v", err)
+	}
+	if status.Policy.S455Charge ||
+		status.Policy.BIKWarningTextKey != "benefit_in_kind_interest_free" ||
+		status.Policy.Remedy != "clear_with_dividend" {
+		t.Fatalf("CurrentStatus() policy = %#v, want Isle of Man DLA policy", status.Policy)
+	}
+	loadDirectorLoanPolicyPack(t, "fixture_changed_warning", "fixture_changed_remedy", true)
+	status, err = fixture.dla.CurrentStatus(fixture.ctx)
+	if err != nil {
+		t.Fatalf("CurrentStatus() changed pack error = %v", err)
+	}
+	if !status.Policy.S455Charge ||
+		status.Policy.BIKWarningTextKey != "fixture_changed_warning" ||
+		status.Policy.Remedy != "fixture_changed_remedy" {
+		t.Fatalf("CurrentStatus() changed policy = %#v, want fixture pack values", status.Policy)
+	}
+
+	it.AssertLedgerBalanced(t, fixture.harness)
+}
+
+func TestDLAConsistencyCheckHealthzAndRecovery(t *testing.T) {
+	var logs bytes.Buffer
+	fixture := newDLAFixtureFromHarness(t, harness.New(t, harness.Options{
+		ClockStart: time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC),
+		Logger:     slog.New(slog.NewTextHandler(&logs, nil)),
+	}))
+	source := "banking:consistency-check"
+	fixture.fileDrawingFromBanking(t, dla.TxnRef{
+		Ref:             source,
+		Date:            fixture.harness.Clock.Now(),
+		Amount:          gbp(10_000),
+		CashAccountCode: dlaCashAccount,
+	})
+
+	if err := fixture.harness.RunJob(dla.ConsistencyCheckJobName); err != nil {
+		t.Fatalf("RunJob(%s) healthy error = %v", dla.ConsistencyCheckJobName, err)
+	}
+	assertDLAHealthStatus(t, fixture.harness, nethttp.StatusOK, "")
+
+	raw := testdb.Raw(t)
+	if _, err := raw.Exec(fixture.ctx, `
+UPDATE dla.dla_entries
+SET amount = amount + 1
+WHERE source = $1`, source); err != nil {
+		t.Fatalf("corrupt DLA entry via testdb.Raw: %v", err)
+	}
+
+	err := fixture.harness.RunJob(dla.ConsistencyCheckJobName)
+	if !errors.Is(err, dla.ErrConsistencyViolation) {
+		t.Fatalf("RunJob(%s) corrupt error = %v, want ErrConsistencyViolation", dla.ConsistencyCheckJobName, err)
+	}
+	if logText := logs.String(); !strings.Contains(logText, "invariant=violated") ||
+		!strings.Contains(logText, dla.ConsistencyCheckJobName) {
+		t.Fatalf("consistency violation log = %q, want invariant=violated and job name", logText)
+	}
+	assertDLAHealthStatus(t, fixture.harness, nethttp.StatusServiceUnavailable, "DLA balance mismatch")
+
+	if _, err := raw.Exec(fixture.ctx, `
+UPDATE dla.dla_entries
+SET amount = amount - 1
+WHERE source = $1`, source); err != nil {
+		t.Fatalf("repair DLA entry via testdb.Raw: %v", err)
+	}
+	if err := fixture.harness.RunJob(dla.ConsistencyCheckJobName); err != nil {
+		t.Fatalf("RunJob(%s) recovery error = %v", dla.ConsistencyCheckJobName, err)
+	}
+	assertDLAHealthStatus(t, fixture.harness, nethttp.StatusOK, "")
 	it.AssertLedgerBalanced(t, fixture.harness)
 }
 
@@ -230,14 +416,17 @@ type dlaFixture struct {
 
 func newDLAFixture(t *testing.T) dlaFixture {
 	t.Helper()
+	return newDLAFixtureFromHarness(t, harness.New(t, harness.Options{}))
+}
 
-	h := harness.New(t, harness.Options{})
+func newDLAFixtureFromHarness(t *testing.T, h *harness.Harness) dlaFixture {
+	t.Helper()
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	t.Cleanup(cancel)
 
-	dlaPool := testdb.AsModule(t, dla.ModuleName)
 	bankingPool := testdb.AsModule(t, "banking")
-	ledgerService := ledger.New(h.LedgerPool)
+	ledgerService := ledger.New(h.LedgerPool, h.Bus)
 	ensureLedgerAccount(t, ctx, h.LedgerPool, ledgerService, ledger.AccountSpec{
 		Code:     dlaCashAccount,
 		Name:     "DLA fixture cash GBP",
@@ -248,9 +437,9 @@ func newDLAFixture(t *testing.T) dlaFixture {
 	return dlaFixture{
 		ctx:     ctx,
 		harness: h,
-		dlaPool: dlaPool,
+		dlaPool: h.DLAPool,
 		banking: bankingPool,
-		dla:     dla.New(dlaPool, ledgerService),
+		dla:     dla.NewWithBus(h.DLAPool, h.Bus, ledgerService),
 	}
 }
 
@@ -278,6 +467,150 @@ func (f dlaFixture) tryFileDrawingFromBanking(src dla.TxnRef) (err error) {
 		return err
 	}
 	return nil
+}
+
+func assertCurrentBalance(t *testing.T, service *dla.Service, wantBalance money.Money, wantStatus dla.Status) {
+	t.Helper()
+
+	gotBalance, gotStatus, err := service.CurrentBalance(context.Background())
+	if err != nil {
+		t.Fatalf("CurrentBalance() error = %v", err)
+	}
+	if gotBalance != wantBalance || gotStatus != wantStatus {
+		t.Fatalf("CurrentBalance() = %#v/%s, want %#v/%s", gotBalance, gotStatus, wantBalance, wantStatus)
+	}
+	status, err := service.CurrentStatus(context.Background())
+	if err != nil {
+		t.Fatalf("CurrentStatus() error = %v", err)
+	}
+	if status.Balance != wantBalance || status.Status != wantStatus {
+		t.Fatalf("CurrentStatus() = %#v/%s, want %#v/%s", status.Balance, status.Status, wantBalance, wantStatus)
+	}
+}
+
+func assertDLAEventCounts(
+	t *testing.T,
+	wentOverdrawn []dla.WentOverdrawn,
+	backInCredit []dla.BackInCredit,
+	wantWent int,
+	wantBack int,
+) {
+	t.Helper()
+
+	if len(wentOverdrawn) != wantWent || len(backInCredit) != wantBack {
+		t.Fatalf(
+			"DLA event counts WentOverdrawn=%d BackInCredit=%d, want %d/%d",
+			len(wentOverdrawn),
+			len(backInCredit),
+			wantWent,
+			wantBack,
+		)
+	}
+}
+
+func loadDirectorLoanPolicyPack(t *testing.T, warn string, remedy string, s455 bool) {
+	t.Helper()
+
+	pack := fmt.Sprintf(`meta:
+  id: testland
+  version: "0.1"
+  name: Testland
+  currency: GBP
+tax:
+  year_end:
+    month: 6
+    day: 30
+  corporate_income:
+    "2025-26":
+      standard_rate: "0.0"
+  personal_income:
+    "2025-26":
+      personal_allowance_minor_units: 0
+      bands:
+        - rate: "0.10"
+  dividends:
+    "2025-26":
+      withholding: none
+  vat:
+    regime: test-shared
+    authority: Testland Customs
+    "2025-26":
+      standard_rate: "0.20"
+    reverse_charge:
+      b2b_services_eu:
+        article: Test Article 42
+        invoice_wording: Testland reverse charge applies
+filings:
+  annual_return:
+    due: incorporation_anniversary + 1 month
+    authority: Testland Companies Office
+  company_tax_return:
+    due: accounting_year_end + 12 months + 1 day
+    required_at_zero_rate: true
+director_loans:
+  s455_charge: %t
+  overdrawn:
+    warn: %s
+    remedy: %s
+advisor_rules:
+  - id: test-rule
+    severity: amber
+    fact_query: test.facts
+    condition: balance > 0
+    text_template: Review the test balance before filing
+    cta: open_test_review
+`, s455, warn, remedy)
+
+	if err := jurisdiction.LoadActiveFromFS(fstest.MapFS{
+		"packs/testland/0.1/pack.yaml": &fstest.MapFile{Data: []byte(pack)},
+	}, "testland@0.1"); err != nil {
+		t.Fatalf("LoadActiveFromFS(testland@0.1) error = %v", err)
+	}
+}
+
+func assertDLAHealthStatus(t *testing.T, h *harness.Harness, wantStatus int, wantReason string) {
+	t.Helper()
+
+	req, err := nethttp.NewRequestWithContext(context.Background(), nethttp.MethodGet, "/healthz", nil)
+	if err != nil {
+		t.Fatalf("create GET /healthz request: %v", err)
+	}
+	resp, err := h.Do(req)
+	if err != nil {
+		t.Fatalf("GET /healthz: %v", err)
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read GET /healthz response: %v", err)
+	}
+	if resp.StatusCode != wantStatus {
+		t.Fatalf("GET /healthz status = %d, want %d; body=%s", resp.StatusCode, wantStatus, string(bodyBytes))
+	}
+	if wantReason == "" {
+		return
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(bodyBytes, &body); err != nil {
+		t.Fatalf("decode health response: %v; body=%s", err, string(bodyBytes))
+	}
+	checks, ok := body["checks"].(map[string]any)
+	if !ok {
+		t.Fatalf("health checks missing: %+v", body)
+	}
+	dlaCheck, ok := checks[dla.ConsistencyCheckJobName].(map[string]any)
+	if !ok {
+		t.Fatalf("%s health check missing: %+v", dla.ConsistencyCheckJobName, checks)
+	}
+	if dlaCheck["status"] != "down" {
+		t.Fatalf("%s health check status = %v, want down", dla.ConsistencyCheckJobName, dlaCheck["status"])
+	}
+	reason, ok := dlaCheck["error"].(string)
+	if !ok || !strings.Contains(reason, wantReason) {
+		t.Fatalf("%s health error = %v, want text %q", dla.ConsistencyCheckJobName, dlaCheck["error"], wantReason)
+	}
 }
 
 func (f dlaFixture) assertLedgerPostings(t *testing.T, source string, want []wantPosting) {

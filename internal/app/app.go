@@ -19,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/lib/pq"
 
+	"github.com/npmulder/ledgerly/internal/dla"
 	"github.com/npmulder/ledgerly/internal/identity"
 	"github.com/npmulder/ledgerly/internal/invoicing"
 	"github.com/npmulder/ledgerly/internal/jurisdiction"
@@ -77,6 +78,7 @@ type Dependencies struct {
 	HealthCloser io.Closer
 
 	IdentityPool  *pgxpool.Pool
+	DLAPool       *pgxpool.Pool
 	LedgerPool    *pgxpool.Pool
 	MoneyFXPool   *pgxpool.Pool
 	InvoicingPool *pgxpool.Pool
@@ -112,6 +114,7 @@ type App struct {
 
 	HealthDB        httpserver.Pinger
 	IdentityPool    *pgxpool.Pool
+	DLAPool         *pgxpool.Pool
 	LedgerPool      *pgxpool.Pool
 	MoneyFXPool     *pgxpool.Pool
 	InvoicingPool   *pgxpool.Pool
@@ -170,6 +173,10 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 	if err != nil {
 		return nil, err
 	}
+	dlaPool, err := modulePool(ctx, cfg.Runtime.DatabaseURL, dla.ModuleName, deps.DLAPool, openPool, &closeFuncs)
+	if err != nil {
+		return nil, err
+	}
 	moneyFXPool, err := modulePool(ctx, cfg.Runtime.DatabaseURL, moneyfx.ModuleName, deps.MoneyFXPool, openPool, &closeFuncs)
 	if err != nil {
 		return nil, err
@@ -188,6 +195,8 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 
 	ledgerService := ledger.New(ledgerPool, eventBus)
 	trialBalanceStatus := ledger.NewTrialBalanceStatus()
+	dlaService := dla.NewWithBus(dlaPool, eventBus, ledgerService)
+	dlaConsistencyStatus := dla.NewConsistencyStatus()
 	moneyFXFetcher, err := moneyfx.NewECBFetcher(moneyfx.ECBFetcherConfig{
 		Pool:         moneyFXPool,
 		Bus:          eventBus,
@@ -204,6 +213,12 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 	})
 	if err := cronRunner.Register(ledger.TrialBalanceJobName, "0 2 * * *", func(ctx context.Context) error {
 		_, err := ledgerService.RunTrialBalanceInvariant(ctx, clk.Now(), logger, trialBalanceStatus)
+		return err
+	}); err != nil {
+		return nil, err
+	}
+	if err := cronRunner.Register(dla.ConsistencyCheckJobName, "10 2 * * *", func(ctx context.Context) error {
+		_, err := dlaService.RunConsistencyCheck(ctx, clk.Now(), logger, dlaConsistencyStatus)
 		return err
 	}); err != nil {
 		return nil, err
@@ -308,6 +323,10 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 				Name:  ledger.TrialBalanceJobName,
 				Check: trialBalanceStatus.Check,
 			},
+			{
+				Name:  dla.ConsistencyCheckJobName,
+				Check: dlaConsistencyStatus.Check,
+			},
 		},
 	})
 
@@ -321,6 +340,7 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		Clock:           clk,
 		HealthDB:        healthDB,
 		IdentityPool:    identityPool,
+		DLAPool:         dlaPool,
 		LedgerPool:      ledgerPool,
 		MoneyFXPool:     moneyFXPool,
 		InvoicingPool:   invoicingPool,

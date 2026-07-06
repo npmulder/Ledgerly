@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
 
@@ -88,6 +89,18 @@ func (Store) Entries(ctx context.Context, tx db.Tx, filter LedgerFilter) ([]Entr
 	return entries, nil
 }
 
+// CurrentBalance returns the signed DLA balance using DLA convention: positive
+// is credit, negative is overdrawn.
+func (Store) CurrentBalance(ctx context.Context, tx db.Tx) (money.Money, error) {
+	return balanceQuery(ctx, tx, "")
+}
+
+// CurrentBalanceAsOf returns the signed DLA balance for entries dated on or
+// before asOf.
+func (Store) CurrentBalanceAsOf(ctx context.Context, tx db.Tx, asOf time.Time) (money.Money, error) {
+	return balanceQuery(ctx, tx, "WHERE date <= $1", asOf)
+}
+
 func buildEntriesQuery(filter LedgerFilter) (string, []any) {
 	args := []any{}
 	addArg := func(value any) string {
@@ -149,6 +162,24 @@ WHERE ` + strings.Join(outerWhere, "\n\tAND ") + `
 ORDER BY date, id
 LIMIT ` + limit
 	return query, args
+}
+
+func balanceQuery(ctx context.Context, tx db.Tx, where string, args ...any) (money.Money, error) {
+	query := `
+SELECT COALESCE(sum(
+	CASE kind
+		WHEN 'drawing' THEN -amount
+		ELSE amount
+	END
+), 0)::bigint
+FROM dla.dla_entries
+` + where
+
+	var amount int64
+	if err := tx.QueryRow(ctx, query, args...).Scan(&amount); err != nil {
+		return money.Money{}, fmt.Errorf("dla: current balance: %w", err)
+	}
+	return money.Money{Amount: amount, Currency: "GBP"}, nil
 }
 
 func balanceSide(amount int64) BalanceSide {

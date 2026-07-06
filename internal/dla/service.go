@@ -10,6 +10,7 @@ import (
 
 	ledgerapi "github.com/npmulder/ledgerly/internal/ledger"
 	"github.com/npmulder/ledgerly/internal/moneyfx/money"
+	"github.com/npmulder/ledgerly/internal/platform/bus"
 	"github.com/npmulder/ledgerly/internal/platform/db"
 )
 
@@ -19,20 +20,31 @@ const defaultDrawingDescription = "Director drawing"
 type Service struct {
 	pool   *pgxpool.Pool
 	ledger ledgerapi.Ledger
+	bus    *bus.Bus
 	store  Store
 }
 
 // New creates a DLA service. If ledgerService is nil or omitted, a ledger
 // service backed by pool is used for transaction-scoped postings.
 func New(pool *pgxpool.Pool, ledgerService ...ledgerapi.Ledger) *Service {
+	return newService(pool, nil, ledgerService...)
+}
+
+// NewWithBus creates a DLA service that publishes DLA transition events through
+// eventBus.
+func NewWithBus(pool *pgxpool.Pool, eventBus *bus.Bus, ledgerService ...ledgerapi.Ledger) *Service {
+	return newService(pool, eventBus, ledgerService...)
+}
+
+func newService(pool *pgxpool.Pool, eventBus *bus.Bus, ledgerService ...ledgerapi.Ledger) *Service {
 	var l ledgerapi.Ledger
 	if len(ledgerService) > 0 {
 		l = ledgerService[0]
 	}
 	if l == nil {
-		l = ledgerapi.New(pool)
+		l = ledgerapi.New(pool, eventBus)
 	}
-	return &Service{pool: pool, ledger: l}
+	return &Service{pool: pool, ledger: l, bus: eventBus}
 }
 
 // FileDrawing appends a banking-origin drawing and posts Dr DLA / Cr Cash
@@ -93,11 +105,55 @@ func (s *Service) Ledger(ctx context.Context, filter LedgerFilter) ([]Entry, err
 	return s.store.Entries(ctx, s.pool, normalized)
 }
 
+// CurrentBalance returns the current DLA balance and advisor-facing status.
+func (s *Service) CurrentBalance(ctx context.Context) (money.Money, Status, error) {
+	if s.pool == nil {
+		return money.Money{}, "", fmt.Errorf("dla: current balance requires pool")
+	}
+	balance, err := s.store.CurrentBalance(ctx, s.pool)
+	if err != nil {
+		return money.Money{}, "", err
+	}
+	return balance, statusForBalance(balance), nil
+}
+
+// CurrentStatus returns the current DLA fact payload for advisor/UI consumers.
+func (s *Service) CurrentStatus(ctx context.Context) (StatusPayload, error) {
+	balance, status, err := s.CurrentBalance(ctx)
+	if err != nil {
+		return StatusPayload{}, err
+	}
+	return StatusPayload{
+		Balance:                  balance,
+		Status:                   status,
+		Policy:                   policyPayloadFromJurisdiction(),
+		SuggestedClearanceAmount: clearanceAmountForBalance(balance),
+	}, nil
+}
+
+// SuggestedClearanceAmount returns the positive DR amount needed to return the
+// DLA to zero; in-credit balances return GBP zero.
+func (s *Service) SuggestedClearanceAmount(ctx context.Context) (money.Money, error) {
+	balance, _, err := s.CurrentBalance(ctx)
+	if err != nil {
+		return money.Money{}, err
+	}
+	return clearanceAmountForBalance(balance), nil
+}
+
 func (s *Service) appendEntry(ctx context.Context, tx db.Tx, entry NewEntry, allowDrawing bool) error {
 	if s.ledger == nil {
 		return fmt.Errorf("dla: append entry requires ledger")
 	}
 	normalized, err := normalizeNewEntry(entry, allowDrawing)
+	if err != nil {
+		return err
+	}
+	preBalance, err := s.store.CurrentBalance(ctx, tx)
+	if err != nil {
+		return err
+	}
+	postBalance, err := balanceAfterEntry(preBalance, normalized)
 	if err != nil {
 		return err
 	}
@@ -107,7 +163,46 @@ func (s *Service) appendEntry(ctx context.Context, tx db.Tx, entry NewEntry, all
 	if _, err := s.ledger.Post(ctx, tx, journalEntryFor(normalized)); err != nil {
 		return err
 	}
+	if err := s.publishTransition(ctx, tx, preBalance, postBalance); err != nil {
+		return err
+	}
 	return nil
+}
+
+func (s *Service) publishTransition(ctx context.Context, tx db.Tx, preBalance, postBalance money.Money) error {
+	if s.bus == nil {
+		return nil
+	}
+
+	preStatus := statusForBalance(preBalance)
+	postStatus := statusForBalance(postBalance)
+	switch {
+	case preStatus == StatusCredit && postStatus == StatusOverdrawn:
+		if err := s.bus.Publish(ctx, tx, WentOverdrawn{Balance: postBalance}); err != nil {
+			return fmt.Errorf("dla: publish went overdrawn: %w", err)
+		}
+	case preStatus == StatusOverdrawn && postStatus == StatusCredit:
+		if err := s.bus.Publish(ctx, tx, BackInCredit{Balance: postBalance}); err != nil {
+			return fmt.Errorf("dla: publish back in credit: %w", err)
+		}
+	}
+	return nil
+}
+
+func balanceAfterEntry(balance money.Money, entry NewEntry) (money.Money, error) {
+	delta := entry.Amount
+	if entry.Kind == EntryKindDrawing {
+		var err error
+		delta, err = entry.Amount.Negate()
+		if err != nil {
+			return money.Money{}, fmt.Errorf("dla: drawing balance delta: %w", err)
+		}
+	}
+	next, err := balance.Add(delta)
+	if err != nil {
+		return money.Money{}, fmt.Errorf("dla: apply balance delta: %w", err)
+	}
+	return next, nil
 }
 
 func journalEntryFor(entry NewEntry) ledgerapi.NewJournalEntry {

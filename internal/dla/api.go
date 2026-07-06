@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/npmulder/ledgerly/internal/jurisdiction"
 	"github.com/npmulder/ledgerly/internal/ledger"
 	"github.com/npmulder/ledgerly/internal/moneyfx/money"
 	"github.com/npmulder/ledgerly/internal/platform/db"
@@ -37,6 +38,30 @@ const (
 	BalanceSideDebit  BalanceSide = "DR"
 	BalanceSideZero   BalanceSide = "zero"
 )
+
+// Status is the advisor-facing DLA state. Zero balance counts as credit.
+type Status string
+
+const (
+	StatusCredit    Status = "credit"
+	StatusOverdrawn Status = "overdrawn"
+)
+
+// PolicyPayload is the pack-sourced context callers need to render DLA status
+// without hard-coding jurisdiction rule keys.
+type PolicyPayload struct {
+	S455Charge        bool   `json:"s455_charge"`
+	BIKWarningTextKey string `json:"bik_warning_text_key"`
+	Remedy            string `json:"remedy"`
+}
+
+// StatusPayload is the advisor fact payload for the current DLA state.
+type StatusPayload struct {
+	Balance                  money.Money   `json:"balance"`
+	Status                   Status        `json:"status"`
+	Policy                   PolicyPayload `json:"policy"`
+	SuggestedClearanceAmount money.Money   `json:"suggested_clearance_amount"`
+}
 
 // TxnRef is the opaque banking-origin payload needed to file a director drawing.
 // Amount must already be converted to GBP by the caller.
@@ -104,6 +129,9 @@ type DLA interface {
 	FileDrawing(ctx context.Context, tx db.Tx, src TxnRef) error
 	AddEntry(ctx context.Context, e NewEntry) error
 	Ledger(ctx context.Context, filter LedgerFilter) ([]Entry, error)
+	CurrentBalance(ctx context.Context) (money.Money, Status, error)
+	CurrentStatus(ctx context.Context) (StatusPayload, error)
+	SuggestedClearanceAmount(ctx context.Context) (money.Money, error)
 }
 
 var (
@@ -115,6 +143,10 @@ var (
 
 	// ErrDuplicateSource reports that an entry with the same opaque source ref exists.
 	ErrDuplicateSource = errors.New("dla: duplicate source")
+
+	// ErrConsistencyViolation reports that the DLA presentation ledger and
+	// ledger account disagree.
+	ErrConsistencyViolation = errors.New("dla: consistency invariant violation")
 )
 
 // DuplicateSourceError carries the duplicated source ref.
@@ -128,4 +160,27 @@ func (e *DuplicateSourceError) Error() string {
 
 func (e *DuplicateSourceError) Unwrap() error {
 	return ErrDuplicateSource
+}
+
+func policyPayloadFromJurisdiction() PolicyPayload {
+	policy := jurisdiction.DirectorLoanPolicy()
+	return PolicyPayload{
+		S455Charge:        policy.S455Charge,
+		BIKWarningTextKey: policy.Overdrawn.Warn,
+		Remedy:            policy.Overdrawn.Remedy,
+	}
+}
+
+func statusForBalance(balance money.Money) Status {
+	if balance.Amount < 0 {
+		return StatusOverdrawn
+	}
+	return StatusCredit
+}
+
+func clearanceAmountForBalance(balance money.Money) money.Money {
+	if balance.Amount >= 0 {
+		return money.Zero(balance.Currency)
+	}
+	return money.Money{Amount: -balance.Amount, Currency: balance.Currency}
 }

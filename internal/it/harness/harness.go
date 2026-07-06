@@ -20,6 +20,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/npmulder/ledgerly/internal/app"
+	"github.com/npmulder/ledgerly/internal/dla"
 	"github.com/npmulder/ledgerly/internal/identity"
 	"github.com/npmulder/ledgerly/internal/it/testdb"
 	"github.com/npmulder/ledgerly/internal/ledger"
@@ -46,6 +47,7 @@ type Options struct {
 	ClockStart    time.Time
 	CronAutostart bool
 	BalanceCheck  BalanceCheckOption
+	Logger        *slog.Logger
 
 	ModuleBuilders map[string]app.ModuleBuilder
 	Jobs           map[string]app.Job
@@ -69,6 +71,7 @@ type Harness struct {
 	BaseURL    string
 	Client     *nethttp.Client
 	DB         *pgxpool.Pool
+	DLAPool    *pgxpool.Pool
 	LedgerPool *pgxpool.Pool
 	Clock      *clock.FakeClock
 	Bus        *bus.Bus
@@ -87,6 +90,7 @@ func New(t testing.TB, opts Options) *Harness {
 	start := time.Now()
 	rawPool := testdb.Raw(t)
 	identityPool := testdb.AsModule(t, "identity")
+	dlaPool := testdb.AsModule(t, dla.ModuleName)
 	ledgerPool := testdb.AsModule(t, ledger.ModuleName)
 	moneyFXPool := testdb.AsModule(t, moneyfx.ModuleName)
 	invoicingPool := testdb.AsModule(t, "invoicing")
@@ -97,6 +101,10 @@ func New(t testing.TB, opts Options) *Harness {
 	}
 	fakeClock := clock.NewFake(startAt)
 	faults := newBusFaults()
+	logger := opts.Logger
+	if logger == nil {
+		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -107,10 +115,11 @@ func New(t testing.TB, opts Options) *Harness {
 		},
 		Version: "test",
 	}, app.Dependencies{
-		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Logger:        logger,
 		Clock:         fakeClock,
 		HealthDB:      pgxPinger{pool: rawPool},
 		IdentityPool:  identityPool,
+		DLAPool:       dlaPool,
 		LedgerPool:    ledgerPool,
 		MoneyFXPool:   moneyFXPool,
 		InvoicingPool: invoicingPool,
@@ -139,6 +148,7 @@ func New(t testing.TB, opts Options) *Harness {
 		BaseURL:      server.URL,
 		Client:       authenticatedClient(baseClient, cookie),
 		DB:           rawPool,
+		DLAPool:      dlaPool,
 		LedgerPool:   ledgerPool,
 		Clock:        fakeClock,
 		Bus:          built.Bus,
