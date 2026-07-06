@@ -543,7 +543,7 @@ OFFSET ` + args.add(filter.offset)
 func buildInvoiceListCountQuery(filter normalizedInvoiceListFilter, today time.Time) (string, []any) {
 	args := &invoiceQueryArgs{}
 	todayRef := "NULL"
-	if len(filter.statuses) > 0 {
+	if invoiceStatusFilterNeedsDate(filter.statuses) {
 		todayRef = args.add(dateOnly(today))
 	}
 	where := buildInvoiceListWhere(filter, todayRef, true, args)
@@ -607,6 +607,15 @@ func invoiceStatusFilterSQL(statuses []InvoiceStatus, todayRef string) string {
 		return "true"
 	}
 	return "(" + strings.Join(conditions, " OR ") + ")"
+}
+
+func invoiceStatusFilterNeedsDate(statuses []InvoiceStatus) bool {
+	for _, status := range statuses {
+		if status == InvoiceStatusSent || status == InvoiceStatusOverdue {
+			return true
+		}
+	}
+	return false
 }
 
 func invoiceVirtualStatusSQL(todayRef string) string {
