@@ -24,3 +24,4 @@ CREATE INDEX IF NOT EXISTS reminders_invoice_sent_at_idx
 	ON invoicing.reminders (invoice_id, sent_at DESC);
 
 GRANT ALL PRIVILEGES ON invoicing.reminders TO ledgerly_invoicing;
+GRANT SELECT ON invoicing.reminders TO ledgerly_banking;

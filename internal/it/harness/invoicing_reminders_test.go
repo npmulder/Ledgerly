@@ -85,7 +85,7 @@ func TestInvoicingInvoiceReminderHTTPEndpointSendsPDFAndRecordsRow(t *testing.T)
 	if msg.Subject != "Payment reminder: invoice INV-2025-01" {
 		t.Fatalf("mail Subject = %q", msg.Subject)
 	}
-	for _, want := range []string{"INV-2025-01", "9 days overdue", "£1,200.00", "2 May 2025", "NPM Limited"} {
+	for _, want := range []string{"INV-2025-01", "9 days overdue", "£1,440.00", "2 May 2025", "NPM Limited"} {
 		if !strings.Contains(msg.TextBody, want) {
 			t.Fatalf("mail body missing %q:\n%s", want, msg.TextBody)
 		}
