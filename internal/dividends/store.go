@@ -200,6 +200,9 @@ func normalizeDeclaration(declaration Declaration) (Declaration, error) {
 	if declaration.Shares <= 0 {
 		return Declaration{}, fmt.Errorf("dividends: shares must be positive: %w", ErrInvalidDeclaration)
 	}
+	if amount.Amount%perShare.Amount != 0 || amount.Amount/perShare.Amount != declaration.Shares {
+		return Declaration{}, fmt.Errorf("dividends: amount must equal per share times shares: %w", ErrInvalidDeclaration)
+	}
 	shareholderName := strings.TrimSpace(declaration.ShareholderName)
 	if shareholderName == "" {
 		return Declaration{}, fmt.Errorf("dividends: shareholder name is required: %w", ErrInvalidDeclaration)
