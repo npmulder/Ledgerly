@@ -246,6 +246,16 @@ func (s *Service) UpdateDraft(ctx context.Context, id string, patch DraftPatch) 
 	}
 
 	next := existing
+	if patch.ClientID != nil {
+		client, clientErr := s.store.Client(ctx, tx, *patch.ClientID)
+		if clientErr != nil {
+			return Invoice{}, clientErr
+		}
+		if client.ArchivedAt != nil {
+			return Invoice{}, invoiceValidationError([]FieldError{{Pointer: "/client_id", Detail: "must be an active client"}})
+		}
+		next.ClientID = client.ID
+	}
 	if patch.IssueDate != nil {
 		next.IssueDate = dateOnly(*patch.IssueDate)
 	}
