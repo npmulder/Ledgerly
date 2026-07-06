@@ -20,6 +20,15 @@ const (
 
 // VATReturn computes VAT return boxes 1, 4, and 6 for one VAT quarter.
 func (s *Service) VATReturn(ctx context.Context, period Period) (VATFigures, error) {
+	if s == nil {
+		return VATFigures{}, fmt.Errorf("reports: service is nil")
+	}
+	if s.ledger == nil {
+		return VATFigures{}, fmt.Errorf("reports: ledger reader is required: %w", ErrMissingConfig)
+	}
+	if s.invoiceVATReader == nil {
+		return VATFigures{}, fmt.Errorf("reports: invoice VAT reader is required: %w", ErrMissingConfig)
+	}
 	period, err := normalizeVATQuarter(period)
 	if err != nil {
 		return VATFigures{}, err
@@ -67,7 +76,14 @@ func (s *Service) VATReturn(ctx context.Context, period Period) (VATFigures, err
 
 // VATPosition returns the current-quarter VAT return advisor fact.
 func (s *Service) VATPosition(ctx context.Context) (VATPosition, error) {
-	period := VATQuarterForDate(s.clock.Now())
+	if s == nil {
+		return VATPosition{}, fmt.Errorf("reports: service is nil")
+	}
+	clk := s.clock
+	if clk == nil {
+		clk = realVATClock{}
+	}
+	period := VATQuarterForDate(clk.Now())
 	figures, err := s.VATReturn(ctx, period)
 	if err != nil {
 		return VATPosition{}, err
@@ -77,14 +93,14 @@ func (s *Service) VATPosition(ctx context.Context) (VATPosition, error) {
 		Period:  period,
 		Figures: figures,
 	}
-	if s.companyFacts == nil {
+	facts, ok, err := s.vatPositionCompanyFacts(ctx)
+	if err != nil {
+		return VATPosition{}, err
+	}
+	if !ok {
 		return position, nil
 	}
-	facts, err := s.companyFacts(ctx)
-	if err != nil {
-		return VATPosition{}, fmt.Errorf("reports: VAT position company facts: %w", err)
-	}
-	deadlines, err := jurisdiction.FilingDeadlinesWithClock(facts, s.clock)
+	deadlines, err := jurisdiction.FilingDeadlinesWithClock(facts, clk)
 	if err != nil {
 		return VATPosition{}, fmt.Errorf("reports: VAT position filing deadlines: %w", err)
 	}
@@ -96,6 +112,30 @@ func (s *Service) VATPosition(ctx context.Context) (VATPosition, error) {
 		}
 	}
 	return position, nil
+}
+
+type realVATClock struct{}
+
+func (realVATClock) Now() time.Time {
+	return time.Now()
+}
+
+func (s *Service) vatPositionCompanyFacts(ctx context.Context) (jurisdiction.CompanyFacts, bool, error) {
+	if s.vatCompanyFacts != nil {
+		facts, err := s.vatCompanyFacts(ctx)
+		if err != nil {
+			return jurisdiction.CompanyFacts{}, false, fmt.Errorf("reports: VAT position company facts: %w", err)
+		}
+		return facts, true, nil
+	}
+	if s.identity == nil {
+		return jurisdiction.CompanyFacts{}, false, nil
+	}
+	facts, err := s.identity.CompanyFacts(ctx)
+	if err != nil {
+		return jurisdiction.CompanyFacts{}, false, fmt.Errorf("reports: VAT position identity facts: %w", err)
+	}
+	return toJurisdictionFacts(facts), true, nil
 }
 
 func addEntryToVATFigures(ctx context.Context, figures *VATFigures, classifier *vatClassifier, entry ledger.JournalEntry) error {
@@ -206,9 +246,4 @@ func normalizeVATQuarter(period Period) (Period, error) {
 		return Period{}, fmt.Errorf("reports: VAT period %s to %s is not a calendar quarter: %w", normalized.From.Format(time.DateOnly), normalized.To.Format(time.DateOnly), ErrInvalidPeriod)
 	}
 	return normalized, nil
-}
-
-func dateOnly(value time.Time) time.Time {
-	year, month, day := value.UTC().Date()
-	return time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
 }

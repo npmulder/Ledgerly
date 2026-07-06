@@ -20,7 +20,7 @@ UK-regime boxes relevant to the mock: Box 1 (output VAT), Box 4 (input VAT), Box
 
 ## Filing calendar
 
-`jurisdiction.FilingDeadlines(companyFacts)` resolved against identity data (incorporation date, year end 31 Mar): VAT return (quarterly) · annual return (incorporation anniversary + 1 month, IoM Companies Registry) · company income tax return (year end + 12 months + 1 day — required even at 0%) · personal tax return. Each with due-date badge; amber advisor insights as deadlines approach.
+`jurisdiction.FilingDeadlines(companyFacts)` resolved against identity data (incorporation date, year end 31 Mar): VAT return (quarterly) · annual return (incorporation anniversary + 1 month, IoM Companies Registry) · company income tax return (year end + 12 months + 1 day — required even at 0%) · personal tax return. Each with due-date badge; amber advisor insights as deadlines approach. v1 is informational only: no filed/completed tracking is stored by reports.
 
 ## Export pack
 

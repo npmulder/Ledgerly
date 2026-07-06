@@ -31,6 +31,7 @@ tax:
 filings:
   annual_return:      { due: incorporation_anniversary + 1 month, authority: IoM Companies Registry }
   company_tax_return: { due: accounting_year_end + 12 months + 1 day, required_at_zero_rate: true }
+  personal_tax_return: { due: tax_year_end + 6 months + 1 day, authority: IoM Income Tax Division }
   vat_return:         { due: quarter_end + 1 month, cadence: quarterly, authority: IoM Customs & Excise }
 director_loans:
   s455_charge: false                            # no UK s455
