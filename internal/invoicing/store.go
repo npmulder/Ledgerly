@@ -507,12 +507,13 @@ WHERE id = $1
 	return ErrInvoiceNotFound
 }
 
-func (s Store) SetInvoiceSent(ctx context.Context, tx db.Tx, id string, number string, lockID int64, sendLedgerEntryID int64) (Invoice, error) {
+func (s Store) SetInvoiceSent(ctx context.Context, tx db.Tx, id string, number string, lockID int64, sendLedgerEntryID int64, sentAt time.Time) (Invoice, error) {
 	updated, err := scanInvoiceRow(tx.QueryRow(ctx, `
 UPDATE invoicing.invoices
 SET number = $2,
 	lock_id = $3,
 	send_ledger_entry_id = $4,
+	sent_at = $5,
 	status = 'sent',
 	updated_at = now()
 WHERE id = $1
@@ -522,6 +523,7 @@ RETURNING `+invoiceColumnsSQL(),
 		number,
 		strconv.FormatInt(lockID, 10),
 		sendLedgerEntryID,
+		sentAt.UTC(),
 	))
 	if errors.Is(err, ErrInvoiceNotFound) {
 		exists, existsErr := s.invoiceExists(ctx, tx, id)
@@ -572,6 +574,7 @@ UPDATE invoicing.invoices
 SET number = NULL,
 	lock_id = NULL,
 	send_ledger_entry_id = NULL,
+	sent_at = NULL,
 	status = 'draft',
 	updated_at = now()
 WHERE id = $1
@@ -647,6 +650,7 @@ func invoiceColumnsSQL() string {
 	currency,
 	lock_id,
 	send_ledger_entry_id,
+	sent_at,
 	vat_treatment,
 	settlement_txn_ref,
 	settled_date,
@@ -665,6 +669,7 @@ func scanInvoiceRow(row clientRow) (Invoice, error) {
 		currency         string
 		lockID           sql.NullString
 		sendEntryID      sql.NullInt64
+		sentAt           sql.NullTime
 		vatTreatment     string
 		settlementTxnRef sql.NullString
 		settledDate      sql.NullTime
@@ -682,6 +687,7 @@ func scanInvoiceRow(row clientRow) (Invoice, error) {
 		&currency,
 		&lockID,
 		&sendEntryID,
+		&sentAt,
 		&vatTreatment,
 		&settlementTxnRef,
 		&settledDate,
@@ -707,6 +713,10 @@ func scanInvoiceRow(row clientRow) (Invoice, error) {
 	}
 	if sendEntryID.Valid {
 		invoice.SendLedgerEntryID = &sendEntryID.Int64
+	}
+	if sentAt.Valid {
+		value := sentAt.Time.UTC()
+		invoice.SentAt = &value
 	}
 	invoice.VATTreatment = VATTreatment(vatTreatment)
 	if settlementTxnRef.Valid {

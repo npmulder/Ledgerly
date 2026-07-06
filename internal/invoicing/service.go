@@ -336,7 +336,7 @@ func (s *Service) Send(ctx context.Context, id string) (_ Invoice, err error) {
 	if err != nil {
 		return Invoice{}, fmt.Errorf("invoicing: post send ledger entry: %w", err)
 	}
-	sent, err := s.store.SetInvoiceSent(ctx, tx, draft.ID, number, lock.ID, int64(entryID))
+	sent, err := s.store.SetInvoiceSent(ctx, tx, draft.ID, number, lock.ID, int64(entryID), s.now())
 	if err != nil {
 		return Invoice{}, err
 	}
@@ -588,7 +588,7 @@ func validateRevertibleInvoice(invoice Invoice, today time.Time) error {
 	if invoice.Number == nil || strings.TrimSpace(*invoice.Number) == "" {
 		return fmt.Errorf("invoicing: sent invoice %s has no number", invoice.ID)
 	}
-	if !dateOnly(invoice.IssueDate).Equal(dateOnly(today)) {
+	if invoice.SentAt == nil || !dateOnly(*invoice.SentAt).Equal(dateOnly(today)) {
 		return ErrInvoiceImmutable
 	}
 	return nil
@@ -636,40 +636,89 @@ func invoiceLockID(invoice Invoice) (int64, error) {
 
 func invoiceSendJournalEntry(invoice Invoice, lock RateLock) (ledger.NewJournalEntry, error) {
 	total := invoice.Totals.Total
-	amountGBP, err := lockedAmountGBP(total, lock)
+	totalGBP, err := lockedAmountGBP(total, lock)
 	if err != nil {
 		return ledger.NewJournalEntry{}, err
 	}
-	creditNative, err := total.Negate()
+	postings := []ledger.NewPosting{{
+		AccountCode: tradeDebtorsAccount(invoice.Currency),
+		Amount:      total,
+		AmountGBP:   totalGBP,
+	}}
+	creditPostings, err := invoiceSalesCreditPostings(invoice, lock, totalGBP)
 	if err != nil {
-		return ledger.NewJournalEntry{}, fmt.Errorf("invoicing: negate invoice total: %w", err)
+		return ledger.NewJournalEntry{}, err
 	}
-	creditGBP, err := amountGBP.Negate()
-	if err != nil {
-		return ledger.NewJournalEntry{}, fmt.Errorf("invoicing: negate locked GBP total: %w", err)
-	}
+	postings = append(postings, creditPostings...)
 	number := strings.TrimSpace(*invoice.Number)
 	return ledger.NewJournalEntry{
 		Date:         invoice.IssueDate,
 		Description:  "Invoice " + number,
 		SourceModule: ModuleName,
 		SourceRef:    invoiceSendSourceRef(number),
-		Postings: []ledger.NewPosting{
-			{
-				AccountCode: tradeDebtorsAccount(invoice.Currency),
-				Amount:      total,
-				AmountGBP:   amountGBP,
-			},
-			{
-				AccountCode: salesAccount,
-				Amount:      creditNative,
-				AmountGBP:   creditGBP,
-			},
-		},
+		Postings:     postings,
 	}, nil
 }
 
-const salesAccount ledger.AccountCode = "4000-sales"
+func invoiceSalesCreditPostings(invoice Invoice, lock RateLock, totalGBP Money) ([]ledger.NewPosting, error) {
+	if invoice.VATTreatment == VATTreatmentDomestic && !invoice.Totals.VAT.IsZero() {
+		subtotalGBP, err := lockedAmountGBP(invoice.Totals.Subtotal, lock)
+		if err != nil {
+			return nil, err
+		}
+		vatGBP, err := totalGBP.Sub(subtotalGBP)
+		if err != nil {
+			return nil, fmt.Errorf("invoicing: allocate locked VAT GBP: %w", err)
+		}
+		salesNative, err := invoice.Totals.Subtotal.Negate()
+		if err != nil {
+			return nil, fmt.Errorf("invoicing: negate invoice subtotal: %w", err)
+		}
+		salesGBP, err := subtotalGBP.Negate()
+		if err != nil {
+			return nil, fmt.Errorf("invoicing: negate locked GBP subtotal: %w", err)
+		}
+		vatNative, err := invoice.Totals.VAT.Negate()
+		if err != nil {
+			return nil, fmt.Errorf("invoicing: negate invoice VAT: %w", err)
+		}
+		vatCreditGBP, err := vatGBP.Negate()
+		if err != nil {
+			return nil, fmt.Errorf("invoicing: negate locked GBP VAT: %w", err)
+		}
+		return []ledger.NewPosting{
+			{
+				AccountCode: salesAccount,
+				Amount:      salesNative,
+				AmountGBP:   salesGBP,
+			},
+			{
+				AccountCode: vatControlAccount,
+				Amount:      vatNative,
+				AmountGBP:   vatCreditGBP,
+			},
+		}, nil
+	}
+
+	creditNative, err := invoice.Totals.Total.Negate()
+	if err != nil {
+		return nil, fmt.Errorf("invoicing: negate invoice total: %w", err)
+	}
+	creditGBP, err := totalGBP.Negate()
+	if err != nil {
+		return nil, fmt.Errorf("invoicing: negate locked GBP total: %w", err)
+	}
+	return []ledger.NewPosting{{
+		AccountCode: salesAccount,
+		Amount:      creditNative,
+		AmountGBP:   creditGBP,
+	}}, nil
+}
+
+const (
+	salesAccount      ledger.AccountCode = "4000-sales"
+	vatControlAccount ledger.AccountCode = "2200-vat-control"
+)
 
 func tradeDebtorsAccount(currency Currency) ledger.AccountCode {
 	switch currency {

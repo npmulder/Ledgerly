@@ -240,7 +240,58 @@ func TestInvoicingSendGBPUsesIdentityLockAndPosting(t *testing.T) {
 	assertInvoiceRateLock(t, h, *sent.LockID, "invoicing:INV-2025-01", "GBP", "GBP", "1.000000000000000000")
 	assertInvoicingLedgerPostings(t, h, invoiceSendSourceRefForTest("INV-2025-01"), []wantInvoicePosting{
 		{account: "1101-debtors-gbp", amount: 12_000, currency: "GBP", amountGBP: 12_000},
-		{account: "4000-sales", amount: -12_000, currency: "GBP", amountGBP: -12_000},
+		{account: "4000-sales", amount: -10_000, currency: "GBP", amountGBP: -10_000},
+		{account: "2200-vat-control", amount: -2_000, currency: "GBP", amountGBP: -2_000},
+	})
+	it.AssertLedgerBalanced(t, h)
+}
+
+func TestInvoicingSendDomesticEURSplitsVATAtLockedRate(t *testing.T) {
+	h := harness.New(t, harness.Options{ClockStart: time.Date(2025, 5, 1, 9, 0, 0, 0, time.UTC)})
+	fixtures.Rates(t, h)
+	service := newInvoiceService(t, h)
+
+	client, err := service.SaveClient(context.Background(), invoicing.Client{
+		Name: "Euro Domestic Ltd",
+		Address: invoicing.Address{
+			Line1:      "1 Market Street",
+			Locality:   "Douglas",
+			PostalCode: "IM1 1AA",
+			Country:    "IM",
+		},
+		DefaultCurrency: invoicing.CurrencyEUR,
+		TermsDays:       14,
+		VATTreatment:    invoicing.VATTreatmentDomestic,
+	})
+	if err != nil {
+		t.Fatalf("SaveClient(domestic EUR) error = %v", err)
+	}
+	draft, err := service.CreateDraft(context.Background(), client.ID)
+	if err != nil {
+		t.Fatalf("CreateDraft(domestic EUR) error = %v", err)
+	}
+	lines := []invoicing.InvoiceLineInput{{
+		Description: "EUR domestic delivery",
+		Qty:         invoicing.MustQuantity("1"),
+		UnitPrice:   invoicing.Money{Amount: 10_000, Currency: string(invoicing.CurrencyEUR)},
+	}}
+	updated, err := service.UpdateDraft(context.Background(), draft.ID, invoicing.DraftPatch{Lines: &lines})
+	if err != nil {
+		t.Fatalf("UpdateDraft(lines) error = %v", err)
+	}
+	assertMoney(t, updated.Totals.Total, 12_000, "EUR")
+
+	sent, err := service.Send(context.Background(), updated.ID)
+	if err != nil {
+		t.Fatalf("Send(domestic EUR) error = %v", err)
+	}
+	if sent.Number == nil || *sent.Number != "INV-2025-01" {
+		t.Fatalf("sent Number = %v, want INV-2025-01", sent.Number)
+	}
+	assertInvoicingLedgerPostings(t, h, invoiceSendSourceRefForTest("INV-2025-01"), []wantInvoicePosting{
+		{account: "1100-debtors-eur", amount: 12_000, currency: "EUR", amountGBP: 10_200},
+		{account: "4000-sales", amount: -10_000, currency: "EUR", amountGBP: -8_500},
+		{account: "2200-vat-control", amount: -2_000, currency: "EUR", amountGBP: -1_700},
 	})
 	it.AssertLedgerBalanced(t, h)
 }
@@ -416,6 +467,35 @@ func TestInvoicingRevertToDraftReversesSendAndResendConsumesNewNumber(t *testing
 		t.Fatalf("resent lock id = %d, want different from first lock %d", secondLockID, firstLockID)
 	}
 	assertInvoiceRateLock(t, h, *resent.LockID, "invoicing:INV-2025-02", "EUR", "GBP", "0.850000000000000000")
+	it.AssertLedgerBalanced(t, h)
+}
+
+func TestInvoicingRevertToDraftAllowsBackdatedInvoiceSentToday(t *testing.T) {
+	h := harness.New(t, harness.Options{ClockStart: time.Date(2025, 5, 2, 9, 0, 0, 0, time.UTC)})
+	fixtures.Rates(t, h)
+	service := newInvoiceService(t, h)
+	draft := createEURInvoiceDraft(t, h, service, 450_000)
+	issueDate := time.Date(2025, 5, 1, 0, 0, 0, 0, time.UTC)
+	backdated, err := service.UpdateDraft(context.Background(), draft.ID, invoicing.DraftPatch{IssueDate: &issueDate})
+	if err != nil {
+		t.Fatalf("UpdateDraft(issue date) error = %v", err)
+	}
+	sent, err := service.Send(context.Background(), backdated.ID)
+	if err != nil {
+		t.Fatalf("Send() backdated error = %v", err)
+	}
+	if !sent.IssueDate.Equal(issueDate) {
+		t.Fatalf("sent IssueDate = %s, want %s", sent.IssueDate, issueDate)
+	}
+
+	reverted, err := service.RevertToDraft(context.Background(), sent.ID)
+	if err != nil {
+		t.Fatalf("RevertToDraft(backdated sent today) error = %v", err)
+	}
+	if reverted.Status != invoicing.InvoiceStatusDraft {
+		t.Fatalf("reverted Status = %q, want draft", reverted.Status)
+	}
+	assertSourceRefNetsZero(t, h, invoicing.ModuleName, invoiceSendSourceRefForTest("INV-2025-01"))
 	it.AssertLedgerBalanced(t, h)
 }
 

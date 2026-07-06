@@ -76,6 +76,7 @@ type Invoice struct {
 	Currency          Currency      `json:"currency"`
 	LockID            *string       `json:"lock_id"`
 	SendLedgerEntryID *int64        `json:"-"`
+	SentAt            *time.Time    `json:"sent_at,omitempty"`
 	VATTreatment      VATTreatment  `json:"vat_treatment"`
 	SettlementTxnRef  *string       `json:"settlement_txn_ref"`
 	SettledDate       *time.Time    `json:"settled_date"`
