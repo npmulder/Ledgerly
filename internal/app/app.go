@@ -31,6 +31,7 @@ import (
 	platformcron "github.com/npmulder/ledgerly/internal/platform/cron"
 	"github.com/npmulder/ledgerly/internal/platform/db"
 	httpserver "github.com/npmulder/ledgerly/internal/platform/http"
+	"github.com/npmulder/ledgerly/internal/reports"
 	"github.com/npmulder/ledgerly/web"
 )
 
@@ -65,14 +66,17 @@ type ModuleDeps struct {
 	TodayRate      invoicing.TodayRateFunc
 	Ledger         ledger.Ledger
 	LedgerPool     *pgxpool.Pool
+	Identity       reports.Identity
+	Invoicing      reports.Invoicing
 }
 
 // Module is a module contribution to the HTTP router and in-process bus.
 type Module struct {
-	HTTPModule      httpserver.Module
-	OpenAPIFragment httpserver.OpenAPIFragment
-	SubscribeEvents func(*bus.Bus)
-	ScheduledJobs   []ScheduledJob
+	HTTPModule       httpserver.Module
+	OpenAPIFragment  httpserver.OpenAPIFragment
+	ReportsInvoicing reports.Invoicing
+	SubscribeEvents  func(*bus.Bus)
+	ScheduledJobs    []ScheduledJob
 }
 
 // ScheduledJob is a module-owned deterministic cron job contribution.
@@ -358,6 +362,22 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 	modules = append(modules, invoicingModule.HTTPModule)
 	fragments = append(fragments, invoicingModule.OpenAPIFragment)
 
+	reportsBuilder := buildReportsModule
+	if deps.ModuleBuilders != nil && deps.ModuleBuilders[reports.ModuleName] != nil {
+		reportsBuilder = deps.ModuleBuilders[reports.ModuleName]
+	}
+	reportsModule, err := reportsBuilder(ctx, ModuleDeps{
+		Clock:     clk,
+		Ledger:    ledgerService,
+		Identity:  identityProfile,
+		Invoicing: invoicingModule.ReportsInvoicing,
+	})
+	if err != nil {
+		return nil, err
+	}
+	modules = append(modules, reportsModule.HTTPModule)
+	fragments = append(fragments, reportsModule.OpenAPIFragment)
+
 	staticAssets, err := loadStaticAssets(deps)
 	if err != nil {
 		return nil, err
@@ -431,6 +451,7 @@ func OpenAPIDocument(version string) map[string]any {
 		ledger.OpenAPIFragment(),
 		dla.OpenAPIFragment(),
 		invoicing.OpenAPIFragment(),
+		reports.OpenAPIFragment(),
 	)
 }
 
@@ -479,13 +500,30 @@ func buildInvoicingModule(_ context.Context, deps ModuleDeps) (Module, error) {
 		return Module{}, err
 	}
 	return Module{
-		HTTPModule:      invoicingModule.HTTPModule(),
-		OpenAPIFragment: invoicingModule.OpenAPIFragment(),
+		HTTPModule:       invoicingModule.HTTPModule(),
+		OpenAPIFragment:  invoicingModule.OpenAPIFragment(),
+		ReportsInvoicing: invoicingModule.Service(),
 		ScheduledJobs: []ScheduledJob{{
 			Name:     invoicing.OverdueSweepJobName,
 			Schedule: invoicing.OverdueSweepSchedule,
 			Run:      invoicingModule.RunOverdueSweep,
 		}},
+	}, nil
+}
+
+func buildReportsModule(_ context.Context, deps ModuleDeps) (Module, error) {
+	reportsModule, err := reports.NewModule(reports.Config{
+		Ledger:    deps.Ledger,
+		Identity:  deps.Identity,
+		Invoicing: deps.Invoicing,
+		Clock:     deps.Clock,
+	})
+	if err != nil {
+		return Module{}, err
+	}
+	return Module{
+		HTTPModule:      reportsModule.HTTPModule(),
+		OpenAPIFragment: reportsModule.OpenAPIFragment(),
 	}, nil
 }
 

@@ -139,6 +139,9 @@ func TestRunPrintsOpenAPIDocument(t *testing.T) {
 	if _, ok := paths["/api/dla/balance"]; !ok {
 		t.Fatalf("openapi paths missing /api/dla/balance: %+v", paths)
 	}
+	if _, ok := paths["/api/reports/pl"]; !ok {
+		t.Fatalf("openapi paths missing /api/reports/pl: %+v", paths)
+	}
 }
 
 func TestResolveMigrationsDirUsesEnv(t *testing.T) {

@@ -32,4 +32,18 @@ export const queryKeys = {
   platform: {
     health: (): ApiQueryKey => ["platform", "healthz", {}],
   },
+  reports: {
+    calendar: (): ApiQueryKey => ["reports", "calendar", {}],
+    pl: (from: string, to: string): ApiQueryKey => [
+      "reports",
+      "pl",
+      { from, to },
+    ],
+    profitYTD: (taxYear: string): ApiQueryKey => [
+      "reports",
+      "profitYTD",
+      { taxYear },
+    ],
+    vat: (period: string): ApiQueryKey => ["reports", "vat", { period }],
+  },
 } as const;

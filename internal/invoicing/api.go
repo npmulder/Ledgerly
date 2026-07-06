@@ -115,6 +115,14 @@ func (m *Module) OpenAPIFragment() httpserver.OpenAPIFragment {
 	return OpenAPIFragment()
 }
 
+// Service returns the module service for app-level read model composition.
+func (m *Module) Service() *Service {
+	if m == nil {
+		return nil
+	}
+	return m.service
+}
+
 // Client is invoicing's client reference-data record.
 type Client struct {
 	ID              string       `json:"id"`
