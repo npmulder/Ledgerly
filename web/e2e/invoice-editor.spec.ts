@@ -17,8 +17,7 @@ test("creates, edits, autosaves, sends, shows locked rate, and reverts same-day"
   await expect(
     page.getByRole("heading", { level: 1, name: "Invoices" }),
   ).toBeVisible();
-  await expect(page.getByLabel("Client")).toHaveValue("client_contoso");
-  await page.getByRole("button", { name: "Create draft" }).click();
+  await page.getByRole("button", { name: /New invoice/ }).click();
 
   await expect(page).toHaveURL(/\/invoices\/inv_1$/);
   await expect(
@@ -58,6 +57,33 @@ test("creates, edits, autosaves, sends, shows locked rate, and reverts same-day"
 
   await expect(page.getByRole("button", { name: "Send invoice" })).toBeVisible();
   await expect(page.getByText("≈ 0.85")).toBeVisible();
+});
+
+test("sends overdue reminder from list advisor and logs it in editor", async ({
+  page,
+}) => {
+  const state = invoiceState();
+  state.invoice = overdueInvoice();
+  await mockInvoiceApi(page, state);
+
+  await page.goto("/invoices");
+
+  const advisor = page.getByRole("region", { name: "Invoice advisor" });
+  await expect(advisor).toContainText("9 days overdue");
+  await advisor.getByRole("button", { name: "Send reminder" }).click();
+
+  await expect(page.getByRole("status")).toContainText(
+    "Reminder sent for INV-2026-1.",
+  );
+  await expect.poll(() => state.reminderRequests.length).toBe(1);
+
+  await page.getByRole("link", { name: "INV-2026-1" }).click();
+
+  await expect(
+    page.getByRole("heading", { name: "Invoice editor" }),
+  ).toBeVisible();
+  await expect(page.getByText("Reminder sent").first()).toBeVisible();
+  await expect(page.getByText(/6 Jul 2026/)).toBeVisible();
 });
 
 async function mockInvoiceApi(
@@ -134,6 +160,25 @@ async function mockInvoiceApi(
       return;
     }
     if (
+      path === "/api/invoicing/invoices/inv_1/remind" &&
+      request.method() === "POST"
+    ) {
+      const reminder = {
+        invoice_id: "inv_1",
+        sent_at: "2026-07-06T13:15:00Z",
+      };
+      state.reminderRequests.push("inv_1");
+      state.invoice = {
+        ...(state.invoice ?? overdueInvoice()),
+        reminders: [reminder, ...(state.invoice?.reminders ?? [])],
+      };
+      await fulfillJson(route, {
+        invoice: state.invoice,
+        reminder,
+      });
+      return;
+    }
+    if (
       path === "/api/invoicing/invoices/inv_1/revert" &&
       request.method() === "POST"
     ) {
@@ -141,6 +186,7 @@ async function mockInvoiceApi(
         ...(state.invoice ?? draftInvoice()),
         lock_id: null,
         number: null,
+        reminders: [],
         sent_at: null,
         status: "draft",
         totals: withApprox((state.invoice ?? draftInvoice()).totals),
@@ -160,10 +206,11 @@ async function mockInvoiceApi(
 type InvoiceState = {
   invoice: InvoicingInvoice | null;
   patchRequests: InvoicingInvoicePatch[];
+  reminderRequests: string[];
 };
 
 function invoiceState(): InvoiceState {
-  return { invoice: null, patchRequests: [] };
+  return { invoice: null, patchRequests: [], reminderRequests: [] };
 }
 
 function clientsFixture(): InvoicingClient[] {
@@ -181,6 +228,7 @@ function clientsFixture(): InvoicingClient[] {
       created_at: "2026-07-01T00:00:00Z",
       day_rate: null,
       default_currency: "EUR",
+      email: "billing@contoso.example",
       id: "client_contoso",
       name: "Contoso GmbH",
       retainer_amount: null,
@@ -205,6 +253,7 @@ function draftInvoice(
     lock_id: null,
     number: null,
     pdf_asset: null,
+    reminders: [],
     sent_at: null,
     settled_amount: null,
     settled_date: null,
@@ -223,14 +272,43 @@ function sentInvoice(invoice: InvoicingInvoice): InvoicingInvoice {
     ...invoice,
     lock_id: "7",
     number: "INV-2026-1",
+    pdf_asset: "/api/identity/assets/invoice-pdf",
     sent_at: "2026-07-06T12:00:00Z",
-    status: "sent",
+    status: invoice.status === "overdue" ? "overdue" : "sent",
     totals: {
       ...invoice.totals,
       approx_gbp: null,
     },
     updated_at: "2026-07-06T12:00:00Z",
   };
+}
+
+function overdueInvoice(): InvoicingInvoice {
+  return sentInvoice(
+    draftInvoice({
+      due_date: "2026-06-27T00:00:00Z",
+      issue_date: "2026-06-01T00:00:00Z",
+      lines: [
+        {
+          description: "June support",
+          id: "line_overdue",
+          invoice_id: "inv_1",
+          line_total: { amount: 120_000, currency: "EUR" },
+          position: 1,
+          qty: "1",
+          unit_price: { amount: 120_000, currency: "EUR" },
+        },
+      ],
+      status: "overdue",
+      totals: {
+        approx_gbp: null,
+        subtotal: { amount: 120_000, currency: "EUR" },
+        total: { amount: 120_000, currency: "EUR" },
+        vat: { amount: 0, currency: "EUR" },
+      },
+      vat_treatment: "reverse-charge-eu-b2b",
+    }),
+  );
 }
 
 function applyPatch(
@@ -320,7 +398,7 @@ function invoicesResponse(invoice: InvoicingInvoice | null) {
             client_name: "Contoso GmbH",
             created_at: invoice.created_at,
             currency: invoice.currency,
-            days_overdue: 0,
+            days_overdue: invoice.status === "overdue" ? 9 : 0,
             due_date: invoice.due_date,
             id: invoice.id,
             issue_date: invoice.issue_date,

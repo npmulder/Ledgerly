@@ -218,6 +218,7 @@ function contosoClient(): InvoicingClient {
     created_at: "2026-07-01T09:00:00Z",
     day_rate: null,
     default_currency: "EUR",
+    email: null,
     id: "client-contoso",
     name: "Contoso GmbH",
     retainer_amount: null,

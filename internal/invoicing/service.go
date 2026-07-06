@@ -23,6 +23,7 @@ import (
 	"github.com/npmulder/ledgerly/internal/platform/clock"
 	"github.com/npmulder/ledgerly/internal/platform/db"
 	httpserver "github.com/npmulder/ledgerly/internal/platform/http"
+	"github.com/npmulder/ledgerly/internal/platform/mail"
 )
 
 const (
@@ -34,6 +35,8 @@ const (
 	problemTypeInvoiceImmutable     = "https://ledgerly.local/problems/invoicing/invoice-immutable"
 	problemTypeInvoiceWrongAmount   = "https://ledgerly.local/problems/invoicing/wrong-amount"
 	problemTypeInvoiceRate          = "https://ledgerly.local/problems/invoicing/rate-unavailable"
+	problemTypeInvoiceReminder      = "https://ledgerly.local/problems/invoicing/reminder-unavailable"
+	problemTypeInvoiceReminderLimit = "https://ledgerly.local/problems/invoicing/reminder-rate-limited"
 )
 
 const (
@@ -56,6 +59,7 @@ type Service struct {
 	pdfAssetStore      InvoicePDFAssetStore
 	pdfEngine          InvoicePDFEngine
 	pdfRetryBackoff    time.Duration
+	mailer             mail.Sender
 	logger             *slog.Logger
 	idGenerator        func() (string, error)
 	invoiceIDGenerator func() (string, error)
@@ -176,6 +180,15 @@ func WithInvoicePDFRetryBackoff(backoff time.Duration) ServiceOption {
 	return func(s *Service) {
 		if backoff >= 0 {
 			s.pdfRetryBackoff = backoff
+		}
+	}
+}
+
+// WithReminderMailer installs the sender used by manual overdue reminders.
+func WithReminderMailer(sender mail.Sender) ServiceOption {
+	return func(s *Service) {
+		if sender != nil {
+			s.mailer = sender
 		}
 	}
 }
@@ -1453,8 +1466,36 @@ func problemForError(err error) (httpserver.Problem, bool) {
 				"errors": []FieldError{{Pointer: "/send_ledger_entry_id", Detail: "is required to revert invoice"}},
 			},
 		}, true
+	case errors.Is(err, ErrInvoiceReminderNotDue):
+		return invoiceReminderProblem("Invoice is not overdue", "only sent overdue invoices can receive reminders", "/status"), true
+	case errors.Is(err, ErrInvoiceReminderPDFMissing):
+		return invoiceReminderProblem("Invoice PDF is required", "stored invoice PDF is required before sending a reminder", "/pdf_asset"), true
+	case errors.Is(err, ErrInvoiceReminderRecipientMissing):
+		return invoiceReminderProblem("Client email is required", "client email is required before sending a reminder", "/client_id"), true
+	case errors.Is(err, ErrInvoiceReminderRateLimited):
+		return httpserver.Problem{
+			Type:   problemTypeInvoiceReminderLimit,
+			Title:  "Reminder already sent today",
+			Status: 409,
+			Detail: "invoice already has a reminder recorded today",
+			Extensions: map[string]any{
+				"errors": []FieldError{{Pointer: "/reminders", Detail: "already sent today"}},
+			},
+		}, true
 	default:
 		return httpserver.Problem{}, false
+	}
+}
+
+func invoiceReminderProblem(title string, detail string, pointer string) httpserver.Problem {
+	return httpserver.Problem{
+		Type:   problemTypeInvoiceReminder,
+		Title:  title,
+		Status: 409,
+		Detail: detail,
+		Extensions: map[string]any{
+			"errors": []FieldError{{Pointer: pointer, Detail: detail}},
+		},
 	}
 }
 

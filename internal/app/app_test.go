@@ -1,11 +1,13 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
 	"testing"
 
+	"github.com/npmulder/ledgerly/internal/identity"
 	"github.com/npmulder/ledgerly/internal/platform/config"
 )
 
@@ -35,4 +37,71 @@ func TestBuildLoadsConfiguredJurisdictionBeforeOpeningDatabases(t *testing.T) {
 	if gotSelector != "testland@0.1" {
 		t.Fatalf("jurisdiction selector = %q, want testland@0.1", gotSelector)
 	}
+}
+
+func TestIdentityAssetIDFromURLAcceptsStoredInvoiceAssetURLForms(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want identity.AssetID
+	}{
+		{
+			name: "relative identity asset URL",
+			raw:  "/api/identity/assets/17830098-8109-4a00-8b00-000000000001",
+			want: "17830098-8109-4a00-8b00-000000000001",
+		},
+		{
+			name: "absolute identity asset URL with query string",
+			raw:  "https://ledgerly.example.test/api/identity/assets/17830098-8109-4a00-8b00-000000000001?download=1",
+			want: "17830098-8109-4a00-8b00-000000000001",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := identityAssetIDFromURL(test.raw)
+			if err != nil {
+				t.Fatalf("identityAssetIDFromURL() error = %v", err)
+			}
+			if got != test.want {
+				t.Fatalf("identityAssetIDFromURL() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestIdentityInvoicePDFAssetStoreLoadInvoicePDF(t *testing.T) {
+	pdf := []byte("%PDF-1.4\nstored invoice\n")
+	profile := &fakeInvoicePDFProfile{
+		asset: identity.Asset{
+			MIME:  "application/pdf",
+			Bytes: pdf,
+		},
+	}
+	store := identityInvoicePDFAssetStore{profile: profile}
+
+	got, err := store.LoadInvoicePDF(context.Background(), "https://ledgerly.example.test/api/identity/assets/pdf-asset-1?download=1")
+	if err != nil {
+		t.Fatalf("LoadInvoicePDF() error = %v", err)
+	}
+	if profile.gotID != "pdf-asset-1" {
+		t.Fatalf("Asset() id = %q, want pdf-asset-1", profile.gotID)
+	}
+	if !bytes.Equal(got, pdf) {
+		t.Fatalf("LoadInvoicePDF() bytes = %q, want %q", got, pdf)
+	}
+	got[0] = 'X'
+	if profile.asset.Bytes[0] != '%' {
+		t.Fatal("LoadInvoicePDF() returned aliased asset bytes")
+	}
+}
+
+type fakeInvoicePDFProfile struct {
+	gotID identity.AssetID
+	asset identity.Asset
+}
+
+func (p *fakeInvoicePDFProfile) Asset(_ context.Context, id identity.AssetID) (identity.Asset, error) {
+	p.gotID = id
+	return p.asset, nil
 }

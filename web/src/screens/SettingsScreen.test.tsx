@@ -575,6 +575,7 @@ function contosoClient(): InvoicingClient {
     created_at: "2026-07-05T12:00:00Z",
     day_rate: null,
     default_currency: "EUR",
+    email: "billing@contoso.example",
     id: "client_contoso",
     name: "Contoso GmbH",
     retainer_amount: {
@@ -604,6 +605,7 @@ function fabrikamClient(): InvoicingClient {
       currency: "GBP",
     },
     default_currency: "GBP",
+    email: "accounts@fabrikam.example",
     id: "client_fabrikam",
     name: "Fabrikam Ltd",
     retainer_amount: null,

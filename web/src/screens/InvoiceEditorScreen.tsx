@@ -16,6 +16,7 @@ import {
   invoicePDFPath,
   patchInvoice,
   revertInvoice,
+  sendInvoiceReminder,
   sendInvoice,
   type InvoicingClient,
   type InvoicingInvoice,
@@ -145,6 +146,10 @@ function LoadedInvoiceEditor({
     invoiceToForm(initialInvoice),
   );
   const [lockedRate, setLockedRate] = useState<LockedRate | null>(null);
+  const [reminderStatus, setReminderStatus] = useState<{
+    kind: "error" | "success";
+    text: string;
+  } | null>(null);
   const [validationSummary, setValidationSummary] = useState<string[]>([]);
 
   const autosave = useDraftAutosave(invoiceId, (updated) => {
@@ -175,6 +180,28 @@ function LoadedInvoiceEditor({
       setLockedRate(null);
       setValidationSummary([]);
       queryClient.setQueryData(queryKeys.invoicing.invoice(updated.id), updated);
+      queryClient.invalidateQueries({ queryKey: queryKeys.invoicing.invoices() });
+    },
+  });
+
+  const reminderMutation = useMutation({
+    mutationFn: () => sendInvoiceReminder(invoiceId),
+    onError: (error) => {
+      setReminderStatus({
+        kind: "error",
+        text: problemMessage(error, "Unable to send reminder"),
+      });
+    },
+    onSuccess: (result) => {
+      setInvoice(result.invoice);
+      setReminderStatus({
+        kind: "success",
+        text: `Reminder sent for ${result.invoice.number ?? "invoice"}.`,
+      });
+      queryClient.setQueryData(
+        queryKeys.invoicing.invoice(result.invoice.id),
+        result.invoice,
+      );
       queryClient.invalidateQueries({ queryKey: queryKeys.invoicing.invoices() });
     },
   });
@@ -309,6 +336,14 @@ function LoadedInvoiceEditor({
                   <li key={issue}>{issue}</li>
                 ))}
               </ul>
+            </div>
+          )}
+          {reminderStatus && (
+            <div
+              className={`invoice-toast invoice-toast--${reminderStatus.kind}`}
+              role={reminderStatus.kind === "success" ? "status" : "alert"}
+            >
+              {reminderStatus.text}
             </div>
           )}
 
@@ -534,6 +569,11 @@ function LoadedInvoiceEditor({
             />
           )}
           <DocumentPreview invoice={invoice} />
+          <ReminderCard
+            invoice={invoice}
+            onSend={() => reminderMutation.mutate()}
+            pending={reminderMutation.isPending}
+          />
           <AdvisorNotes
             currency={form.currency}
             isReverseCharge={form.vatTreatment === "reverse-charge-eu-b2b"}
@@ -780,6 +820,46 @@ function DocumentPreview({ invoice }: { invoice: InvoicingInvoice }) {
   );
 }
 
+function ReminderCard({
+  invoice,
+  onSend,
+  pending,
+}: {
+  invoice: InvoicingInvoice;
+  onSend: () => void;
+  pending: boolean;
+}) {
+  const reminders = invoice.reminders ?? [];
+  const canSend = invoice.status === "overdue";
+  return (
+    <Card
+      actions={
+        canSend ? (
+          <Button disabled={pending} onClick={onSend} size="small">
+            {pending ? "Sending" : "Send reminder"}
+          </Button>
+        ) : null
+      }
+      title="Reminders"
+    >
+      {reminders.length === 0 ? (
+        <p className="type-secondary">No reminders sent.</p>
+      ) : (
+        <ul className="invoice-reminder-log">
+          {reminders.map((reminder) => (
+            <li key={reminder.sent_at}>
+              <span>Reminder sent</span>
+              <time dateTime={reminder.sent_at}>
+                {formatReminderDateTime(reminder.sent_at)}
+              </time>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
+  );
+}
+
 function AdvisorNotes({
   currency,
   isReverseCharge,
@@ -967,6 +1047,13 @@ function statusLabel(status: InvoiceStatus) {
 
 function dateLabel(value: string) {
   return value.slice(0, 10);
+}
+
+function formatReminderDateTime(value: string) {
+  return new Intl.DateTimeFormat("en-GB", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
 }
 
 function timeLabel(value: string) {
