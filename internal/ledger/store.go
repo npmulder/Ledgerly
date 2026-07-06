@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/jackc/pgx/v5"
@@ -152,9 +153,10 @@ RETURNING id`,
 	entryID := EntryID(id)
 	for i, posting := range entry.Postings {
 		if _, err := tx.Exec(ctx, `
-INSERT INTO ledger.postings (entry_id, account_code, amount, currency, amount_gbp)
-VALUES ($1, $2, $3, $4, $5)`,
+INSERT INTO ledger.postings (entry_id, entry_date, account_code, amount, currency, amount_gbp)
+VALUES ($1, $2, $3, $4, $5, $6)`,
 			int64(entryID),
+			entry.Date,
 			string(posting.AccountCode),
 			posting.Amount.Amount,
 			posting.Amount.Currency,
@@ -264,6 +266,158 @@ HAVING sum(amount) <> 0`, int64(id))
 	return nil
 }
 
+// AccountBalance sums postings for code on or before asOf.
+func (Store) AccountBalance(ctx context.Context, tx db.Tx, code AccountCode, asOf time.Time) (AccountBalance, error) {
+	account, err := loadAccount(ctx, tx, code)
+	if err != nil {
+		return AccountBalance{}, err
+	}
+
+	rows, err := tx.Query(ctx, `
+SELECT currency, COALESCE(sum(amount), 0)::bigint, COALESCE(sum(amount_gbp), 0)::bigint
+FROM ledger.postings
+WHERE account_code = $1
+	AND entry_date <= $2
+GROUP BY currency
+ORDER BY currency`, string(code), asOf)
+	if err != nil {
+		return AccountBalance{}, fmt.Errorf("ledger: account balance %s: %w", code, err)
+	}
+	defer rows.Close()
+
+	balance := AccountBalance{
+		AccountCode: account.Code,
+		AccountName: account.Name,
+		AccountType: account.Type,
+		AmountGBP: money.Money{
+			Currency: "GBP",
+		},
+	}
+	for rows.Next() {
+		var (
+			currency  string
+			amount    int64
+			amountGBP int64
+		)
+		if err := rows.Scan(&currency, &amount, &amountGBP); err != nil {
+			return AccountBalance{}, fmt.Errorf("ledger: scan account balance %s: %w", code, err)
+		}
+		balance.Native = append(balance.Native, money.Money{Amount: amount, Currency: currency})
+		totalGBP, err := addMinorUnits(balance.AmountGBP.Amount, amountGBP)
+		if err != nil {
+			return AccountBalance{}, fmt.Errorf("ledger: account balance %s GBP overflow: %w", code, ErrInvalidMoney)
+		}
+		balance.AmountGBP.Amount = totalGBP
+	}
+	if err := rows.Err(); err != nil {
+		return AccountBalance{}, fmt.Errorf("ledger: collect account balance %s: %w", code, err)
+	}
+	if len(balance.Native) == 0 && account.Currency != nil {
+		balance.Native = append(balance.Native, money.Money{Currency: *account.Currency})
+	}
+	return balance, nil
+}
+
+// BalancesByType sums account types using P&L semantics for income/expense and
+// balance-sheet semantics for asset/liability/equity.
+func (Store) BalancesByType(ctx context.Context, tx db.Tx, from time.Time, to time.Time) ([]AccountBalance, error) {
+	balances := initialTypeBalances()
+	byType := make(map[AccountType]*AccountBalance, len(balances))
+	for i := range balances {
+		byType[balances[i].AccountType] = &balances[i]
+	}
+
+	rows, err := tx.Query(ctx, `
+SELECT a.type::text,
+	p.currency,
+	COALESCE(sum(p.amount), 0)::bigint,
+	COALESCE(sum(p.amount_gbp), 0)::bigint
+FROM ledger.accounts AS a
+LEFT JOIN ledger.postings AS p
+	ON p.account_code = a.code
+	AND p.entry_date <= $2
+	AND (a.type NOT IN ('income', 'expense') OR p.entry_date >= $1)
+GROUP BY a.type, p.currency
+ORDER BY CASE a.type
+	WHEN 'asset' THEN 1
+	WHEN 'liability' THEN 2
+	WHEN 'equity' THEN 3
+	WHEN 'income' THEN 4
+	WHEN 'expense' THEN 5
+	ELSE 6
+END, p.currency`, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("ledger: balances by type: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			typeValue string
+			currency  pgtype.Text
+			amount    int64
+			amountGBP int64
+		)
+		if err := rows.Scan(&typeValue, &currency, &amount, &amountGBP); err != nil {
+			return nil, fmt.Errorf("ledger: scan balances by type: %w", err)
+		}
+		accountType := AccountType(typeValue)
+		balance, ok := byType[accountType]
+		if !ok {
+			continue
+		}
+		if currency.Valid {
+			balance.Native = append(balance.Native, money.Money{Amount: amount, Currency: currency.String})
+		}
+		totalGBP, err := addMinorUnits(balance.AmountGBP.Amount, amountGBP)
+		if err != nil {
+			return nil, fmt.Errorf("ledger: balances by type %s GBP overflow: %w", accountType, ErrInvalidMoney)
+		}
+		balance.AmountGBP.Amount = totalGBP
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("ledger: collect balances by type: %w", err)
+	}
+	return balances, nil
+}
+
+// Entries loads journal entries matching filter and attaches all postings for
+// each matched entry.
+func (Store) Entries(ctx context.Context, tx db.Tx, filter EntryFilter) ([]JournalEntry, error) {
+	query, args := buildEntriesQuery(filter)
+	rows, err := tx.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("ledger: list entries: %w", err)
+	}
+	defer rows.Close()
+
+	entries := []JournalEntry{}
+	entryIDs := []int64{}
+	for rows.Next() {
+		entry, err := scanJournalEntryWithoutPostings(rows)
+		if err != nil {
+			return nil, fmt.Errorf("ledger: scan entry: %w", err)
+		}
+		entries = append(entries, entry)
+		entryIDs = append(entryIDs, int64(entry.ID))
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("ledger: collect entries: %w", err)
+	}
+	if len(entries) == 0 {
+		return entries, nil
+	}
+
+	postingsByEntry, err := loadPostingsForEntries(ctx, tx, entryIDs)
+	if err != nil {
+		return nil, err
+	}
+	for i := range entries {
+		entries[i].Postings = postingsByEntry[entries[i].ID]
+	}
+	return entries, nil
+}
+
 type ensuredAccount struct {
 	Code     AccountCode
 	Name     string
@@ -303,6 +457,79 @@ FROM ledger.ensure_account($1, $2, $3, $4)`
 		account.Currency = &value
 	}
 	return account, nil
+}
+
+func loadAccount(ctx context.Context, tx db.Tx, code AccountCode) (Account, error) {
+	account, err := scanSingleAccount(tx.QueryRow(ctx, `
+SELECT id, code, name, type, currency, created_at
+FROM ledger.accounts
+WHERE code = $1`, string(code)))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Account{}, &AccountNotFoundError{Code: code}
+		}
+		return Account{}, fmt.Errorf("ledger: load account %s: %w", code, err)
+	}
+	return account, nil
+}
+
+func initialTypeBalances() []AccountBalance {
+	return []AccountBalance{
+		typeBalance(AccountTypeAsset),
+		typeBalance(AccountTypeLiability),
+		typeBalance(AccountTypeEquity),
+		typeBalance(AccountTypeIncome),
+		typeBalance(AccountTypeExpense),
+	}
+}
+
+func typeBalance(accountType AccountType) AccountBalance {
+	return AccountBalance{
+		AccountName: string(accountType),
+		AccountType: accountType,
+		AmountGBP:   money.Money{Currency: "GBP"},
+	}
+}
+
+func buildEntriesQuery(filter EntryFilter) (string, []any) {
+	args := []any{}
+	where := []string{"true"}
+	addArg := func(value any) string {
+		args = append(args, value)
+		return fmt.Sprintf("$%d", len(args))
+	}
+
+	if filter.From != nil {
+		where = append(where, "je.date >= "+addArg(*filter.From))
+	}
+	if filter.To != nil {
+		where = append(where, "je.date <= "+addArg(*filter.To))
+	}
+	if filter.SourceModule != "" {
+		where = append(where, "je.source_module = "+addArg(filter.SourceModule))
+	}
+	if filter.AccountCode != "" {
+		where = append(where, `EXISTS (
+	SELECT 1
+	FROM ledger.postings AS account_filter
+	WHERE account_filter.entry_id = je.id
+		AND account_filter.account_code = `+addArg(string(filter.AccountCode))+`
+)`)
+	}
+	if filter.After != nil {
+		afterDate := addArg(filter.After.Date)
+		afterID := addArg(int64(filter.After.ID))
+		where = append(where, "(je.date, je.id) > ("+afterDate+", "+afterID+")")
+	}
+	limit := addArg(filter.Limit)
+
+	query := `
+SELECT je.id, je.date, je.description, je.source_module, je.source_ref, je.reversal_of, je.created_at
+FROM ledger.journal_entries AS je
+WHERE ` + strings.Join(where, "\n\tAND ") + `
+ORDER BY je.date, je.id
+LIMIT ` + limit
+	return query, args
 }
 
 func normalizeAccountSpec(spec AccountSpec) (AccountSpec, error) {
@@ -407,6 +634,29 @@ func scanSingleAccount(row accountRow) (Account, error) {
 	return account, nil
 }
 
+func scanJournalEntryWithoutPostings(row accountRow) (JournalEntry, error) {
+	var (
+		entry      JournalEntry
+		reversalOf pgtype.Int8
+	)
+	if err := row.Scan(
+		&entry.ID,
+		&entry.Date,
+		&entry.Description,
+		&entry.SourceModule,
+		&entry.SourceRef,
+		&reversalOf,
+		&entry.CreatedAt,
+	); err != nil {
+		return JournalEntry{}, err
+	}
+	if reversalOf.Valid {
+		reversedID := EntryID(reversalOf.Int64)
+		entry.ReversalOf = &reversedID
+	}
+	return entry, nil
+}
+
 func loadPostings(ctx context.Context, tx db.Tx, entryID EntryID) ([]Posting, error) {
 	rows, err := tx.Query(ctx, `
 SELECT account_code, amount, currency, amount_gbp
@@ -445,6 +695,48 @@ ORDER BY id`, int64(entryID))
 		return nil, fmt.Errorf("ledger: collect postings for entry %d: %w", entryID, err)
 	}
 	return postings, nil
+}
+
+func loadPostingsForEntries(ctx context.Context, tx db.Tx, entryIDs []int64) (map[EntryID][]Posting, error) {
+	rows, err := tx.Query(ctx, `
+SELECT entry_id, account_code, amount, currency, amount_gbp
+FROM ledger.postings
+WHERE entry_id = ANY($1)
+ORDER BY entry_id, id`, entryIDs)
+	if err != nil {
+		return nil, fmt.Errorf("ledger: load postings for entries: %w", err)
+	}
+	defer rows.Close()
+
+	postingsByEntry := make(map[EntryID][]Posting, len(entryIDs))
+	for rows.Next() {
+		var (
+			entryID     int64
+			accountCode string
+			amount      int64
+			currency    string
+			amountGBP   int64
+		)
+		if err := rows.Scan(&entryID, &accountCode, &amount, &currency, &amountGBP); err != nil {
+			return nil, fmt.Errorf("ledger: scan posting for entries: %w", err)
+		}
+		id := EntryID(entryID)
+		postingsByEntry[id] = append(postingsByEntry[id], Posting{
+			AccountCode: AccountCode(accountCode),
+			Amount: money.Money{
+				Amount:   amount,
+				Currency: currency,
+			},
+			AmountGBP: money.Money{
+				Amount:   amountGBP,
+				Currency: "GBP",
+			},
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("ledger: collect postings for entries: %w", err)
+	}
+	return postingsByEntry, nil
 }
 
 func isReversalUniqueViolation(err error) bool {

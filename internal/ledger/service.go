@@ -90,6 +90,64 @@ func (s *Service) Reverse(ctx context.Context, tx db.Tx, id EntryID, reason stri
 	return s.post(ctx, tx, reversal, &id)
 }
 
+// AccountBalance returns the account's native balances grouped by currency and
+// its frozen presentational GBP balance from postings dated on or before asOf.
+func (s *Service) AccountBalance(ctx context.Context, code AccountCode, asOf time.Time) (AccountBalance, error) {
+	if s.pool == nil {
+		return AccountBalance{}, fmt.Errorf("ledger: account balance requires pool")
+	}
+	normalizedCode, err := normalizeAccountCode(code)
+	if err != nil {
+		return AccountBalance{}, err
+	}
+	normalizedAsOf, err := normalizeEntryDate(asOf)
+	if err != nil {
+		return AccountBalance{}, err
+	}
+	return s.store.AccountBalance(ctx, s.pool, normalizedCode, normalizedAsOf)
+}
+
+// BalancesByType returns one aggregate row per account type. Income and expense
+// balances use P&L semantics, summing postings dated from through to inclusive.
+// Asset, liability, and equity balances use balance-sheet semantics, summing all
+// postings dated on or before to. GBP totals are sums of stored posting
+// amount_gbp values; the ledger never retranslates historical native amounts.
+func (s *Service) BalancesByType(ctx context.Context, from time.Time, to time.Time) ([]AccountBalance, error) {
+	if s.pool == nil {
+		return nil, fmt.Errorf("ledger: balances by type requires pool")
+	}
+	normalizedFrom, err := normalizeEntryDate(from)
+	if err != nil {
+		return nil, err
+	}
+	normalizedTo, err := normalizeEntryDate(to)
+	if err != nil {
+		return nil, err
+	}
+	if normalizedFrom.After(normalizedTo) {
+		return nil, fmt.Errorf("ledger: from date %s is after to date %s: %w",
+			normalizedFrom.Format(time.DateOnly),
+			normalizedTo.Format(time.DateOnly),
+			ErrInvalidEntryFilter,
+		)
+	}
+	return s.store.BalancesByType(ctx, s.pool, normalizedFrom, normalizedTo)
+}
+
+// Entries returns journal entries with postings for browse/export. Filters use
+// inclusive date bounds, stable ordering by date then id, and keyset pagination
+// through EntryFilter.After.
+func (s *Service) Entries(ctx context.Context, filter EntryFilter) ([]JournalEntry, error) {
+	if s.pool == nil {
+		return nil, fmt.Errorf("ledger: entries requires pool")
+	}
+	normalized, err := normalizeEntryFilter(filter)
+	if err != nil {
+		return nil, err
+	}
+	return s.store.Entries(ctx, s.pool, normalized)
+}
+
 // EnsureAccount creates spec.Code or returns the existing account code when it is consistent.
 func (s *Service) EnsureAccount(ctx context.Context, tx db.Tx, spec AccountSpec) (AccountCode, error) {
 	if tx == nil {
@@ -210,8 +268,8 @@ func validateNewJournalEntry(entry NewJournalEntry) (NewJournalEntry, error) {
 }
 
 func validatePosting(index int, posting NewPosting) (NewPosting, error) {
-	code := AccountCode(strings.ToLower(strings.TrimSpace(string(posting.AccountCode))))
-	if code == "" {
+	code, err := normalizeAccountCode(posting.AccountCode)
+	if err != nil {
 		return NewPosting{}, fmt.Errorf("ledger: posting %d account code is required: %w", index, ErrInvalidJournalEntry)
 	}
 
@@ -278,6 +336,14 @@ func normalizeEntryDate(date time.Time) (time.Time, error) {
 	return time.Date(year, month, day, 0, 0, 0, 0, time.UTC), nil
 }
 
+func normalizeAccountCode(code AccountCode) (AccountCode, error) {
+	normalized := AccountCode(strings.ToLower(strings.TrimSpace(string(code))))
+	if normalized == "" {
+		return "", ErrInvalidAccountSpec
+	}
+	return normalized, nil
+}
+
 func normalizeCurrencyCode(currency string) (string, error) {
 	normalized := strings.ToUpper(strings.TrimSpace(currency))
 	if len(normalized) != 3 {
@@ -300,6 +366,65 @@ func addMinorUnits(total, amount int64) (int64, error) {
 		return 0, ErrInvalidMoney
 	}
 	return total + amount, nil
+}
+
+func normalizeEntryFilter(filter EntryFilter) (EntryFilter, error) {
+	normalized := EntryFilter{
+		SourceModule: strings.TrimSpace(filter.SourceModule),
+		Limit:        filter.Limit,
+	}
+
+	var err error
+	if filter.From != nil {
+		from, err := normalizeEntryDate(*filter.From)
+		if err != nil {
+			return EntryFilter{}, err
+		}
+		normalized.From = &from
+	}
+	if filter.To != nil {
+		to, err := normalizeEntryDate(*filter.To)
+		if err != nil {
+			return EntryFilter{}, err
+		}
+		normalized.To = &to
+	}
+	if normalized.From != nil && normalized.To != nil && normalized.From.After(*normalized.To) {
+		return EntryFilter{}, fmt.Errorf("ledger: from date %s is after to date %s: %w",
+			normalized.From.Format(time.DateOnly),
+			normalized.To.Format(time.DateOnly),
+			ErrInvalidEntryFilter,
+		)
+	}
+	if filter.AccountCode != "" {
+		normalized.AccountCode, err = normalizeAccountCode(filter.AccountCode)
+		if err != nil {
+			return EntryFilter{}, fmt.Errorf("ledger: filter account code: %w", ErrInvalidEntryFilter)
+		}
+	}
+	if filter.After != nil {
+		afterDate, err := normalizeEntryDate(filter.After.Date)
+		if err != nil {
+			return EntryFilter{}, err
+		}
+		if filter.After.ID <= 0 {
+			return EntryFilter{}, fmt.Errorf("ledger: entry cursor id %d: %w", filter.After.ID, ErrInvalidEntryFilter)
+		}
+		normalized.After = &EntryCursor{
+			Date: afterDate,
+			ID:   filter.After.ID,
+		}
+	}
+	if normalized.Limit == 0 {
+		normalized.Limit = DefaultEntriesLimit
+	}
+	if normalized.Limit < 0 {
+		return EntryFilter{}, fmt.Errorf("ledger: entries limit %d: %w", normalized.Limit, ErrInvalidEntryFilter)
+	}
+	if normalized.Limit > MaxEntriesLimit {
+		normalized.Limit = MaxEntriesLimit
+	}
+	return normalized, nil
 }
 
 func postingAccountCodes(postings []NewPosting) []AccountCode {
