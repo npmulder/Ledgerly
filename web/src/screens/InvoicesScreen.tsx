@@ -243,7 +243,7 @@ export function InvoiceAdvisorStrip({
 }) {
   return (
     <section
-      aria-label="Invoice advisor insights"
+      aria-label="Invoice advisor"
       className="invoices-advisor-strip"
       data-surface="invoices"
     >
@@ -326,7 +326,11 @@ function InvoicesTable({ data }: { readonly data: InvoicingInvoicesResponse }) {
             key={invoice.id}
             tone={invoice.status === "overdue" ? "overdue" : "default"}
           >
-            <TableCell variant="mono">{invoice.number ?? "DRAFT"}</TableCell>
+            <TableCell variant="mono">
+              <a href={`/invoices/${encodeURIComponent(invoice.id)}`}>
+                {invoice.number ?? "DRAFT"}
+              </a>
+            </TableCell>
             <TableCell>{invoice.client_name}</TableCell>
             <TableCell className="invoices-table__issued">
               {formatDate(invoice.issue_date)}

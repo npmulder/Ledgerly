@@ -17,8 +17,7 @@ test("creates, edits, autosaves, sends, shows locked rate, and reverts same-day"
   await expect(
     page.getByRole("heading", { level: 1, name: "Invoices" }),
   ).toBeVisible();
-  await expect(page.getByLabel("Client")).toHaveValue("client_contoso");
-  await page.getByRole("button", { name: "Create draft" }).click();
+  await page.getByRole("button", { name: /New invoice/ }).click();
 
   await expect(page).toHaveURL(/\/invoices\/inv_1$/);
   await expect(
