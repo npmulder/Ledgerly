@@ -13,6 +13,96 @@ func OpenAPIFragment() httpserver.OpenAPIFragment {
 			{"name": "dividends"},
 		},
 		Paths: map[string]any{
+			"/api/dividends/headroom": map[string]any{
+				"get": map[string]any{
+					"tags":        []string{"dividends"},
+					"summary":     "Return live dividend headroom",
+					"description": "Returns the live distributable-reserves calculation lines rendered by the dividends screen.",
+					"operationId": "dividendsGetHeadroom",
+					"security":    dividendSessionSecurity(),
+					"responses": map[string]any{
+						"200": dividendsJSONResponseRef("Dividend headroom breakdown", "DividendsHeadroomBreakdown"),
+						"401": dividendsProblemResponse("Authentication required"),
+					},
+				},
+			},
+			"/api/dividends/validate": map[string]any{
+				"post": map[string]any{
+					"tags":        []string{"dividends"},
+					"summary":     "Validate a candidate dividend amount",
+					"description": "Returns the validation-strip payload for a candidate dividend. Over-headroom candidates still return 200 with within_headroom=false so clients can render a blocking strip.",
+					"operationId": "dividendsValidateAmount",
+					"security":    dividendSessionSecurity(),
+					"requestBody": dividendsJSONRequestBodyRef("DividendsAmountRequest"),
+					"responses": map[string]any{
+						"200": dividendsJSONResponseRef("Dividend validation strip payload", "DividendsValidationResult"),
+						"400": dividendsProblemResponse("Malformed dividend amount request"),
+						"401": dividendsProblemResponse("Authentication required"),
+						"413": dividendsProblemResponse("Dividend amount request body is too large"),
+						"422": dividendsValidationProblemResponse("Dividend amount validation failed"),
+					},
+				},
+			},
+			"/api/dividends/declare": map[string]any{
+				"post": map[string]any{
+					"tags":        []string{"dividends"},
+					"summary":     "Declare a dividend",
+					"description": "Creates an immutable dividend declaration, posts the retained-earnings and DLA entries, publishes declaration facts, and schedules voucher/minutes rendering.",
+					"operationId": "dividendsDeclareAmount",
+					"security":    dividendSessionSecurity(),
+					"requestBody": dividendsJSONRequestBodyRef("DividendsAmountRequest"),
+					"responses": map[string]any{
+						"201": dividendsJSONResponseRef("Dividend declaration created", "DividendsDeclaration"),
+						"400": dividendsProblemResponse("Malformed dividend amount request"),
+						"401": dividendsProblemResponse("Authentication required"),
+						"413": dividendsProblemResponse("Dividend amount request body is too large"),
+						"422": dividendsValidationProblemResponse("Dividend declaration failed validation"),
+					},
+				},
+			},
+			"/api/dividends/history": map[string]any{
+				"get": map[string]any{
+					"tags":        []string{"dividends"},
+					"summary":     "List dividend declaration history",
+					"description": "Returns dividend declarations newest first.",
+					"operationId": "dividendsGetHistory",
+					"security":    dividendSessionSecurity(),
+					"responses": map[string]any{
+						"200": dividendsJSONResponseRef("Dividend declaration history", "DividendsHistoryResponse"),
+						"401": dividendsProblemResponse("Authentication required"),
+					},
+				},
+			},
+			"/api/dividends/{id}/voucher": map[string]any{
+				"get": map[string]any{
+					"tags":        []string{"dividends"},
+					"summary":     "Redirect to a stored dividend voucher PDF asset",
+					"description": "Redirects to the immutable stored dividend voucher PDF asset.",
+					"operationId": "dividendsGetVoucherPDFByID",
+					"security":    dividendSessionSecurity(),
+					"parameters":  declarationIDParameter(),
+					"responses": map[string]any{
+						"302": dividendRedirectResponse("Redirect to stored voucher PDF asset"),
+						"401": dividendsProblemResponse("Authentication required"),
+						"404": dividendsValidationProblemResponse("Voucher PDF asset was not found"),
+					},
+				},
+			},
+			"/api/dividends/{id}/minutes": map[string]any{
+				"get": map[string]any{
+					"tags":        []string{"dividends"},
+					"summary":     "Redirect to a stored board minutes PDF asset",
+					"description": "Redirects to the immutable stored board minutes PDF asset.",
+					"operationId": "dividendsGetMinutesPDFByID",
+					"security":    dividendSessionSecurity(),
+					"parameters":  declarationIDParameter(),
+					"responses": map[string]any{
+						"302": dividendRedirectResponse("Redirect to stored board minutes PDF asset"),
+						"401": dividendsProblemResponse("Authentication required"),
+						"404": dividendsValidationProblemResponse("Board minutes PDF asset was not found"),
+					},
+				},
+			},
 			"/api/dividends/declarations/{id}/print": map[string]any{
 				"get": map[string]any{
 					"tags":        []string{"dividends"},
@@ -91,6 +181,17 @@ func declarationIDParameter() []map[string]any {
 	}
 }
 
+func dividendsJSONRequestBodyRef(schema string) map[string]any {
+	return map[string]any{
+		"required": true,
+		"content": map[string]any{
+			"application/json": map[string]any{
+				"schema": map[string]any{"$ref": "#/components/schemas/" + schema},
+			},
+		},
+	}
+}
+
 func dividendsJSONResponseRef(description string, schema string) map[string]any {
 	return map[string]any{
 		"description": description,
@@ -118,7 +219,7 @@ func dividendsValidationProblemResponse(description string) map[string]any {
 		"description": description,
 		"content": map[string]any{
 			httpserver.ProblemContentType: map[string]any{
-				"schema": map[string]any{"$ref": "#/components/schemas/ValidationProblem"},
+				"schema": map[string]any{"$ref": "#/components/schemas/DividendsValidationProblem"},
 			},
 		},
 	}
@@ -196,6 +297,96 @@ func dividendsComponents() map[string]any {
 					"distributable": map[string]any{"type": "boolean"},
 				},
 				"additionalProperties": false,
+			},
+			"DividendsAmountRequest": map[string]any{
+				"type":     "object",
+				"required": []string{"amount"},
+				"properties": map[string]any{
+					"amount": map[string]any{"$ref": "#/components/schemas/DividendsMoney"},
+				},
+				"additionalProperties": false,
+			},
+			"DividendsWithholdingValidation": map[string]any{
+				"type":     "object",
+				"required": []string{"tax_year", "policy", "applies", "informational"},
+				"properties": map[string]any{
+					"tax_year":      map[string]any{"type": "string"},
+					"policy":        map[string]any{"type": "string"},
+					"applies":       map[string]any{"type": "boolean"},
+					"informational": map[string]any{"type": "boolean"},
+				},
+				"additionalProperties": false,
+			},
+			"DividendsPersonalTaxValidation": map[string]any{
+				"type":     "object",
+				"required": []string{"tax_year", "prior_ytd", "with_dividend", "marginal", "message"},
+				"properties": map[string]any{
+					"tax_year":      map[string]any{"type": "string"},
+					"prior_ytd":     map[string]any{"$ref": "#/components/schemas/DividendsMoney"},
+					"with_dividend": map[string]any{"$ref": "#/components/schemas/DividendsMoney"},
+					"marginal":      map[string]any{"$ref": "#/components/schemas/DividendsMoney"},
+					"message":       map[string]any{"type": "string"},
+				},
+				"additionalProperties": false,
+			},
+			"DividendsValidationResult": map[string]any{
+				"type": "object",
+				"required": []string{
+					"amount",
+					"headroom",
+					"within_headroom",
+					"distributable",
+					"distributable_total",
+					"withholding",
+					"personal_tax",
+				},
+				"properties": map[string]any{
+					"amount":              map[string]any{"$ref": "#/components/schemas/DividendsMoney"},
+					"headroom":            map[string]any{"$ref": "#/components/schemas/DividendsHeadroomBreakdown"},
+					"within_headroom":     map[string]any{"type": "boolean"},
+					"distributable":       map[string]any{"type": "boolean"},
+					"distributable_total": map[string]any{"$ref": "#/components/schemas/DividendsMoney"},
+					"withholding":         map[string]any{"$ref": "#/components/schemas/DividendsWithholdingValidation"},
+					"personal_tax":        map[string]any{"$ref": "#/components/schemas/DividendsPersonalTaxValidation"},
+				},
+				"additionalProperties": false,
+			},
+			"DividendsHistoryResponse": map[string]any{
+				"type":     "object",
+				"required": []string{"declarations"},
+				"properties": map[string]any{
+					"declarations": map[string]any{
+						"type":  "array",
+						"items": map[string]any{"$ref": "#/components/schemas/DividendsDeclaration"},
+					},
+				},
+				"additionalProperties": false,
+			},
+			"DividendsFieldError": map[string]any{
+				"type":     "object",
+				"required": []string{"pointer", "detail"},
+				"properties": map[string]any{
+					"pointer": map[string]any{"type": "string"},
+					"detail":  map[string]any{"type": "string"},
+				},
+				"additionalProperties": false,
+			},
+			"DividendsValidationProblem": map[string]any{
+				"type":                 "object",
+				"additionalProperties": true,
+				"required":             []string{"type", "title", "status", "errors"},
+				"properties": map[string]any{
+					"type":     map[string]any{"type": "string", "format": "uri-reference"},
+					"title":    map[string]any{"type": "string"},
+					"status":   map[string]any{"type": "integer", "format": "int32"},
+					"detail":   map[string]any{"type": "string"},
+					"instance": map[string]any{"type": "string", "format": "uri-reference"},
+					"errors": map[string]any{
+						"type":  "array",
+						"items": map[string]any{"$ref": "#/components/schemas/DividendsFieldError"},
+					},
+					"distributable_total": map[string]any{"$ref": "#/components/schemas/DividendsMoney"},
+				},
 			},
 			"DividendsCompanySnapshot": map[string]any{
 				"type":     "object",
