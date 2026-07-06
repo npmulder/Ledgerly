@@ -22,10 +22,10 @@ func TestNewCreatesIsolatedSuiteDatabases(t *testing.T) {
 		if err := pool.QueryRow(ctx, "SELECT current_database()").Scan(&firstDB); err != nil {
 			t.Fatalf("current_database suite one: %v", err)
 		}
-		if _, err := pool.Exec(ctx, "CREATE TABLE demo.suite_isolation_probe (id integer PRIMARY KEY)"); err != nil {
+		if _, err := pool.Exec(ctx, "CREATE TABLE ledger.suite_isolation_probe (id integer PRIMARY KEY)"); err != nil {
 			t.Fatalf("create suite isolation probe: %v", err)
 		}
-		if _, err := pool.Exec(ctx, "INSERT INTO demo.suite_isolation_probe (id) VALUES (1)"); err != nil {
+		if _, err := pool.Exec(ctx, "INSERT INTO ledger.suite_isolation_probe (id) VALUES (1)"); err != nil {
 			t.Fatalf("insert suite isolation probe: %v", err)
 		}
 	})
@@ -43,7 +43,7 @@ func TestNewCreatesIsolatedSuiteDatabases(t *testing.T) {
 		}
 
 		var relation string
-		if err := pool.QueryRow(ctx, "SELECT COALESCE(to_regclass('demo.suite_isolation_probe')::text, '')").Scan(&relation); err != nil {
+		if err := pool.QueryRow(ctx, "SELECT COALESCE(to_regclass('ledger.suite_isolation_probe')::text, '')").Scan(&relation); err != nil {
 			t.Fatalf("check suite isolation probe: %v", err)
 		}
 		if relation != "" {

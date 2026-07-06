@@ -1,7 +1,7 @@
 # Development Guide
 
-This guide is the implementation companion for Ledgerly's walking skeleton. Use
-`internal/demo` as the reference module until real business modules replace it.
+This guide is the implementation companion for Ledgerly's module architecture.
+Use `internal/ledger` as the reference module for production module shape.
 
 ## Anatomy of a Module
 
@@ -19,7 +19,8 @@ Each module lives under `internal/<module>/` and keeps the same file shape:
 - `http.go` maps REST JSON to service commands and maps service errors to
   problem-details responses.
 
-The demo module shows the whole path with one table, `demo.notes`.
+`internal/ledger` shows the production path for module-owned schema, service
+orchestration, store queries, HTTP mounting, and OpenAPI contribution.
 
 ## Database Shape
 
@@ -31,11 +32,10 @@ Every database module gets:
 - one entry in `internal/platform/db` so migrations, module roles, and bus event
   validation all agree on the canonical module list.
 
-Demo's bootstrap migration creates the `demo` schema, the `ledgerly_demo` role,
-and `demo.notes`. The table uses `kind = 'note'` for user-facing rows and
-`kind = 'audit'` for subscriber audit rows. This keeps the walking skeleton to
-one table while still proving publisher and subscriber writes share a
-transaction.
+The ledger bootstrap migrations create the `ledger` schema, the `ledgerly_ledger`
+role, chart-of-accounts tables, journal entries, and postings. Other modules
+use public Go APIs to post ledger facts in their own transactions instead of
+owning ledger tables directly.
 
 ## Transactional Events
 
@@ -46,21 +46,22 @@ Publish domain events only from inside the service transaction:
 3. Publish the domain event through `bus.Publish(ctx, tx, event)`.
 4. Commit only after every subscriber succeeds.
 
-`internal/demo/service.go` is the reference. `CreateNote` inserts a note, then
-publishes `demo.NoteCreated` with the same `tx`. `internal/demo/events.go`
-registers an audit subscriber that receives that same `tx` and inserts the
-audit row. If the subscriber returns an error, the service returns the error and
-the deferred rollback removes both rows.
+`internal/ledger/service.go` is the reference for validating inputs, writing
+through store methods, publishing domain events inside the supplied transaction,
+and returning typed domain errors. If a subscriber returns an error, the service
+returns the error and the caller rolls back the shared transaction.
 
 Subscribers must be synchronous and deterministic. Do not start goroutines,
 retry in the handler, or write outside the supplied `db.Tx`.
 
 ## HTTP Shape
 
-Module routes are mounted by the platform under `/api/<module>`. Demo registers:
+Module routes are mounted by the platform under `/api/<module>`. The ledger read
+surface registers:
 
-- `POST /api/demo/notes` to create a note;
-- `GET /api/demo/notes` to list note rows.
+- `GET /api/ledger/entries` to browse journal entries and postings;
+- `GET /api/ledger/accounts` to list the chart of accounts;
+- `GET /api/ledger/trial-balance` to read the current invariant status.
 
 Handlers should stay thin: decode JSON, call the service, encode JSON, and map
 domain errors to RFC 7807 problem responses through `internal/platform/http`.
@@ -78,7 +79,7 @@ domain errors to RFC 7807 problem responses through `internal/platform/http`.
 7. Pass `httpserver.Module` and `httpserver.OpenAPIFragment` values into the
    platform router.
 
-New modules should follow the demo pattern instead of reaching into another
+New modules should follow the module pattern instead of reaching into another
 module's store or mounting routes directly in `cmd/ledgerly`.
 
 ## Integration Proof
@@ -86,12 +87,11 @@ module's store or mounting routes directly in `cmd/ledgerly`.
 See [Testing](testing.md) for the full integration-suite conventions, CI
 artifact behavior, flake policy, and module-author checklist.
 
-The IT-0 walking-skeleton test lives under `internal/it/harness` with the
-`integration` build tag. It boots the full monolith in-process on an isolated
-IT0-1 database:
+The integration harness lives under `internal/it/harness` with the `integration`
+build tag. It boots the full monolith in-process on an isolated database:
 
 ```sh
-go test -tags=integration ./internal/it/harness -run TestDemoWalkingSkeletonE2E -count=1
+go test -tags=integration ./internal/it/harness -run TestLedgerReadSurfaceE2E -count=1
 ```
 
 The proof:
@@ -99,11 +99,11 @@ The proof:
 - clones a migrated IT0-1 template database for the suite;
 - boots the same `internal/app.Build` wiring used by `ledgerly serve`;
 - logs in a first-run owner and returns an authenticated HTTP client;
-- posts a demo note through HTTP;
-- lists notes through HTTP;
-- verifies an audit row exists in `demo.notes`;
-- injects a subscriber error and verifies the note and audit rows both rolled
-  back.
+- exercises an authenticated module HTTP route;
+- verifies the route is backed by the same `internal/app.Build` wiring used by
+  `ledgerly serve`;
+- provides helpers for shared database transactions, deterministic clocks, and
+  driven background jobs.
 
 ### Writing an Integration Suite
 
@@ -148,13 +148,13 @@ func TestWorkflow(t *testing.T) {
 		return err
 	})
 
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "/api/demo/notes", nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "/api/ledger/accounts", nil)
 	if err != nil {
 		t.Fatalf("create request: %v", err)
 	}
 	resp, err := h.Do(req)
 	if err != nil {
-		t.Fatalf("GET notes: %v", err)
+		t.Fatalf("GET accounts: %v", err)
 	}
 	defer resp.Body.Close()
 }
