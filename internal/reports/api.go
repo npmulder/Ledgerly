@@ -62,6 +62,26 @@ type TaxLine struct {
 	Amount  money.Money
 }
 
+// FilingStatus is the deadline state displayed by reports and consumed by
+// advisor deadline facts.
+type FilingStatus string
+
+const (
+	FilingStatusUpcoming FilingStatus = "upcoming"
+	FilingStatusDueSoon  FilingStatus = "due-soon"
+	FilingStatusOverdue  FilingStatus = "overdue"
+)
+
+// Filing is one filing-calendar row enriched for reports and advisor facts.
+type Filing struct {
+	Key       string
+	Label     string
+	Authority string
+	DueDate   time.Time
+	DaysUntil int
+	Status    FilingStatus
+}
+
 // Reports is the v1 reports read API.
 type Reports interface {
 	ProfitAndLoss(context.Context, Period) (PL, error)
@@ -77,6 +97,10 @@ type Ledger interface {
 type Identity interface {
 	CompanyFacts(context.Context) (identity.CompanyFacts, error)
 }
+
+// CompanyFactsProvider is the identity fact surface reports needs to compose
+// the filing calendar. Implementations must return fresh facts on each call.
+type CompanyFactsProvider = Identity
 
 type Invoicing interface {
 	Invoice(context.Context, string) (invoicing.Invoice, error)

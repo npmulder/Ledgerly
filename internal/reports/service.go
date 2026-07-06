@@ -14,6 +14,7 @@ import (
 	"github.com/npmulder/ledgerly/internal/jurisdiction"
 	"github.com/npmulder/ledgerly/internal/ledger"
 	"github.com/npmulder/ledgerly/internal/moneyfx/money"
+	"github.com/npmulder/ledgerly/internal/platform/clock"
 )
 
 const (
@@ -36,18 +37,46 @@ type Service struct {
 	ledger    Ledger
 	identity  Identity
 	invoicing Invoicing
+	clock     clock.Clock
 }
 
 var _ Reports = (*Service)(nil)
 
+// Option customizes a reports service.
+type Option func(*Service)
+
+// WithClock injects the time source used for deadline status calculations.
+func WithClock(clk clock.Clock) Option {
+	return func(s *Service) {
+		s.clock = clk
+	}
+}
+
 // New returns the reports read API. Reports v1 is derived reads only; it owns no
 // persistence or cache.
-func New(ledgerAPI Ledger, identityAPI Identity, invoicingAPI Invoicing) *Service {
-	return &Service{
+func New(ledgerAPI Ledger, identityAPI Identity, invoicingAPI Invoicing, opts ...Option) *Service {
+	service := &Service{
 		ledger:    ledgerAPI,
 		identity:  identityAPI,
 		invoicing: invoicingAPI,
+		clock:     clock.New(),
 	}
+	for _, opt := range opts {
+		opt(service)
+	}
+	if service.clock == nil {
+		service.clock = clock.New()
+	}
+	return service
+}
+
+// NewService returns the identity-backed reports service used by filing
+// calendar callers.
+func NewService(identityAPI CompanyFactsProvider, opts ...Option) (*Service, error) {
+	if identityAPI == nil {
+		return nil, fmt.Errorf("reports: identity facts provider is required")
+	}
+	return New(nil, identityAPI, nil, opts...), nil
 }
 
 // ProfitAndLoss returns the inclusive-period P&L using frozen ledger GBP
