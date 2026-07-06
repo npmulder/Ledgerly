@@ -155,6 +155,9 @@ func TestServiceRateStalenessReturnsStaleLatestDate(t *testing.T) {
 	if !staleness.Stale {
 		t.Fatal("Stale = false, want true")
 	}
+	if staleness.StaleDays != 5 {
+		t.Fatalf("StaleDays = %d, want 5", staleness.StaleDays)
+	}
 }
 
 func TestServiceRateOnErrNoRateBeyondLookback(t *testing.T) {

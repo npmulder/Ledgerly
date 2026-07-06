@@ -12,6 +12,7 @@ import (
 	"github.com/npmulder/ledgerly/internal/dla"
 	"github.com/npmulder/ledgerly/internal/identity"
 	"github.com/npmulder/ledgerly/internal/invoicing"
+	"github.com/npmulder/ledgerly/internal/jurisdiction"
 	"github.com/npmulder/ledgerly/internal/moneyfx"
 	"github.com/npmulder/ledgerly/internal/moneyfx/money"
 	"github.com/npmulder/ledgerly/internal/reports"
@@ -48,13 +49,27 @@ func TestInvoicingFactProviderMapsOverdueInvoices(t *testing.T) {
 	if got.Amount != (money.Money{Amount: 120000, Currency: "GBP"}) {
 		t.Fatalf("Amount = %#v, want GBP 1200.00", got.Amount)
 	}
+	if got := facts[FactInvoiceCount]; got != 1 {
+		t.Fatalf("count = %#v, want 1", got)
+	}
+	if got := facts[FactInvoiceClientName]; got != "Acme Ltd" {
+		t.Fatalf("client_name = %#v, want Acme Ltd", got)
+	}
+	if got := facts[FactInvoiceDaysOverdue]; got != 5 {
+		t.Fatalf("days_overdue = %#v, want 5", got)
+	}
+	if got := facts[FactInvoiceID]; got != "inv_123" {
+		t.Fatalf("invoice_id = %#v, want inv_123", got)
+	}
+	if got := facts[FactInvoiceNumber]; got != "2026-0001" {
+		t.Fatalf("invoice_number = %#v, want 2026-0001", got)
+	}
 }
 
 func TestDLAFactProviderMapsOverdrawnStatus(t *testing.T) {
 	provider := NewDLAFactProvider(fakeDLAReadAPI{
-		balance:   money.Money{Amount: -50000, Currency: "GBP"},
-		status:    dla.StatusOverdrawn,
-		clearance: money.Money{Amount: 50000, Currency: "GBP"},
+		balance: money.Money{Amount: -50000, Currency: "GBP"},
+		status:  dla.StatusOverdrawn,
 	})
 
 	facts, err := provider.Gather(context.Background())
@@ -70,14 +85,26 @@ func TestDLAFactProviderMapsOverdrawnStatus(t *testing.T) {
 	if got := facts[FactDLASuggestedClearance]; got != (money.Money{Amount: 50000, Currency: "GBP"}) {
 		t.Fatalf("dla.suggestedClearance = %#v", got)
 	}
+	if got := facts[FactRuleDLABalance]; got != (money.Money{Amount: -50000, Currency: "GBP"}) {
+		t.Fatalf("balance = %#v", got)
+	}
+	if got := facts[FactRuleDLAStatus]; got != "overdrawn" {
+		t.Fatalf("status = %#v, want overdrawn", got)
+	}
 }
 
 func TestDividendsFactProviderMapsHeadroom(t *testing.T) {
+	if err := jurisdiction.LoadActive(jurisdiction.DefaultSelector); err != nil {
+		t.Fatalf("LoadActive() error = %v", err)
+	}
 	provider := NewDividendsFactProvider(fakeDividendsReadAPI{
 		headroom: dividends.HeadroomBreakdown{
+			AsOf:          time.Date(2025, 7, 6, 0, 0, 0, 0, time.UTC),
+			FinancialYear: "2025-26",
 			Available:     money.Money{Amount: 250000, Currency: "GBP"},
 			Distributable: true,
 		},
+		declared: money.Money{Amount: 2000000, Currency: "GBP"},
 	})
 
 	facts, err := provider.Gather(context.Background())
@@ -89,6 +116,15 @@ func TestDividendsFactProviderMapsHeadroom(t *testing.T) {
 	}
 	if got := facts[FactDividendsDistributable]; got != true {
 		t.Fatalf("dividends.distributable = %#v, want true", got)
+	}
+	if got := facts[FactDividendsYTD]; got != (money.Money{Amount: 2000000, Currency: "GBP"}) {
+		t.Fatalf("dividends_ytd = %#v", got)
+	}
+	if got := facts[FactDividendEstimate]; got != (money.Money{Amount: 52500, Currency: "GBP"}) {
+		t.Fatalf("estimate = %#v, want GBP 525.00", got)
+	}
+	if got := facts[FactDividendEstimateMinor]; got != int64(52500) {
+		t.Fatalf("estimate_minor_units = %#v, want 52500", got)
 	}
 }
 
@@ -104,6 +140,7 @@ func TestReportsFactProviderMapsVATAndFilings(t *testing.T) {
 		filings: []reports.Filing{{
 			Key:        "vat_return",
 			Label:      "VAT return",
+			Authority:  "Isle of Man Customs & Excise",
 			DueDate:    dueDate,
 			DaysUntil:  24,
 			Status:     reports.FilingStatusDueSoon,
@@ -125,15 +162,62 @@ func TestReportsFactProviderMapsVATAndFilings(t *testing.T) {
 	if len(filings) != 1 {
 		t.Fatalf("filings length = %d, want 1", len(filings))
 	}
-	if filings[0].Key != "vat_return" || filings[0].WarnWindow != Days(30) {
+	if filings[0].Key != "vat_return" || filings[0].Authority != "Isle of Man Customs & Excise" || filings[0].WarnWindow != Days(30) {
 		t.Fatalf("filing fact = %#v", filings[0])
+	}
+	if got := facts[FactFilingAuthority]; got != "Isle of Man Customs & Excise" {
+		t.Fatalf("authority = %#v, want Isle of Man Customs & Excise", got)
+	}
+	if got := facts[FactFilingDueDate]; got != dueDate {
+		t.Fatalf("due_date = %#v, want %s", got, dueDate.Format(time.DateOnly))
+	}
+	if got := facts[FactFilingName]; got != "VAT return" {
+		t.Fatalf("filing_name = %#v, want VAT return", got)
+	}
+}
+
+func TestReportsSplitProvidersKeepFilingsWhenVATFails(t *testing.T) {
+	vatErr := errors.New("vat unavailable")
+	dueDate := time.Date(2026, 7, 30, 0, 0, 0, 0, time.UTC)
+	api := fakeReportsReadAPI{
+		vatErr: vatErr,
+		filings: []reports.Filing{{
+			Key:       "annual_return",
+			Label:     "Annual return",
+			Authority: "IoM Companies Registry",
+			DueDate:   dueDate,
+		}},
+	}
+	registry := NewFactRegistry(
+		RegisteredFactProvider{Name: "reports.vat", Provider: NewReportsVATFactProvider(api)},
+		RegisteredFactProvider{Name: "reports.filings", Provider: NewReportsFilingFactProvider(api)},
+	)
+
+	facts, report := registry.GatherAll(context.Background(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if _, ok := facts[FactVATPosition]; ok {
+		t.Fatalf("vat.position gathered despite VAT error")
+	}
+	if _, ok := facts[FactFilings]; !ok {
+		t.Fatalf("filings missing despite filing provider success")
+	}
+	if got := facts[FactFilingAuthority]; got != "IoM Companies Registry" {
+		t.Fatalf("authority = %#v, want IoM Companies Registry", got)
+	}
+	if len(report.Providers) != 2 {
+		t.Fatalf("providers reported = %d, want 2", len(report.Providers))
+	}
+	if report.Providers[0].Name != "reports.vat" || !errors.Is(report.Providers[0].Err, vatErr) {
+		t.Fatalf("VAT provider report = %#v", report.Providers[0])
+	}
+	if report.Providers[1].Err != nil {
+		t.Fatalf("filing provider error = %v, want nil", report.Providers[1].Err)
 	}
 }
 
 func TestMoneyFXFactProviderMapsStaleRates(t *testing.T) {
 	lastDate := time.Date(2026, 6, 30, 0, 0, 0, 0, time.UTC)
 	provider := NewMoneyFXFactProvider(fakeMoneyFXReadAPI{
-		staleness: moneyfx.RateStaleness{LastDate: &lastDate, Stale: true},
+		staleness: moneyfx.RateStaleness{LastDate: &lastDate, Stale: true, StaleDays: 6},
 	})
 
 	facts, err := provider.Gather(context.Background())
@@ -145,6 +229,9 @@ func TestMoneyFXFactProviderMapsStaleRates(t *testing.T) {
 	}
 	if got := facts[FactRatesStale]; got != true {
 		t.Fatalf("rates.stale = %#v, want true", got)
+	}
+	if got := facts[FactStaleDays]; got != 6 {
+		t.Fatalf("stale_days = %#v, want 6", got)
 	}
 }
 
@@ -243,22 +330,18 @@ func (f fakeInvoicingReadAPI) OverdueInvoices(context.Context) ([]invoicing.Over
 }
 
 type fakeDLAReadAPI struct {
-	balance   money.Money
-	status    dla.Status
-	clearance money.Money
-	err       error
+	balance money.Money
+	status  dla.Status
+	err     error
 }
 
 func (f fakeDLAReadAPI) CurrentBalance(context.Context) (money.Money, dla.Status, error) {
 	return f.balance, f.status, f.err
 }
 
-func (f fakeDLAReadAPI) SuggestedClearanceAmount(context.Context) (money.Money, error) {
-	return f.clearance, f.err
-}
-
 type fakeDividendsReadAPI struct {
 	headroom dividends.HeadroomBreakdown
+	declared money.Money
 	err      error
 }
 
@@ -266,18 +349,23 @@ func (f fakeDividendsReadAPI) Headroom(context.Context) (dividends.HeadroomBreak
 	return f.headroom, f.err
 }
 
+func (f fakeDividendsReadAPI) DeclaredInYear(context.Context, string) (money.Money, error) {
+	return f.declared, f.err
+}
+
 type fakeReportsReadAPI struct {
-	position reports.VATPosition
-	filings  []reports.Filing
-	err      error
+	position  reports.VATPosition
+	filings   []reports.Filing
+	vatErr    error
+	filingErr error
 }
 
 func (f fakeReportsReadAPI) VATPosition(context.Context) (reports.VATPosition, error) {
-	return f.position, f.err
+	return f.position, f.vatErr
 }
 
 func (f fakeReportsReadAPI) FilingCalendarContext(context.Context) ([]reports.Filing, error) {
-	return f.filings, f.err
+	return f.filings, f.filingErr
 }
 
 type fakeMoneyFXReadAPI struct {

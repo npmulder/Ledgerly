@@ -11,7 +11,6 @@ import (
 // DLAReadAPI is the public DLA read surface used by advisor facts.
 type DLAReadAPI interface {
 	CurrentBalance(context.Context) (money.Money, dla.Status, error)
-	SuggestedClearanceAmount(context.Context) (money.Money, error)
 }
 
 type dlaFactProvider struct {
@@ -24,7 +23,13 @@ func NewDLAFactProvider(api DLAReadAPI) FactProvider {
 }
 
 func (p dlaFactProvider) Keys() []FactKey {
-	return []FactKey{FactDLABalance, FactDLAStatus, FactDLASuggestedClearance}
+	return []FactKey{
+		FactDLABalance,
+		FactDLAStatus,
+		FactDLASuggestedClearance,
+		FactRuleDLABalance,
+		FactRuleDLAStatus,
+	}
 }
 
 func (p dlaFactProvider) Gather(ctx context.Context) (map[FactKey]FactValue, error) {
@@ -35,7 +40,7 @@ func (p dlaFactProvider) Gather(ctx context.Context) (map[FactKey]FactValue, err
 	if err != nil {
 		return nil, err
 	}
-	clearance, err := p.api.SuggestedClearanceAmount(ctx)
+	clearance, err := clearanceAmountForBalance(balance)
 	if err != nil {
 		return nil, err
 	}
@@ -43,5 +48,14 @@ func (p dlaFactProvider) Gather(ctx context.Context) (map[FactKey]FactValue, err
 		FactDLABalance:            balance,
 		FactDLAStatus:             string(status),
 		FactDLASuggestedClearance: clearance,
+		FactRuleDLABalance:        balance,
+		FactRuleDLAStatus:         string(status),
 	}, nil
+}
+
+func clearanceAmountForBalance(balance money.Money) (money.Money, error) {
+	if balance.Amount >= 0 {
+		return money.Zero(balance.Currency), nil
+	}
+	return balance.Negate()
 }

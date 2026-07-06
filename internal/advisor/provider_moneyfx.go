@@ -22,7 +22,7 @@ func NewMoneyFXFactProvider(api MoneyFXReadAPI) FactProvider {
 }
 
 func (p moneyFXFactProvider) Keys() []FactKey {
-	return []FactKey{FactRatesLastDate, FactRatesStale}
+	return []FactKey{FactRatesLastDate, FactRatesStale, FactStaleDays}
 }
 
 func (p moneyFXFactProvider) Gather(ctx context.Context) (map[FactKey]FactValue, error) {
@@ -40,5 +40,6 @@ func (p moneyFXFactProvider) Gather(ctx context.Context) (map[FactKey]FactValue,
 	return map[FactKey]FactValue{
 		FactRatesLastDate: lastDate,
 		FactRatesStale:    staleness.Stale,
+		FactStaleDays:     staleness.StaleDays,
 	}, nil
 }

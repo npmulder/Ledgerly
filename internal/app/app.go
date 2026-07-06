@@ -388,7 +388,8 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 	}
 	factProviders = append(factProviders,
 		advisor.RegisteredFactProvider{Name: dividends.ModuleName, Provider: advisor.NewDividendsFactProvider(dividendsService)},
-		advisor.RegisteredFactProvider{Name: reports.ModuleName, Provider: advisor.NewReportsFactProvider(reportsService)},
+		advisor.RegisteredFactProvider{Name: reports.ModuleName + ".vat", Provider: advisor.NewReportsVATFactProvider(reportsService)},
+		advisor.RegisteredFactProvider{Name: reports.ModuleName + ".filings", Provider: advisor.NewReportsFilingFactProvider(reportsService)},
 		advisor.RegisteredFactProvider{Name: moneyfx.ModuleName, Provider: advisor.NewMoneyFXFactProvider(moneyFXModule)},
 		advisor.RegisteredFactProvider{Name: "identity", Provider: advisor.NewIdentityFactProvider(identityProfile)},
 	)

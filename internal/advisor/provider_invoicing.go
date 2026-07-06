@@ -22,7 +22,14 @@ func NewInvoicingFactProvider(api InvoicingReadAPI) FactProvider {
 }
 
 func (p invoicingFactProvider) Keys() []FactKey {
-	return []FactKey{FactInvoicesOverdue}
+	return []FactKey{
+		FactInvoicesOverdue,
+		FactInvoiceClientName,
+		FactInvoiceCount,
+		FactInvoiceDaysOverdue,
+		FactInvoiceID,
+		FactInvoiceNumber,
+	}
 }
 
 func (p invoicingFactProvider) Gather(ctx context.Context) (map[FactKey]FactValue, error) {
@@ -43,5 +50,16 @@ func (p invoicingFactProvider) Gather(ctx context.Context) (map[FactKey]FactValu
 			DaysOverdue: invoice.DaysOverdue,
 		})
 	}
-	return map[FactKey]FactValue{FactInvoicesOverdue: facts}, nil
+	values := map[FactKey]FactValue{
+		FactInvoicesOverdue: facts,
+		FactInvoiceCount:    len(facts),
+	}
+	if len(facts) > 0 {
+		first := facts[0]
+		values[FactInvoiceClientName] = first.Client
+		values[FactInvoiceDaysOverdue] = first.DaysOverdue
+		values[FactInvoiceID] = first.ID
+		values[FactInvoiceNumber] = first.Number
+	}
+	return values, nil
 }

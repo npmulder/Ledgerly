@@ -7,21 +7,35 @@ import (
 )
 
 const (
-	FactInvoicesOverdue FactKey = "invoices.overdue"
+	FactInvoicesOverdue    FactKey = "invoices.overdue"
+	FactInvoiceClientName  FactKey = "client_name"
+	FactInvoiceCount       FactKey = "count"
+	FactInvoiceDaysOverdue FactKey = "days_overdue"
+	FactInvoiceID          FactKey = "invoice_id"
+	FactInvoiceNumber      FactKey = "invoice_number"
 
 	FactDLABalance            FactKey = "dla.balance"
 	FactDLAStatus             FactKey = "dla.status"
 	FactDLASuggestedClearance FactKey = "dla.suggestedClearance"
+	FactRuleDLABalance        FactKey = "balance"
+	FactRuleDLAStatus         FactKey = "status"
 
 	FactDividendsHeadroom      FactKey = "dividends.headroom"
 	FactDividendsDistributable FactKey = "dividends.distributable"
+	FactDividendsYTD           FactKey = "dividends_ytd"
+	FactDividendEstimate       FactKey = "estimate"
+	FactDividendEstimateMinor  FactKey = "estimate_minor_units"
 
-	FactVATPosition FactKey = "vat.position"
-	FactVATDueDate  FactKey = "vat.dueDate"
-	FactFilings     FactKey = "filings"
+	FactVATPosition     FactKey = "vat.position"
+	FactVATDueDate      FactKey = "vat.dueDate"
+	FactFilings         FactKey = "filings"
+	FactFilingAuthority FactKey = "authority"
+	FactFilingDueDate   FactKey = "due_date"
+	FactFilingName      FactKey = "filing_name"
 
 	FactRatesLastDate FactKey = "rates.lastDate"
 	FactRatesStale    FactKey = "rates.stale"
+	FactStaleDays     FactKey = "stale_days"
 
 	FactCompanyIncorporationDate FactKey = "company.incorporationDate"
 	FactCompanyYearEnd           FactKey = "company.yearEnd"
@@ -42,6 +56,7 @@ type OverdueInvoiceFact struct {
 type FilingFact struct {
 	Key        string    `json:"key"`
 	Label      string    `json:"label"`
+	Authority  string    `json:"authority"`
 	DueDate    time.Time `json:"dueDate"`
 	DaysUntil  int       `json:"daysUntil"`
 	Status     string    `json:"status"`
