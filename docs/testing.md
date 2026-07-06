@@ -115,13 +115,13 @@ event rollback paths, inject a subscriber failure and then assert both the
 request failure and the database rollback:
 
 ```go
-h.FailNextBusSubscriber(demo.NoteCreatedName, errors.New("forced failure"))
-postNote(t, h, "rollback probe", http.StatusInternalServerError)
+h.FailNextBusSubscriber(module.EventCreatedName, errors.New("forced failure"))
+callModuleCommandExpectingFailure(t, h, "rollback probe")
 h.Tx(func(ctx context.Context, tx db.Tx) error {
 	var count int
 	if err := tx.QueryRow(ctx, `
 SELECT count(*)
-FROM demo.notes
+FROM module_schema.rows
 WHERE body = $1`, "rollback probe").Scan(&count); err != nil {
 		return err
 	}

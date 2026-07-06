@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/npmulder/ledgerly/internal/app"
-	"github.com/npmulder/ledgerly/internal/demo"
 	"github.com/npmulder/ledgerly/internal/it/harness"
 	"github.com/npmulder/ledgerly/internal/it/testdb"
 	"github.com/npmulder/ledgerly/internal/ledger"
@@ -25,37 +24,29 @@ import (
 	"github.com/npmulder/ledgerly/internal/platform/db"
 )
 
-func TestDemoWalkingSkeletonE2E(t *testing.T) {
+func TestLedgerReadSurfaceE2E(t *testing.T) {
 	t.Parallel()
 
 	h := harness.New(t, harness.Options{})
 
-	note := postNote(t, h, "hello from harness", nethttp.StatusCreated)
-	notes := getNotes(t, h)
-	assertListedNote(t, notes, note)
-	var txNoteCount int
-	h.Tx(func(ctx context.Context, tx db.Tx) error {
-		return tx.QueryRow(ctx, "SELECT count(*) FROM demo.notes WHERE kind = 'note'").Scan(&txNoteCount)
-	})
-	if txNoteCount != 1 {
-		t.Fatalf("h.Tx note count = %d, want 1", txNoteCount)
-	}
-	assertDemoRowCount(t, h, "successful audit row", 1, `
-SELECT count(*)
-FROM demo.notes
-WHERE kind = 'audit' AND note_id = $1`, note.ID)
+	accounts := getLedgerAccounts(t, h)
+	assertLedgerAccount(t, accounts, "4000-sales")
 
-	rollbackBody := "force rollback from harness subscriber"
-	h.FailNextBusSubscriber(demo.NoteCreatedName, errors.New("forced demo audit failure"))
-	postNote(t, h, rollbackBody, nethttp.StatusInternalServerError)
-	assertDemoRowCount(t, h, "rolled back note row", 0, `
-SELECT count(*)
-FROM demo.notes
-WHERE kind = 'note' AND body = $1`, rollbackBody)
-	assertDemoRowCount(t, h, "rolled back audit row", 0, `
-SELECT count(*)
-FROM demo.notes
-WHERE kind = 'audit' AND body LIKE '%' || $1 || '%'`, rollbackBody)
+	var txAccountCount int
+	h.Tx(func(ctx context.Context, tx db.Tx) error {
+		return tx.QueryRow(ctx, "SELECT count(*) FROM ledger.accounts").Scan(&txAccountCount)
+	})
+	if txAccountCount < len(accounts) {
+		t.Fatalf("h.Tx account count = %d, want at least listed account count %d", txAccountCount, len(accounts))
+	}
+
+	trialBalance := getLedgerTrialBalance(t, h)
+	if trialBalance.Status != "balanced" {
+		t.Fatalf("trial balance status = %q, want balanced: %+v", trialBalance.Status, trialBalance)
+	}
+	if trialBalance.AsOf == "" {
+		t.Fatalf("trial balance as_of is empty: %+v", trialBalance)
+	}
 }
 
 func TestHarnessBootsUnderTwoSecondsAfterTemplateDB(t *testing.T) {
@@ -78,7 +69,7 @@ func TestParallelHarnessesDoNotInterfere(t *testing.T) {
 	ready := make(chan struct{}, 2)
 	release := make(chan struct{})
 	posted := make(chan struct{}, 2)
-	releaseList := make(chan struct{})
+	releaseAssert := make(chan struct{})
 	var wait sync.Once
 
 	waitForBoth := func() {
@@ -89,7 +80,7 @@ func TestParallelHarnessesDoNotInterfere(t *testing.T) {
 				close(release)
 				<-posted
 				<-posted
-				close(releaseList)
+				close(releaseAssert)
 			}()
 		})
 	}
@@ -103,20 +94,13 @@ func TestParallelHarnessesDoNotInterfere(t *testing.T) {
 			ready <- struct{}{}
 			<-release
 
-			postNote(t, h, "shared parallel note", nethttp.StatusCreated)
+			postLedgerEntryWithRef(t, h, ledger.New(h.LedgerPool), "parallel-isolation")
 			posted <- struct{}{}
-			<-releaseList
+			<-releaseAssert
 
-			notes := getNotes(t, h)
-			var matches int
-			for _, note := range notes {
-				if note.Body == "shared parallel note" {
-					matches++
-				}
-			}
-			if matches != 1 {
-				t.Fatalf("shared note count = %d, want 1; notes=%+v", matches, notes)
-			}
+			assertLedgerEntryCount(t, h, "parallel-isolation", 1)
+			accounts := getLedgerAccounts(t, h)
+			assertLedgerAccount(t, accounts, "4000-sales")
 		})
 	}
 }
@@ -217,34 +201,12 @@ func TestAssertLedgerBalancedTeardownCatchesUnbalancedLedger(t *testing.T) {
 	}
 }
 
-func postNote(t *testing.T, h *harness.Harness, body string, wantStatus int) demo.Note {
+func postLedgerEntry(t *testing.T, h *harness.Harness, service *ledger.Service) ledger.EntryID {
 	t.Helper()
-
-	bodyBytes, status := doJSON(t, h, nethttp.MethodPost, "/api/demo/notes", map[string]string{"body": body})
-	if status != wantStatus {
-		t.Fatalf("POST /api/demo/notes status = %d, want %d; body=%s", status, wantStatus, string(bodyBytes))
-	}
-	if wantStatus != nethttp.StatusCreated {
-		return demo.Note{}
-	}
-
-	var note demo.Note
-	if err := json.Unmarshal(bodyBytes, &note); err != nil {
-		t.Fatalf("decode created note: %v; body=%s", err, string(bodyBytes))
-	}
-	if note.ID == "" {
-		t.Fatalf("created note ID is empty: %+v", note)
-	}
-	if note.Body != body {
-		t.Fatalf("created note body = %q, want %q", note.Body, body)
-	}
-	if note.CreatedAt == "" {
-		t.Fatalf("created note timestamp is empty: %+v", note)
-	}
-	return note
+	return postLedgerEntryWithRef(t, h, service, "trial-balance")
 }
 
-func postLedgerEntry(t *testing.T, h *harness.Harness, service *ledger.Service) ledger.EntryID {
+func postLedgerEntryWithRef(t *testing.T, h *harness.Harness, service *ledger.Service, sourceRef string) ledger.EntryID {
 	t.Helper()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -260,9 +222,9 @@ func postLedgerEntry(t *testing.T, h *harness.Harness, service *ledger.Service) 
 
 	entryID, err := service.Post(ctx, tx, ledger.NewJournalEntry{
 		Date:         time.Date(2026, 7, 5, 0, 0, 0, 0, time.UTC),
-		Description:  "harness trial-balance entry",
+		Description:  "harness " + sourceRef + " entry",
 		SourceModule: "harness",
-		SourceRef:    "trial-balance",
+		SourceRef:    sourceRef,
 		Postings: []ledger.NewPosting{
 			{
 				AccountCode: "1101-debtors-gbp",
@@ -283,6 +245,21 @@ func postLedgerEntry(t *testing.T, h *harness.Harness, service *ledger.Service) 
 		t.Fatalf("commit ledger entry: %v", err)
 	}
 	return entryID
+}
+
+func assertLedgerEntryCount(t *testing.T, h *harness.Harness, sourceRef string, want int) {
+	t.Helper()
+
+	var got int
+	h.Tx(func(ctx context.Context, tx db.Tx) error {
+		return tx.QueryRow(ctx, `
+SELECT count(*)
+FROM ledger.journal_entries
+WHERE source_module = $1 AND source_ref = $2`, "harness", sourceRef).Scan(&got)
+	})
+	if got != want {
+		t.Fatalf("ledger entry count for source_ref %q = %d, want %d", sourceRef, got, want)
+	}
 }
 
 func corruptLedgerPosting(t *testing.T, h *harness.Harness, entryID ledger.EntryID, delta int64) {
@@ -371,34 +348,60 @@ func assertHealthStatusExcludes(t *testing.T, h *harness.Harness, forbidden stri
 	}
 }
 
-func getNotes(t *testing.T, h *harness.Harness) []demo.Note {
+type ledgerAccountsResponse struct {
+	Accounts []ledgerAccount `json:"accounts"`
+}
+
+type ledgerAccount struct {
+	Code string `json:"code"`
+}
+
+func getLedgerAccounts(t *testing.T, h *harness.Harness) []ledgerAccount {
 	t.Helper()
 
-	req, err := nethttp.NewRequestWithContext(context.Background(), nethttp.MethodGet, "/api/demo/notes", nil)
+	req, err := nethttp.NewRequestWithContext(context.Background(), nethttp.MethodGet, "/api/ledger/accounts", nil)
 	if err != nil {
-		t.Fatalf("create GET /api/demo/notes request: %v", err)
+		t.Fatalf("create GET /api/ledger/accounts request: %v", err)
 	}
-	resp, err := h.Do(req)
-	if err != nil {
-		t.Fatalf("GET /api/demo/notes: %v", err)
-	}
-	defer resp.Body.Close()
+	bodyBytes := doRequest(t, h, req, nethttp.StatusOK)
 
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("read GET /api/demo/notes response: %v", err)
-	}
-	if resp.StatusCode != nethttp.StatusOK {
-		t.Fatalf("GET /api/demo/notes status = %d, want %d; body=%s", resp.StatusCode, nethttp.StatusOK, string(bodyBytes))
-	}
-
-	var response struct {
-		Notes []demo.Note `json:"notes"`
-	}
+	var response ledgerAccountsResponse
 	if err := json.Unmarshal(bodyBytes, &response); err != nil {
-		t.Fatalf("decode list notes: %v; body=%s", err, string(bodyBytes))
+		t.Fatalf("decode ledger accounts: %v; body=%s", err, string(bodyBytes))
 	}
-	return response.Notes
+	return response.Accounts
+}
+
+func assertLedgerAccount(t *testing.T, accounts []ledgerAccount, code string) {
+	t.Helper()
+
+	for _, account := range accounts {
+		if account.Code == code {
+			return
+		}
+	}
+	t.Fatalf("ledger account %q missing from %+v", code, accounts)
+}
+
+type ledgerTrialBalanceResponse struct {
+	AsOf   string `json:"as_of"`
+	Status string `json:"status"`
+}
+
+func getLedgerTrialBalance(t *testing.T, h *harness.Harness) ledgerTrialBalanceResponse {
+	t.Helper()
+
+	req, err := nethttp.NewRequestWithContext(context.Background(), nethttp.MethodGet, "/api/ledger/trial-balance", nil)
+	if err != nil {
+		t.Fatalf("create GET /api/ledger/trial-balance request: %v", err)
+	}
+	bodyBytes := doRequest(t, h, req, nethttp.StatusOK)
+
+	var response ledgerTrialBalanceResponse
+	if err := json.Unmarshal(bodyBytes, &response); err != nil {
+		t.Fatalf("decode ledger trial balance: %v; body=%s", err, string(bodyBytes))
+	}
+	return response
 }
 
 type healthBody struct {
@@ -412,25 +415,32 @@ func getHealth(t *testing.T, h *harness.Harness) healthBody {
 	if err != nil {
 		t.Fatalf("create GET /healthz request: %v", err)
 	}
-	resp, err := h.Do(req)
-	if err != nil {
-		t.Fatalf("GET /healthz: %v", err)
-	}
-	defer resp.Body.Close()
-
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("read GET /healthz response: %v", err)
-	}
-	if resp.StatusCode != nethttp.StatusOK {
-		t.Fatalf("GET /healthz status = %d, want %d; body=%s", resp.StatusCode, nethttp.StatusOK, string(bodyBytes))
-	}
+	bodyBytes := doRequest(t, h, req, nethttp.StatusOK)
 
 	var body healthBody
 	if err := json.Unmarshal(bodyBytes, &body); err != nil {
 		t.Fatalf("decode health response: %v; body=%s", err, string(bodyBytes))
 	}
 	return body
+}
+
+func doRequest(t *testing.T, h *harness.Harness, req *nethttp.Request, wantStatus int) []byte {
+	t.Helper()
+
+	resp, err := h.Do(req)
+	if err != nil {
+		t.Fatalf("%s %s: %v", req.Method, req.URL, err)
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read %s %s response: %v", req.Method, req.URL, err)
+	}
+	if resp.StatusCode != wantStatus {
+		t.Fatalf("%s %s status = %d, want %d; body=%s", req.Method, req.URL, resp.StatusCode, wantStatus, string(bodyBytes))
+	}
+	return bodyBytes
 }
 
 func doJSON(t *testing.T, h *harness.Harness, method string, path string, requestBody any) ([]byte, int) {
@@ -457,27 +467,4 @@ func doJSON(t *testing.T, h *harness.Harness, method string, path string, reques
 		t.Fatalf("read %s %s response: %v", method, path, err)
 	}
 	return bodyBytes, resp.StatusCode
-}
-
-func assertListedNote(t *testing.T, notes []demo.Note, want demo.Note) {
-	t.Helper()
-
-	for _, note := range notes {
-		if note.ID == want.ID && note.Body == want.Body {
-			return
-		}
-	}
-	t.Fatalf("created note %+v not found in list %+v", want, notes)
-}
-
-func assertDemoRowCount(t *testing.T, h *harness.Harness, label string, want int, query string, args ...any) {
-	t.Helper()
-
-	var got int
-	if err := h.DB.QueryRow(context.Background(), query, args...).Scan(&got); err != nil {
-		t.Fatalf("count %s: %v", label, err)
-	}
-	if got != want {
-		t.Fatalf("%s count = %d, want %d", label, got, want)
-	}
 }
