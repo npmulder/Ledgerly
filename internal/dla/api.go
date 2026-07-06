@@ -50,9 +50,12 @@ const (
 // PolicyPayload is the pack-sourced context callers need to render DLA status
 // without hard-coding jurisdiction rule keys.
 type PolicyPayload struct {
-	S455Charge        bool   `json:"s455_charge"`
-	BIKWarningTextKey string `json:"bik_warning_text_key"`
-	Remedy            string `json:"remedy"`
+	S455Charge               bool   `json:"s455_charge"`
+	CreditStatusText         string `json:"credit_status_text"`
+	CreditExplainerTemplate  string `json:"credit_explainer_template"`
+	BIKWarningTextKey        string `json:"bik_warning_text_key"`
+	OverdrawnWarningTemplate string `json:"overdrawn_warning_template"`
+	Remedy                   string `json:"remedy"`
 }
 
 // StatusPayload is the advisor fact payload for the current DLA state.
@@ -165,9 +168,12 @@ func (e *DuplicateSourceError) Unwrap() error {
 func policyPayloadFromJurisdiction() PolicyPayload {
 	policy := jurisdiction.DirectorLoanPolicy()
 	return PolicyPayload{
-		S455Charge:        policy.S455Charge,
-		BIKWarningTextKey: policy.Overdrawn.Warn,
-		Remedy:            policy.Overdrawn.Remedy,
+		S455Charge:               policy.S455Charge,
+		CreditStatusText:         policy.Credit.StatusText,
+		CreditExplainerTemplate:  policy.Credit.ExplainerTemplate,
+		BIKWarningTextKey:        policy.Overdrawn.Warn,
+		OverdrawnWarningTemplate: policy.Overdrawn.WarningTemplate,
+		Remedy:                   policy.Overdrawn.Remedy,
 	}
 }
 

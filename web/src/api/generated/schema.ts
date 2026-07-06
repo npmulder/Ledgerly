@@ -522,6 +522,9 @@ export interface components {
         };
         DLAPolicy: {
             bik_warning_key: string;
+            credit_explainer_template: string;
+            credit_status_text: string;
+            overdrawn_warning_template: string;
             remedy: string;
             s455_charge: boolean;
         };

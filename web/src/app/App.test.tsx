@@ -20,7 +20,7 @@ const topLevelRoutes = [
     title: "Invoice editor",
   },
   { activeNav: "Banking", path: "/banking", title: "Banking" },
-  { activeNav: "DLA", path: "/dla", title: "DLA" },
+  { activeNav: "DLA", path: "/dla", title: "Director's loan · N. Meyer" },
   { activeNav: "Dividends", path: "/dividends", title: "Dividends" },
   { activeNav: "Reports", path: "/reports", title: "Reports" },
   { activeNav: "Settings", path: "/settings", title: "Company" },
@@ -229,6 +229,12 @@ function authenticatedFetch() {
     if (path === "/api/invoicing/clients") {
       return jsonResponse({ clients: [] });
     }
+    if (path === "/api/dla/balance") {
+      return jsonResponse(dlaBalance());
+    }
+    if (path === "/api/dla/ledger") {
+      return jsonResponse({ entries: [], next_cursor: null });
+    }
     return jsonResponse(
       {
         status: 404,
@@ -239,6 +245,24 @@ function authenticatedFetch() {
       "application/problem+json",
     );
   });
+}
+
+function dlaBalance() {
+  return {
+    balance: { amount_minor: 0, currency: "GBP" },
+    policy: {
+      bik_warning_key: "benefit_in_kind_interest_free",
+      credit_explainer_template:
+        "You can repay yourself up to {{ balance }} at any time with no tax consequence.",
+      credit_status_text: "In credit — tax-free to withdraw",
+      overdrawn_warning_template:
+        "Your loan account is {{ balance }} overdrawn. The Isle of Man has no UK-style s455 charge, but an interest-free loan can create a taxable benefit in kind - charge interest at the official rate or clear it with a dividend.",
+      remedy: "clear_with_dividend",
+      s455_charge: false,
+    },
+    status: "credit",
+    suggested_clearance: null,
+  };
 }
 
 function unauthenticatedFetch() {

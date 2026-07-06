@@ -191,11 +191,14 @@ func dlaComponents() map[string]any {
 			},
 			"DLAPolicy": map[string]any{
 				"type":     "object",
-				"required": []string{"s455_charge", "bik_warning_key", "remedy"},
+				"required": []string{"s455_charge", "credit_status_text", "credit_explainer_template", "bik_warning_key", "overdrawn_warning_template", "remedy"},
 				"properties": map[string]any{
-					"s455_charge":     map[string]any{"type": "boolean"},
-					"bik_warning_key": map[string]any{"type": "string"},
-					"remedy":          map[string]any{"type": "string"},
+					"s455_charge":                map[string]any{"type": "boolean"},
+					"credit_status_text":         map[string]any{"type": "string"},
+					"credit_explainer_template":  map[string]any{"type": "string"},
+					"bik_warning_key":            map[string]any{"type": "string"},
+					"overdrawn_warning_template": map[string]any{"type": "string"},
+					"remedy":                     map[string]any{"type": "string"},
 				},
 				"additionalProperties": false,
 			},

@@ -133,6 +133,15 @@ func TestIsleOfManAccessorsReturnHandoffValues2025_26(t *testing.T) {
 				if got.Overdrawn.Warn != "benefit_in_kind_interest_free" {
 					t.Fatalf("Overdrawn.Warn = %q, want benefit_in_kind_interest_free", got.Overdrawn.Warn)
 				}
+				if got.Credit.StatusText != "In credit — tax-free to withdraw" {
+					t.Fatalf("Credit.StatusText = %q, want in-credit status wording", got.Credit.StatusText)
+				}
+				if got.Credit.ExplainerTemplate != "You can repay yourself up to {{ balance }} at any time with no tax consequence." {
+					t.Fatalf("Credit.ExplainerTemplate = %q, want in-credit explainer wording", got.Credit.ExplainerTemplate)
+				}
+				if got.Overdrawn.WarningTemplate != "Your loan account is {{ balance }} overdrawn. The Isle of Man has no UK-style s455 charge, but an interest-free loan can create a taxable benefit in kind - charge interest at the official rate or clear it with a dividend." {
+					t.Fatalf("Overdrawn.WarningTemplate = %q, want Isle of Man BIK wording", got.Overdrawn.WarningTemplate)
+				}
 				if got.Overdrawn.Remedy != "clear_with_dividend" {
 					t.Fatalf("Overdrawn.Remedy = %q, want clear_with_dividend", got.Overdrawn.Remedy)
 				}

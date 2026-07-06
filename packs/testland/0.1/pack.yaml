@@ -45,8 +45,12 @@ filings:
     authority: Testland Customs
 director_loans:
   s455_charge: true
+  credit:
+    status_text: In credit -- test withdrawal wording
+    explainer_template: Testland lets you clear {{ balance }} from the credit balance.
   overdrawn:
     warn: test_director_loan_warning
+    warning_template: Testland says {{ balance }} is overdrawn; use test policy wording.
     remedy: test_clear_or_repay
 advisor_rules:
   - id: test-rule

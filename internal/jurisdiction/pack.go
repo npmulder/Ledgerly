@@ -83,12 +83,19 @@ type Filing struct {
 
 type DLAPolicy struct {
 	S455Charge bool            `yaml:"s455_charge"`
+	Credit     CreditPolicy    `yaml:"credit"`
 	Overdrawn  OverdrawnPolicy `yaml:"overdrawn"`
 }
 
+type CreditPolicy struct {
+	StatusText        string `yaml:"status_text"`
+	ExplainerTemplate string `yaml:"explainer_template"`
+}
+
 type OverdrawnPolicy struct {
-	Warn   string `yaml:"warn"`
-	Remedy string `yaml:"remedy"`
+	Warn            string `yaml:"warn"`
+	WarningTemplate string `yaml:"warning_template"`
+	Remedy          string `yaml:"remedy"`
 }
 
 type AdvisorRule struct {
