@@ -545,11 +545,17 @@ func assertDashboardRecentInvoices(
 		t.Fatalf("recent invoices = %+v, want 2 from list %+v", *got, list.Invoices)
 	}
 	gotFirst := (*got)[0]
+	if gotFirst.ID != first.ID {
+		t.Fatalf("recent first id = %q, want %q", gotFirst.ID, first.ID)
+	}
 	if first.Number == nil || gotFirst.Number == nil || *gotFirst.Number != *first.Number {
 		t.Fatalf("recent first number = %v, want %v", gotFirst.Number, first.Number)
 	}
 	assertDashboardMoney(t, gotFirst.Amount, first.Totals.Total.Amount, first.Totals.Total.Currency)
 	gotSecond := (*got)[1]
+	if gotSecond.ID != second.ID {
+		t.Fatalf("recent second id = %q, want %q", gotSecond.ID, second.ID)
+	}
 	if second.Number == nil || gotSecond.Number == nil || *gotSecond.Number != *second.Number {
 		t.Fatalf("recent second number = %v, want %v", gotSecond.Number, second.Number)
 	}
@@ -755,6 +761,7 @@ type dashboardDividendHeadroomBody struct {
 }
 
 type dashboardRecentInvoiceBody struct {
+	ID          string      `json:"id"`
 	Number      *string     `json:"number"`
 	Client      string      `json:"client"`
 	Amount      money.Money `json:"amount"`
