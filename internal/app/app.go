@@ -367,6 +367,9 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		banking.WithDLAFileDrawer(dlaService),
 		banking.WithEventBus(eventBus),
 	)
+	bankingHTTPModule := banking.NewHTTPModule(bankingService)
+	modules = append(modules, bankingHTTPModule.HTTPModule())
+	fragments = append(fragments, bankingHTTPModule.OpenAPIFragment())
 
 	ledgerBuilder := buildLedgerModule
 	if deps.ModuleBuilders != nil && deps.ModuleBuilders[ledger.ModuleName] != nil {
@@ -549,6 +552,7 @@ func OpenAPIDocument(version string) map[string]any {
 		identity.OpenAPIFragment(),
 		jurisdictionOpenAPIFragment(),
 		moneyfx.OpenAPIFragment(),
+		banking.OpenAPIFragment(),
 		ledger.OpenAPIFragment(),
 		dla.OpenAPIFragment(),
 		invoicing.OpenAPIFragment(),
