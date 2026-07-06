@@ -52,6 +52,25 @@ func TestRunRejectsUnexpectedArguments(t *testing.T) {
 	}
 }
 
+func TestRunRejectsInvalidCheckArguments(t *testing.T) {
+	var stdout bytes.Buffer
+	err := run(context.Background(), []string{"check"}, &stdout)
+	if err == nil {
+		t.Fatal("run() error = nil, want check usage error")
+	}
+	if !strings.Contains(err.Error(), "usage: ledgerly check trial-balance") {
+		t.Fatalf("run() error = %q, want check usage error", err)
+	}
+
+	err = run(context.Background(), []string{"check", "trial-balance", "extra"}, &stdout)
+	if err == nil {
+		t.Fatal("run() error = nil, want check usage error")
+	}
+	if !strings.Contains(err.Error(), "usage: ledgerly check trial-balance") {
+		t.Fatalf("run() error = %q, want check usage error", err)
+	}
+}
+
 func TestRunPrintsOpenAPIDocument(t *testing.T) {
 	restore := setVersionForTest("test-sha")
 	defer restore()

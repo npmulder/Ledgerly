@@ -10,6 +10,9 @@ import (
 	"github.com/npmulder/ledgerly/internal/platform/db"
 )
 
+// ModuleName is the database schema and app wiring key for the ledger module.
+const ModuleName = "ledger"
+
 // EntryID identifies an immutable journal entry.
 type EntryID int64
 
@@ -159,6 +162,9 @@ var (
 
 	// ErrInvariantViolation reports a stored entry that fails the cheap per-entry balance check.
 	ErrInvariantViolation = errors.New("ledger: entry invariant violation")
+
+	// ErrTrialBalanceViolation reports a full-table trial-balance invariant failure.
+	ErrTrialBalanceViolation = errors.New("ledger: trial balance invariant violation")
 )
 
 // AccountConflictError carries the conflicting field for an existing account.

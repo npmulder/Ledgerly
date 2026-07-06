@@ -47,11 +47,12 @@ type Options struct {
 
 // Harness is a running in-process Ledgerly app.
 type Harness struct {
-	BaseURL string
-	Client  *nethttp.Client
-	DB      *pgxpool.Pool
-	Clock   *clock.FakeClock
-	Bus     *bus.Bus
+	BaseURL    string
+	Client     *nethttp.Client
+	DB         *pgxpool.Pool
+	LedgerPool *pgxpool.Pool
+	Clock      *clock.FakeClock
+	Bus        *bus.Bus
 
 	BootDuration time.Duration
 
@@ -67,6 +68,7 @@ func New(t testing.TB, opts Options) *Harness {
 	start := time.Now()
 	rawPool := testdb.Raw(t)
 	identityPool := testdb.AsModule(t, "identity")
+	ledgerPool := testdb.AsModule(t, "ledger")
 	demoPool := testdb.AsModule(t, demo.ModuleName)
 	invoicingPool := testdb.AsModule(t, "invoicing")
 
@@ -90,6 +92,7 @@ func New(t testing.TB, opts Options) *Harness {
 		Clock:         fakeClock,
 		HealthDB:      pgxPinger{pool: rawPool},
 		IdentityPool:  identityPool,
+		LedgerPool:    ledgerPool,
 		DemoPool:      demoPool,
 		InvoicingPool: invoicingPool,
 		BusOptions: []bus.Option{
@@ -117,6 +120,7 @@ func New(t testing.TB, opts Options) *Harness {
 		BaseURL:      server.URL,
 		Client:       authenticatedClient(baseClient, cookie),
 		DB:           rawPool,
+		LedgerPool:   ledgerPool,
 		Clock:        fakeClock,
 		Bus:          built.Bus,
 		BootDuration: time.Since(start),
