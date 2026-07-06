@@ -162,10 +162,7 @@ func bindingsForResponse(bindings map[string]any) map[string]any {
 func evaluationRunToResponse(run EvaluationRun) evaluationRunResponse {
 	warnings := make([]warningResponse, 0, len(run.Warnings))
 	for _, warning := range run.Warnings {
-		warnings = append(warnings, warningResponse{
-			RuleID:  warning.RuleID,
-			Message: warning.Message,
-		})
+		warnings = append(warnings, warningResponse(warning))
 	}
 	return evaluationRunResponse{
 		ID:                 run.ID,
