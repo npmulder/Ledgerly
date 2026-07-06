@@ -171,15 +171,7 @@ func TestReportsVATReturnNetsRevertedInvoiceSend(t *testing.T) {
 func newReportsService(t testing.TB, h *harness.Harness, invoiceService *invoicing.Service) *reports.Service {
 	t.Helper()
 
-	service, err := reports.New(reports.Config{
-		Ledger:           ledger.New(h.LedgerPool, h.Bus),
-		InvoiceVATReader: invoiceService,
-		Clock:            h.Clock,
-	})
-	if err != nil {
-		t.Fatalf("reports.New() error = %v", err)
-	}
-	return service
+	return reports.New(ledger.New(h.LedgerPool, h.Bus), nil, invoiceService, reports.WithClock(h.Clock))
 }
 
 func createInvoiceDraftForReports(t testing.TB, service *invoicing.Service, clientID string, amount invoicing.Money) invoicing.Invoice {

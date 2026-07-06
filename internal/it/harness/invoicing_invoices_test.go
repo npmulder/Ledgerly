@@ -207,6 +207,127 @@ func TestInvoicingSendHappyPathLocksPostsAndPublishes(t *testing.T) {
 	it.AssertLedgerBalanced(t, h)
 }
 
+func TestInvoicingOverdueReadQueriesSweepFactsAndTotals(t *testing.T) {
+	h := harness.New(t, harness.Options{ClockStart: time.Date(2025, 5, 1, 9, 0, 0, 0, time.UTC)})
+	fixtures.Rates(t, h)
+	service := newInvoiceService(t, h)
+	ctx := context.Background()
+
+	overdueDraft := createEURInvoiceDraft(t, h, service, 20_000)
+	overdueSent, err := service.Send(ctx, overdueDraft.ID)
+	if err != nil {
+		t.Fatalf("Send(overdue candidate) error = %v", err)
+	}
+	assertDate(t, overdueSent.DueDate, "2025-05-15")
+
+	h.Clock.Set(time.Date(2025, 5, 10, 9, 0, 0, 0, time.UTC))
+	fabrikam := fixtures.Fabrikam(t, h)
+	gbpDraft, err := service.CreateDraft(ctx, fabrikam.ID)
+	if err != nil {
+		t.Fatalf("CreateDraft(GBP) error = %v", err)
+	}
+	gbpLines := []invoicing.InvoiceLineInput{{
+		Description: "Current GBP delivery",
+		Qty:         invoicing.MustQuantity("1"),
+		UnitPrice:   invoicing.Money{Amount: 10_000, Currency: string(invoicing.CurrencyGBP)},
+	}}
+	gbpDraft, err = service.UpdateDraft(ctx, gbpDraft.ID, invoicing.DraftPatch{Lines: &gbpLines})
+	if err != nil {
+		t.Fatalf("UpdateDraft(GBP lines) error = %v", err)
+	}
+	currentSent, err := service.Send(ctx, gbpDraft.ID)
+	if err != nil {
+		t.Fatalf("Send(GBP current) error = %v", err)
+	}
+	assertDate(t, currentSent.DueDate, "2025-06-09")
+
+	h.Clock.Set(overdueSent.DueDate)
+	h.Clock.Advance(72 * time.Hour)
+
+	all, err := service.List(ctx, invoicing.InvoiceListFilter{Limit: 10})
+	if err != nil {
+		t.Fatalf("List(all) error = %v", err)
+	}
+	counts := countsByStatus(all.Counts)
+	if counts[invoicing.InvoiceStatusOverdue] != 1 || counts[invoicing.InvoiceStatusSent] != 1 ||
+		counts[invoicing.InvoiceStatusDraft] != 0 || counts[invoicing.InvoiceStatusPaid] != 0 {
+		t.Fatalf("status counts = %#v, want overdue=1 sent=1 draft=0 paid=0", counts)
+	}
+
+	overdueList, err := service.List(ctx, invoicing.InvoiceListFilter{
+		Statuses: []invoicing.InvoiceStatus{invoicing.InvoiceStatusOverdue},
+		Search:   "contoso",
+		Limit:    10,
+	})
+	if err != nil {
+		t.Fatalf("List(overdue search) error = %v", err)
+	}
+	if overdueList.TotalCount != 1 || len(overdueList.Invoices) != 1 {
+		t.Fatalf("overdue list count = total %d len %d, want one row", overdueList.TotalCount, len(overdueList.Invoices))
+	}
+	overdueRow := overdueList.Invoices[0]
+	if overdueRow.ID != overdueSent.ID || overdueRow.Status != invoicing.InvoiceStatusOverdue || overdueRow.DaysOverdue != 3 {
+		t.Fatalf("overdue row = id %s status %q days %d, want %s overdue 3",
+			overdueRow.ID, overdueRow.Status, overdueRow.DaysOverdue, overdueSent.ID)
+	}
+
+	if overdueSent.Number == nil {
+		t.Fatal("overdue sent Number = nil")
+	}
+	byNumber, err := service.List(ctx, invoicing.InvoiceListFilter{Search: *overdueSent.Number, Limit: 10})
+	if err != nil {
+		t.Fatalf("List(number search) error = %v", err)
+	}
+	if byNumber.TotalCount != 1 || len(byNumber.Invoices) != 1 || byNumber.Invoices[0].ID != overdueSent.ID {
+		t.Fatalf("number search result = total %d rows %#v, want overdue invoice", byNumber.TotalCount, byNumber.Invoices)
+	}
+
+	totals, err := service.Totals(ctx, invoicing.InvoiceListFilter{})
+	if err != nil {
+		t.Fatalf("Totals(all) error = %v", err)
+	}
+	if len(totals.Subtotals) != 2 {
+		t.Fatalf("Totals subtotals = %#v, want EUR and GBP", totals.Subtotals)
+	}
+	assertMoney(t, totals.Subtotals[0], 20_000, "EUR")
+	assertMoney(t, totals.Subtotals[1], 12_000, "GBP")
+	assertMoney(t, totals.TotalGBP, 29_000, "GBP")
+
+	var overdueEvents []invoicing.InvoiceOverdue
+	h.Bus.Subscribe(invoicing.InvoiceOverdueName, func(_ context.Context, _ db.Tx, evt bus.Event) error {
+		overdue, ok := evt.(invoicing.InvoiceOverdue)
+		if !ok {
+			t.Fatalf("InvoiceOverdue event = %T, want invoicing.InvoiceOverdue", evt)
+		}
+		overdueEvents = append(overdueEvents, overdue)
+		return nil
+	})
+	if err := h.RunJob(invoicing.OverdueSweepJobName); err != nil {
+		t.Fatalf("RunJob(%s) error = %v", invoicing.OverdueSweepJobName, err)
+	}
+	wantEvent := invoicing.InvoiceOverdue{InvoiceID: overdueSent.ID, DaysOverdue: 3}
+	if !reflect.DeepEqual(overdueEvents, []invoicing.InvoiceOverdue{wantEvent}) {
+		t.Fatalf("InvoiceOverdue events = %#v, want %#v", overdueEvents, []invoicing.InvoiceOverdue{wantEvent})
+	}
+	if err := h.RunJob(invoicing.OverdueSweepJobName); err != nil {
+		t.Fatalf("RunJob(%s second run) error = %v", invoicing.OverdueSweepJobName, err)
+	}
+	if !reflect.DeepEqual(overdueEvents, []invoicing.InvoiceOverdue{wantEvent}) {
+		t.Fatalf("InvoiceOverdue events after second run = %#v, want unchanged", overdueEvents)
+	}
+
+	facts, err := service.OverdueInvoices(ctx)
+	if err != nil {
+		t.Fatalf("OverdueInvoices() error = %v", err)
+	}
+	if len(facts) != 1 || facts[0].InvoiceID != overdueSent.ID || facts[0].DaysOverdue != 3 {
+		t.Fatalf("OverdueInvoices() = %#v, want one fact for %s with 3 days", facts, overdueSent.ID)
+	}
+	assertMoney(t, facts[0].Amount, 20_000, "EUR")
+
+	it.AssertLedgerBalanced(t, h)
+}
+
 func TestInvoicingSendGBPUsesIdentityLockAndPosting(t *testing.T) {
 	h := harness.New(t, harness.Options{ClockStart: time.Date(2025, 5, 1, 9, 0, 0, 0, time.UTC)})
 	service := newInvoiceService(t, h)
@@ -571,12 +692,14 @@ func newInvoiceService(t testing.TB, h *harness.Harness) *invoicing.Service {
 	t.Helper()
 	modulePool := testdb.AsModule(t, invoicing.ModuleName)
 	moneyFXPool := testdb.AsModule(t, moneyfx.ModuleName)
+	rateLocks := testRateLocker{service: moneyfx.NewService(moneyfx.NewStore(moneyFXPool), h.Clock)}
 	return invoicing.NewService(
 		modulePool,
 		invoicing.Store{},
 		invoicing.WithClock(h.Clock),
 		invoicing.WithTodayRate(fakeTodayRate),
-		invoicing.WithRateLocker(testRateLocker{service: moneyfx.NewService(moneyfx.NewStore(moneyFXPool), h.Clock)}),
+		invoicing.WithRateLocker(rateLocks),
+		invoicing.WithRateLockReader(rateLocks),
 		invoicing.WithLedger(ledger.New(h.LedgerPool, h.Bus)),
 		invoicing.WithEventBus(h.Bus),
 	)
@@ -588,6 +711,14 @@ type testRateLocker struct {
 
 func (l testRateLocker) LockRate(ctx context.Context, tx db.Tx, ref invoicing.RateLockRef, from string, to string, date time.Time) (invoicing.RateLock, error) {
 	lock, err := l.service.Lock(ctx, tx, moneyfx.LockRef{Module: ref.Module, Ref: ref.Ref}, from, to, date)
+	if err != nil {
+		return invoicing.RateLock{}, err
+	}
+	return invoicing.RateLock{ID: int64(lock.ID), Rate: lock.Rate}, nil
+}
+
+func (l testRateLocker) RateLock(ctx context.Context, id int64) (invoicing.RateLock, error) {
+	lock, err := l.service.GetLock(ctx, moneyfx.LockID(id))
 	if err != nil {
 		return invoicing.RateLock{}, err
 	}
@@ -838,6 +969,14 @@ func fakeTodayRate(_ context.Context, from string, to string) (invoicing.FXRate,
 		Value:  value,
 		Source: "test",
 	}, time.Date(2025, 5, 1, 12, 0, 0, 0, time.UTC), nil
+}
+
+func countsByStatus(counts []invoicing.InvoiceStatusCount) map[invoicing.InvoiceStatus]int {
+	result := make(map[invoicing.InvoiceStatus]int, len(counts))
+	for _, count := range counts {
+		result[count.Status] = count.Count
+	}
+	return result
 }
 
 func assertMoney(t testing.TB, got invoicing.Money, wantAmount int64, wantCurrency string) {

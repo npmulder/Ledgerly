@@ -60,6 +60,7 @@ type Config struct {
 	Clock               clock.Clock
 	TodayRate           TodayRateFunc
 	RateLocker          RateLocker
+	RateLockReader      RateLockReader
 	Ledger              LedgerJournal
 	Bus                 *bus.Bus
 	InvoiceUsageChecker InvoiceUsageChecker
@@ -80,6 +81,12 @@ func New(cfg Config) (*Module, error) {
 	if invoiceUsage == nil {
 		invoiceUsage = storeInvoiceUsageChecker{pool: cfg.Pool, store: store}
 	}
+	rateLockReader := cfg.RateLockReader
+	if rateLockReader == nil {
+		if reader, ok := cfg.RateLocker.(RateLockReader); ok {
+			rateLockReader = reader
+		}
+	}
 	return &Module{
 		service: NewService(
 			cfg.Pool,
@@ -87,6 +94,7 @@ func New(cfg Config) (*Module, error) {
 			WithClock(cfg.Clock),
 			WithTodayRate(cfg.TodayRate),
 			WithRateLocker(cfg.RateLocker),
+			WithRateLockReader(rateLockReader),
 			WithLedger(cfg.Ledger),
 			WithEventBus(cfg.Bus),
 			WithInvoiceUsageChecker(invoiceUsage),
@@ -323,6 +331,12 @@ type RateLock struct {
 // RateLocker is the moneyfx capability invoicing needs for send-time locks.
 type RateLocker interface {
 	LockRate(context.Context, db.Tx, RateLockRef, string, string, time.Time) (RateLock, error)
+}
+
+// RateLockReader is the moneyfx capability invoicing needs for read-side GBP
+// totals on sent/paid invoices with immutable locks.
+type RateLockReader interface {
+	RateLock(context.Context, int64) (RateLock, error)
 }
 
 // LedgerJournal is the ledger capability invoicing needs for send and unsend.

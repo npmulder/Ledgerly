@@ -26,10 +26,10 @@ func (s *Service) VATReturn(ctx context.Context, period Period) (VATFigures, err
 		return VATFigures{}, fmt.Errorf("reports: service is nil")
 	}
 	if s.ledger == nil {
-		return VATFigures{}, fmt.Errorf("reports: ledger reader is required: %w", ErrMissingConfig)
+		return VATFigures{}, fmt.Errorf("ledger: %w", ErrMissingProvider)
 	}
-	if s.invoiceVATReader == nil {
-		return VATFigures{}, fmt.Errorf("reports: invoice VAT reader is required: %w", ErrMissingConfig)
+	if s.invoicing == nil {
+		return VATFigures{}, fmt.Errorf("invoicing: %w", ErrMissingProvider)
 	}
 	period, err := normalizeVATQuarter(period)
 	if err != nil {
@@ -43,7 +43,7 @@ func (s *Service) VATReturn(ctx context.Context, period Period) (VATFigures, err
 		Box6:   money.Zero("GBP"),
 	}
 	classifier := vatClassifier{
-		reader: s.invoiceVATReader,
+		reader: s.invoicing,
 		cache:  make(map[ledger.EntryID]jurisdiction.VATTreatmentSemantics),
 	}
 
@@ -122,14 +122,16 @@ func (realVATClock) Now() time.Time {
 	return time.Now()
 }
 
+// VATQuarterForDate returns the calendar VAT quarter containing date.
+func VATQuarterForDate(date time.Time) Period {
+	date = dateOnly(date)
+	quarterStartMonth := time.Month(((int(date.Month())-1)/3)*3 + 1)
+	from := time.Date(date.Year(), quarterStartMonth, 1, 0, 0, 0, 0, time.UTC)
+	to := from.AddDate(0, 3, -1)
+	return Period{From: from, To: to}
+}
+
 func (s *Service) vatPositionCompanyFacts(ctx context.Context) (jurisdiction.CompanyFacts, bool, error) {
-	if s.vatCompanyFacts != nil {
-		facts, err := s.vatCompanyFacts(ctx)
-		if err != nil {
-			return jurisdiction.CompanyFacts{}, false, fmt.Errorf("reports: VAT position company facts: %w", err)
-		}
-		return facts, true, nil
-	}
 	if s.identity == nil {
 		return jurisdiction.CompanyFacts{}, false, nil
 	}
@@ -196,7 +198,7 @@ func isManualInputVATAdjustment(entry ledger.JournalEntry) bool {
 }
 
 type vatClassifier struct {
-	reader InvoiceVATReader
+	reader Invoicing
 	cache  map[ledger.EntryID]jurisdiction.VATTreatmentSemantics
 }
 
