@@ -57,6 +57,7 @@ type rateReader interface {
 // Service provides DB-backed money-fx queries and conversions.
 type Service struct {
 	store rateReader
+	locks rateLockStore
 	clock clock.Clock
 }
 
@@ -65,8 +66,10 @@ func NewService(store rateReader, clk clock.Clock) *Service {
 	if clk == nil {
 		clk = clock.New()
 	}
+	lockStore, _ := store.(rateLockStore)
 	return &Service{
 		store: store,
+		locks: lockStore,
 		clock: clk,
 	}
 }

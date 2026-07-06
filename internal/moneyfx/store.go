@@ -2,6 +2,7 @@ package moneyfx
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/big"
 	"regexp"
@@ -15,6 +16,11 @@ import (
 )
 
 var rateDecimalPattern = regexp.MustCompile(`^[0-9]+(\.[0-9]+)?$`)
+
+const (
+	ecbRateDecimalScale  = 8
+	lockRateDecimalScale = 18
+)
 
 // Store owns moneyfx persistence.
 type Store struct {
@@ -102,6 +108,13 @@ func (s Store) ECBRate(ctx context.Context, date time.Time, currency string) (St
 	if s.pool == nil {
 		return StoredECBRate{}, fmt.Errorf("moneyfx: load rate requires pool")
 	}
+	return loadECBRate(ctx, s.pool, date, currency)
+}
+
+func loadECBRate(ctx context.Context, queryer rateQueryer, date time.Time, currency string) (StoredECBRate, error) {
+	if queryer == nil {
+		return StoredECBRate{}, fmt.Errorf("moneyfx: load rate requires queryer")
+	}
 	normalizedDate := normalizeRateDate(date)
 	normalizedCurrency, err := normalizeCurrency(currency)
 	if err != nil {
@@ -110,7 +123,7 @@ func (s Store) ECBRate(ctx context.Context, date time.Time, currency string) (St
 
 	var row StoredECBRate
 	var decimalText string
-	if err := s.pool.QueryRow(ctx, `
+	if err := queryer.QueryRow(ctx, `
 SELECT date, currency, rate::text
 FROM moneyfx.ecb_rates
 WHERE date = $1 AND currency = $2`,
@@ -139,6 +152,13 @@ func (s Store) ECBRateDateOnOrBefore(ctx context.Context, date time.Time, minDat
 	if s.pool == nil {
 		return time.Time{}, false, fmt.Errorf("moneyfx: load rate date requires pool")
 	}
+	return loadECBRateDateOnOrBefore(ctx, s.pool, date, minDate, currencies)
+}
+
+func loadECBRateDateOnOrBefore(ctx context.Context, queryer rateQueryer, date time.Time, minDate time.Time, currencies []string) (time.Time, bool, error) {
+	if queryer == nil {
+		return time.Time{}, false, fmt.Errorf("moneyfx: load rate date requires queryer")
+	}
 	normalizedDate := normalizeRateDate(date)
 	normalizedMinDate := normalizeRateDate(minDate)
 	if normalizedDate.IsZero() || normalizedMinDate.IsZero() {
@@ -151,7 +171,7 @@ func (s Store) ECBRateDateOnOrBefore(ctx context.Context, date time.Time, minDat
 
 	var rateDate time.Time
 	if len(normalizedCurrencies) == 0 {
-		err := s.pool.QueryRow(ctx, `
+		err := queryer.QueryRow(ctx, `
 SELECT date
 FROM moneyfx.ecb_rates
 WHERE date <= $1 AND date >= $2
@@ -170,7 +190,7 @@ LIMIT 1`,
 		return normalizeRateDate(rateDate), true, nil
 	}
 
-	err = s.pool.QueryRow(ctx, `
+	err = queryer.QueryRow(ctx, `
 SELECT date
 FROM moneyfx.ecb_rates
 WHERE date <= $1 AND date >= $2 AND currency = ANY($3::text[])
@@ -229,9 +249,16 @@ func (s Store) LatestRateDate(ctx context.Context) (time.Time, bool, error) {
 	if s.pool == nil {
 		return time.Time{}, false, fmt.Errorf("moneyfx: latest rate date requires pool")
 	}
+	return loadLatestRateDate(ctx, s.pool)
+}
+
+func loadLatestRateDate(ctx context.Context, queryer rateQueryer) (time.Time, bool, error) {
+	if queryer == nil {
+		return time.Time{}, false, fmt.Errorf("moneyfx: latest rate date requires queryer")
+	}
 
 	var date time.Time
-	err := s.pool.QueryRow(ctx, `
+	err := queryer.QueryRow(ctx, `
 SELECT date
 FROM moneyfx.ecb_rates
 ORDER BY date DESC
@@ -243,6 +270,84 @@ LIMIT 1`).Scan(&date)
 		return time.Time{}, false, fmt.Errorf("moneyfx: latest ECB rate date: %w", err)
 	}
 	return normalizeRateDate(date), true, nil
+}
+
+type rateQueryer interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// InsertRateLock appends a new immutable rate lock using the caller's
+// transaction.
+func (s Store) InsertRateLock(ctx context.Context, tx db.Tx, lock newRateLock) (RateLock, error) {
+	if tx == nil {
+		return RateLock{}, fmt.Errorf("moneyfx: insert rate lock requires transaction")
+	}
+	normalized, err := normalizeNewRateLock(lock)
+	if err != nil {
+		return RateLock{}, err
+	}
+
+	return scanRateLock(tx.QueryRow(ctx, `
+INSERT INTO moneyfx.rate_locks (ref, from_currency, to_currency, rate, rate_date, locked_at, source)
+VALUES ($1, $2, $3, $4::numeric, $5, $6, $7)
+RETURNING id, ref, from_currency, to_currency, rate::text, rate_date, locked_at, source`,
+		normalized.RefText,
+		normalized.From,
+		normalized.To,
+		normalized.Rate,
+		normalized.RateDate,
+		normalized.LockedAt,
+		normalized.Source,
+	))
+}
+
+// RateLockByID returns a stored rate lock by id.
+func (s Store) RateLockByID(ctx context.Context, id LockID) (RateLock, error) {
+	if s.pool == nil {
+		return RateLock{}, fmt.Errorf("moneyfx: load rate lock requires pool")
+	}
+	if id <= 0 {
+		return RateLock{}, fmt.Errorf("moneyfx: rate lock id %d: %w", id, ErrLockNotFound)
+	}
+	lock, err := scanRateLock(s.pool.QueryRow(ctx, `
+SELECT id, ref, from_currency, to_currency, rate::text, rate_date, locked_at, source
+FROM moneyfx.rate_locks
+WHERE id = $1`,
+		id,
+	))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return RateLock{}, fmt.Errorf("moneyfx: rate lock %d: %w", id, ErrLockNotFound)
+		}
+		return RateLock{}, fmt.Errorf("moneyfx: load rate lock: %w", err)
+	}
+	return lock, nil
+}
+
+// ActiveRateLockFor returns the newest rate lock for ref.
+func (s Store) ActiveRateLockFor(ctx context.Context, ref LockRef) (RateLock, error) {
+	if s.pool == nil {
+		return RateLock{}, fmt.Errorf("moneyfx: active rate lock requires pool")
+	}
+	_, refText, err := normalizeLockRef(ref)
+	if err != nil {
+		return RateLock{}, err
+	}
+	lock, err := scanRateLock(s.pool.QueryRow(ctx, `
+SELECT id, ref, from_currency, to_currency, rate::text, rate_date, locked_at, source
+FROM moneyfx.rate_locks
+WHERE ref = $1
+ORDER BY id DESC
+LIMIT 1`,
+		refText,
+	))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return RateLock{}, fmt.Errorf("moneyfx: active rate lock for %s: %w", refText, ErrLockNotFound)
+		}
+		return RateLock{}, fmt.Errorf("moneyfx: load active rate lock: %w", err)
+	}
+	return lock, nil
 }
 
 func normalizeECBRates(rates []ECBRate) ([]ECBRate, error) {
@@ -298,6 +403,14 @@ func normalizeCurrency(currency string) (string, error) {
 }
 
 func canonicalRateDecimal(value string) (string, error) {
+	return canonicalPositiveDecimal(value, ecbRateDecimalScale)
+}
+
+func canonicalRateLockDecimal(value string) (string, error) {
+	return canonicalPositiveDecimal(value, lockRateDecimalScale)
+}
+
+func canonicalPositiveDecimal(value string, maxScale int) (string, error) {
 	decimal := strings.TrimSpace(value)
 	if decimal == "" {
 		return "", fmt.Errorf("rate is required")
@@ -305,8 +418,8 @@ func canonicalRateDecimal(value string) (string, error) {
 	if !rateDecimalPattern.MatchString(decimal) {
 		return "", fmt.Errorf("rate %q is not a plain decimal", value)
 	}
-	if dot := strings.IndexByte(decimal, '.'); dot >= 0 && len(decimal)-dot-1 > 8 {
-		return "", fmt.Errorf("rate %q exceeds numeric(18,8)", value)
+	if dot := strings.IndexByte(decimal, '.'); dot >= 0 && len(decimal)-dot-1 > maxScale {
+		return "", fmt.Errorf("rate %q exceeds scale %d", value, maxScale)
 	}
 
 	rat, ok := new(big.Rat).SetString(decimal)
@@ -325,6 +438,89 @@ func canonicalRateDecimal(value string) (string, error) {
 		decimal = decimal[1:]
 	}
 	return decimal, nil
+}
+
+func normalizeNewRateLock(lock newRateLock) (newRateLock, error) {
+	ref, refText, err := normalizeLockRef(lock.Ref)
+	if err != nil {
+		return newRateLock{}, err
+	}
+	if strings.TrimSpace(lock.RefText) != "" && strings.TrimSpace(lock.RefText) != refText {
+		return newRateLock{}, fmt.Errorf("moneyfx: lock ref text %q does not match %q", lock.RefText, refText)
+	}
+	from, to, err := normalizeRatePair(lock.From, lock.To)
+	if err != nil {
+		return newRateLock{}, err
+	}
+	rate, err := canonicalRateLockDecimal(lock.Rate)
+	if err != nil {
+		return newRateLock{}, err
+	}
+	rateDate := normalizeRateDate(lock.RateDate)
+	if rateDate.IsZero() {
+		return newRateLock{}, fmt.Errorf("moneyfx: lock rate date is required")
+	}
+	lockedAt := lock.LockedAt.UTC()
+	if lockedAt.IsZero() {
+		return newRateLock{}, fmt.Errorf("moneyfx: lock timestamp is required")
+	}
+	source := strings.TrimSpace(lock.Source)
+	if source == "" {
+		source = rateSourceECB
+	}
+	if source != rateSourceECB {
+		return newRateLock{}, fmt.Errorf("moneyfx: lock source %q is not supported", source)
+	}
+	return newRateLock{
+		Ref:      ref,
+		RefText:  refText,
+		From:     from,
+		To:       to,
+		Rate:     rate,
+		RateDate: rateDate,
+		LockedAt: lockedAt,
+		Source:   source,
+	}, nil
+}
+
+type scanner interface {
+	Scan(dest ...any) error
+}
+
+func scanRateLock(row scanner) (RateLock, error) {
+	var (
+		id       int64
+		refText  string
+		rateText string
+		lock     RateLock
+	)
+	if err := row.Scan(
+		&id,
+		&refText,
+		&lock.From,
+		&lock.To,
+		&rateText,
+		&lock.RateDate,
+		&lock.LockedAt,
+		&lock.Source,
+	); err != nil {
+		return RateLock{}, err
+	}
+
+	ref, err := parseLockRef(refText)
+	if err != nil {
+		return RateLock{}, err
+	}
+	rate, err := canonicalRateLockDecimal(rateText)
+	if err != nil {
+		return RateLock{}, err
+	}
+	lock.ID = LockID(id)
+	lock.Ref = ref
+	lock.Rate = rate
+	lock.RateDate = normalizeRateDate(lock.RateDate)
+	lock.LockedAt = lock.LockedAt.UTC()
+	return lock, nil
 }
 
 func errorsJoin(err error, other error) error {
