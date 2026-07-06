@@ -271,6 +271,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/moneyfx/rates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Return an FX rate for a date */
+        get: operations["moneyfxRateOn"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/moneyfx/rates/today": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Return the latest FX rate */
+        get: operations["moneyfxTodayRate"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/healthz": {
         parameters: {
             query?: never;
@@ -584,6 +618,18 @@ export interface components {
             native_totals: components["schemas"]["LedgerMoney"][];
             /** @enum {string} */
             status: "balanced" | "out_of_balance";
+        };
+        MoneyFXRateResponse: {
+            /** Format: date-time */
+            fetched_at: string;
+            from: string;
+            /** @description Exact FX multiplier as a decimal or rational string. */
+            rate: string;
+            /** Format: date */
+            rate_date: string;
+            /** @enum {string} */
+            source: "ECB" | "identity";
+            to: string;
         };
         Problem: {
             detail?: string;
@@ -1438,6 +1484,108 @@ export interface operations {
             };
             /** @description Authentication required */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    moneyfxRateOn: {
+        parameters: {
+            query: {
+                /** @description Requested posting date. If no ECB rate exists for this date, lookup walks back up to seven calendar days. */
+                date: string;
+                from: string;
+                to: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description FX rate */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MoneyFXRateResponse"];
+                };
+            };
+            /** @description Invalid rate query */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Rate was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    moneyfxTodayRate: {
+        parameters: {
+            query: {
+                from: string;
+                to: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Latest FX rate */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MoneyFXRateResponse"];
+                };
+            };
+            /** @description Invalid rate query */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Rate was not found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

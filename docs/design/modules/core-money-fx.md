@@ -17,8 +17,9 @@ Exposed from `moneyfx/money` as a leaf sub-package importable by all modules (pu
 ## Rates
 
 - **Ingestion**: daily cron fetches ECB reference rates (XML feed), stores `{date, base EUR, currency, rate}` rows. Retry with backoff; if today's fetch fails, latest available rate is used and a `moneyfx.RatesStale` event fires (advisor turns it into an amber insight).
-- **Lookup**: `RateOn(date, from, to)` — cross-rates via EUR base. GBP/EUR pair is all v1 needs but the API is general.
+- **Lookup**: `RateOn(date, from, to)` — cross-rates via EUR base. GBP/EUR pair is all v1 needs but the API is general. If the requested date has no ECB rate, lookup walks back to the most recent prior ECB rate date for up to seven calendar days; beyond that it returns `ErrNoRate` so callers do not silently use stale FX.
 - Dashboard rate card ("frozen onto today's postings") reads `TodayRate("EUR","GBP")` + fetch timestamp.
+- **Lookup performance**: rates are queried directly by indexed `{date, currency}` lookups. Per-request in-process caching is unnecessary for the small read surface and would add invalidation complexity without measurable benefit.
 
 ## Rate locking
 
