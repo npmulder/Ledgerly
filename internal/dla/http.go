@@ -1,6 +1,7 @@
 package dla
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
@@ -150,6 +151,14 @@ func (h dlaHandler) createEntry(w nethttp.ResponseWriter, r *nethttp.Request) {
 	if manualDrawing {
 		writeManualDrawingProblem(w, r)
 		return
+	}
+	if len(fields) == 0 {
+		accountFields, err := h.validateEntryAccounts(r.Context(), entry)
+		if err != nil {
+			httpserver.WriteError(w, r, err)
+			return
+		}
+		fields = append(fields, accountFields...)
 	}
 	if len(fields) > 0 {
 		writeDLAValidation(w, r, fields)
@@ -316,6 +325,58 @@ func parseEntryRequestAmount(value moneyResponse, fields *[]fieldError) money.Mo
 		*fields = append(*fields, fieldError{Pointer: "/amount/currency", Detail: "must be GBP"})
 	}
 	return money.Money{Amount: value.AmountMinor, Currency: currency}
+}
+
+func (h dlaHandler) validateEntryAccounts(ctx context.Context, entry NewEntry) ([]fieldError, error) {
+	if h.service == nil || h.service.ledger == nil {
+		return nil, fmt.Errorf("dla: account validation requires ledger")
+	}
+	accounts, err := h.service.ledger.Accounts(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("dla: list ledger accounts for entry validation: %w", err)
+	}
+	byCode := make(map[ledger.AccountCode]ledger.Account, len(accounts))
+	for _, account := range accounts {
+		byCode[normalizeAccountCode(account.Code)] = account
+	}
+
+	switch entry.Kind {
+	case EntryKindRepayment:
+		return validateManualCounterparty(byCode, entry.CashAccountCode, "/cash_account_code", isCashBankAssetAccount, "must be a cash or bank asset account"), nil
+	case EntryKindExpenseOwed:
+		return validateManualCounterparty(byCode, entry.ExpenseAccountCode, "/expense_category", isExpenseAccount, "must be an expense account"), nil
+	default:
+		return nil, nil
+	}
+}
+
+func validateManualCounterparty(
+	accounts map[ledger.AccountCode]ledger.Account,
+	code ledger.AccountCode,
+	pointer string,
+	accept func(ledger.Account) bool,
+	detail string,
+) []fieldError {
+	normalized := normalizeAccountCode(code)
+	if normalized == DLAAccountCode {
+		return []fieldError{{Pointer: pointer, Detail: "must not be the DLA control account"}}
+	}
+	account, ok := accounts[normalized]
+	if !ok {
+		return []fieldError{{Pointer: pointer, Detail: "does not match a ledger account"}}
+	}
+	if !accept(account) {
+		return []fieldError{{Pointer: pointer, Detail: detail}}
+	}
+	return nil
+}
+
+func isCashBankAssetAccount(account ledger.Account) bool {
+	return account.Type == ledger.AccountTypeAsset && strings.HasPrefix(string(normalizeAccountCode(account.Code)), "1000-cash-")
+}
+
+func isExpenseAccount(account ledger.Account) bool {
+	return account.Type == ledger.AccountTypeExpense
 }
 
 func accountPointerForEntry(entry NewEntry) string {

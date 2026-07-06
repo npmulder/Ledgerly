@@ -189,6 +189,78 @@ func TestHTTPDLADrawingRejectedAndInvalidEntriesHaveFieldPointers(t *testing.T) 
 	assertDLAProblemPointers(t, invalidProblem, "/date", "/description", "/amount/amount_minor", "/expense_category")
 }
 
+func TestHTTPDLARejectsInvalidManualEntryAccounts(t *testing.T) {
+	fixture := newDLAHTTPFixture(t, time.Date(2026, 7, 6, 12, 0, 0, 0, time.UTC))
+
+	for _, test := range []struct {
+		name       string
+		body       map[string]any
+		pointer    string
+		wantDetail string
+	}{
+		{
+			name: "repayment DLA control account",
+			body: map[string]any{
+				"date":              "2026-07-05",
+				"kind":              string(dla.EntryKindRepayment),
+				"description":       "Director repaid the loan",
+				"amount":            map[string]any{"amount_minor": 1000, "currency": "GBP"},
+				"cash_account_code": string(dla.DLAAccountCode),
+			},
+			pointer:    "/cash_account_code",
+			wantDetail: "DLA control account",
+		},
+		{
+			name: "repayment non-cash account",
+			body: map[string]any{
+				"date":              "2026-07-05",
+				"kind":              string(dla.EntryKindRepayment),
+				"description":       "Director repaid the loan",
+				"amount":            map[string]any{"amount_minor": 1000, "currency": "GBP"},
+				"cash_account_code": "4000-sales",
+			},
+			pointer:    "/cash_account_code",
+			wantDetail: "cash or bank asset account",
+		},
+		{
+			name: "expense owed DLA control account",
+			body: map[string]any{
+				"date":             "2026-07-05",
+				"kind":             string(dla.EntryKindExpenseOwed),
+				"description":      "Director paid software personally",
+				"amount":           map[string]any{"amount_minor": 1000, "currency": "GBP"},
+				"expense_category": string(dla.DLAAccountCode),
+			},
+			pointer:    "/expense_category",
+			wantDetail: "DLA control account",
+		},
+		{
+			name: "expense owed non-expense account",
+			body: map[string]any{
+				"date":             "2026-07-05",
+				"kind":             string(dla.EntryKindExpenseOwed),
+				"description":      "Director paid software personally",
+				"amount":           map[string]any{"amount_minor": 1000, "currency": "GBP"},
+				"expense_category": "4000-sales",
+			},
+			pointer:    "/expense_category",
+			wantDetail: "expense account",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			response := performDLARequest(t, fixture.harness, nethttp.MethodPost, "/api/dla/entries", mustJSON(t, test.body), true)
+			if response.StatusCode != nethttp.StatusUnprocessableEntity {
+				t.Fatalf("status = %d, want %d; body=%s", response.StatusCode, nethttp.StatusUnprocessableEntity, response.BodyString())
+			}
+			problem := decodeDLAProblem(t, response)
+			assertDLAProblemPointers(t, problem, test.pointer)
+			if len(problem.Errors) != 1 || !strings.Contains(problem.Errors[0].Detail, test.wantDetail) {
+				t.Fatalf("problem errors = %+v, want detail containing %q", problem.Errors, test.wantDetail)
+			}
+		})
+	}
+}
+
 func TestHTTPDLARoutesRequireAuthentication(t *testing.T) {
 	fixture := newDLAHTTPFixture(t, time.Date(2026, 7, 6, 12, 0, 0, 0, time.UTC))
 
