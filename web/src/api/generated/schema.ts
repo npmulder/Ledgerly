@@ -4,24 +4,6 @@
  */
 
 export interface paths {
-    "/api/demo/notes": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List demo notes */
-        get: operations["demoListNotes"];
-        put?: never;
-        /** Create a demo note */
-        post: operations["demoCreateNote"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/identity/assets/{id}": {
         parameters: {
             query?: never;
@@ -232,6 +214,63 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ledger/accounts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List chart of accounts */
+        get: operations["ledgerListAccounts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ledger/entries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Browse journal entries
+         * @description Returns journal entries with all postings for feeds export packs and accountant review. This endpoint is read-only; ledger writes happen only through module Go APIs.
+         */
+        get: operations["ledgerListEntries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ledger/trial-balance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Return current trial-balance status
+         * @description Returns the current full-ledger balance check as of the server date. This is a read-only report; no HTTP endpoint posts to the ledger.
+         */
+        get: operations["ledgerGetTrialBalance"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/healthz": {
         parameters: {
             query?: never;
@@ -330,15 +369,6 @@ export interface components {
             bank_name: string;
             bic: string;
             iban: string;
-        };
-        DemoCreateNoteRequest: {
-            body: string;
-        };
-        DemoNote: {
-            body: string;
-            /** Format: date-time */
-            created_at: string;
-            id: string;
         };
         FieldError: {
             detail: string;
@@ -505,6 +535,56 @@ export interface components {
             label: string;
             summary: string;
         };
+        LedgerAccount: {
+            code: string;
+            /** Format: date-time */
+            created_at: string;
+            currency: string | null;
+            /** Format: int64 */
+            id: number;
+            name: string;
+            /** @enum {string} */
+            type: "asset" | "liability" | "equity" | "income" | "expense";
+        };
+        LedgerAccountsResponse: {
+            accounts: components["schemas"]["LedgerAccount"][];
+        };
+        LedgerEntriesResponse: {
+            entries: components["schemas"]["LedgerEntry"][];
+            next_cursor: string | null;
+        };
+        LedgerEntry: {
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date */
+            date: string;
+            description: string;
+            /** Format: int64 */
+            id: number;
+            postings: components["schemas"]["LedgerPosting"][];
+            /** Format: int64 */
+            reversal_of: number | null;
+            source_module: string;
+            source_ref: string;
+        };
+        LedgerMoney: {
+            /** Format: int64 */
+            amount_minor: number;
+            currency: string;
+        };
+        LedgerPosting: {
+            account_code: string;
+            amount: components["schemas"]["LedgerMoney"];
+            amount_gbp: components["schemas"]["LedgerMoney"];
+        };
+        LedgerTrialBalance: {
+            amount_gbp: components["schemas"]["LedgerMoney"];
+            /** Format: date */
+            as_of: string;
+            native_totals: components["schemas"]["LedgerMoney"][];
+            /** @enum {string} */
+            status: "balanced" | "out_of_balance";
+        };
         Problem: {
             detail?: string;
             /** Format: uri-reference */
@@ -557,53 +637,6 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
-    demoListNotes: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Notes listed */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    demoCreateNote: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["DemoCreateNoteRequest"];
-            };
-        };
-        responses: {
-            /** @description Note created */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Invalid note request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
     identityGetAsset: {
         parameters: {
             query?: never;
@@ -1294,6 +1327,113 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["JurisdictionPack"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    ledgerListAccounts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Chart of accounts */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LedgerAccountsResponse"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    ledgerListEntries: {
+        parameters: {
+            query?: {
+                /** @description Inclusive entry date lower bound. */
+                from?: string;
+                /** @description Inclusive entry date upper bound. */
+                to?: string;
+                /** @description Filter entries by source module. */
+                source?: string;
+                /** @description Filter to entries touching this account code while still returning all postings on matched entries. */
+                account?: string;
+                /** @description Opaque keyset cursor from the previous response. */
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Journal entries listed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LedgerEntriesResponse"];
+                };
+            };
+            /** @description Invalid ledger entry query */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    ledgerGetTrialBalance: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Trial-balance status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LedgerTrialBalance"];
                 };
             };
             /** @description Authentication required */

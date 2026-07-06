@@ -20,7 +20,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/npmulder/ledgerly/internal/app"
-	"github.com/npmulder/ledgerly/internal/demo"
 	"github.com/npmulder/ledgerly/internal/identity"
 	"github.com/npmulder/ledgerly/internal/it/testdb"
 	"github.com/npmulder/ledgerly/internal/ledger"
@@ -88,9 +87,8 @@ func New(t testing.TB, opts Options) *Harness {
 	start := time.Now()
 	rawPool := testdb.Raw(t)
 	identityPool := testdb.AsModule(t, "identity")
-	ledgerPool := testdb.AsModule(t, "ledger")
+	ledgerPool := testdb.AsModule(t, ledger.ModuleName)
 	moneyFXPool := testdb.AsModule(t, moneyfx.ModuleName)
-	demoPool := testdb.AsModule(t, demo.ModuleName)
 	invoicingPool := testdb.AsModule(t, "invoicing")
 
 	startAt := opts.ClockStart
@@ -115,7 +113,6 @@ func New(t testing.TB, opts Options) *Harness {
 		IdentityPool:  identityPool,
 		LedgerPool:    ledgerPool,
 		MoneyFXPool:   moneyFXPool,
-		DemoPool:      demoPool,
 		InvoicingPool: invoicingPool,
 		BusOptions: []bus.Option{
 			bus.WithMiddleware(faults.middleware),
