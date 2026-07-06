@@ -579,7 +579,9 @@ func assertDLAHealthStatus(t *testing.T, h *harness.Harness, wantStatus int, wan
 	if err != nil {
 		t.Fatalf("GET /healthz: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
