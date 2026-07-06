@@ -199,6 +199,18 @@ func (s *Service) Invoice(ctx context.Context, id string) (Invoice, error) {
 	return s.withComputedTotals(ctx, invoice)
 }
 
+// InvoiceVATContextBySendEntryID returns the narrow VAT context for a sent
+// invoice's ledger send entry.
+func (s *Service) InvoiceVATContextBySendEntryID(ctx context.Context, entryID ledger.EntryID) (InvoiceVATContext, error) {
+	if s.pool == nil {
+		return InvoiceVATContext{}, fmt.Errorf("invoicing: invoice VAT context requires pool")
+	}
+	if entryID <= 0 {
+		return InvoiceVATContext{}, fmt.Errorf("invoicing: send ledger entry id %d: %w", entryID, ErrInvoicePostingNotFound)
+	}
+	return s.store.InvoiceVATContextBySendEntryID(ctx, s.pool, int64(entryID))
+}
+
 // InvoiceByNumber returns an invoice by its immutable sent invoice number.
 func (s *Service) InvoiceByNumber(ctx context.Context, number string) (Invoice, error) {
 	invoice, err := s.store.InvoiceByNumber(ctx, s.pool, strings.TrimSpace(number))

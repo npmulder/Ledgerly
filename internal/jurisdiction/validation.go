@@ -7,6 +7,27 @@ import (
 	"strings"
 )
 
+type requiredVATTreatment struct {
+	key               string
+	outputVAT         bool
+	vatReturnNetSales bool
+	reverseChargeKind bool
+}
+
+var requiredVATTreatments = []requiredVATTreatment{
+	{
+		key:               "domestic",
+		outputVAT:         true,
+		vatReturnNetSales: true,
+	},
+	{
+		key:               "reverse-charge-eu-b2b",
+		outputVAT:         false,
+		vatReturnNetSales: true,
+		reverseChargeKind: true,
+	},
+}
+
 func validatePack(file, id, version string, pack *Pack) error {
 	if err := validateMeta(file, id, version, pack.Meta); err != nil {
 		return err
@@ -157,6 +178,57 @@ func validateVAT(file string, vat VAT) error {
 		}
 		if strings.TrimSpace(wording.InvoiceWording) == "" {
 			return fieldError(file, path+".invoice_wording", "invoice_wording", "must not be empty")
+		}
+	}
+	if err := validateVATTreatments(file, vat); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func validateVATTreatments(file string, vat VAT) error {
+	if len(vat.Treatments) == 0 {
+		return fieldError(file, "tax.vat.treatments", "treatments", "must contain at least one treatment")
+	}
+	for _, required := range requiredVATTreatments {
+		treatment, ok := vat.Treatments[required.key]
+		if !ok {
+			return fieldError(file, "tax.vat.treatments."+required.key, required.key, "is required for supported invoicing VAT treatments")
+		}
+		path := "tax.vat.treatments." + required.key
+		if treatment.OutputVAT != required.outputVAT {
+			return fieldError(file, path+".output_vat", "output_vat", fmt.Sprintf("must be %t for supported invoicing VAT treatment %q", required.outputVAT, required.key))
+		}
+		if treatment.VATReturnNetSales != required.vatReturnNetSales {
+			return fieldError(file, path+".vat_return_net_sales", "vat_return_net_sales", fmt.Sprintf("must be %t for supported invoicing VAT treatment %q", required.vatReturnNetSales, required.key))
+		}
+		if required.reverseChargeKind && strings.TrimSpace(treatment.ReverseChargeKind) == "" {
+			return fieldError(file, path+".reverse_charge_kind", "reverse_charge_kind", fmt.Sprintf("must not be empty for supported invoicing VAT treatment %q", required.key))
+		}
+		if !required.reverseChargeKind && strings.TrimSpace(treatment.ReverseChargeKind) != "" {
+			return fieldError(file, path+".reverse_charge_kind", "reverse_charge_kind", fmt.Sprintf("must be empty for supported invoicing VAT treatment %q", required.key))
+		}
+	}
+
+	keys := make([]string, 0, len(vat.Treatments))
+	for key := range vat.Treatments {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	for _, key := range keys {
+		path := "tax.vat.treatments." + key
+		if strings.TrimSpace(key) == "" {
+			return fieldError(file, path, "treatment", "must not be empty")
+		}
+		treatment := vat.Treatments[key]
+		reverseChargeKind := strings.TrimSpace(treatment.ReverseChargeKind)
+		if reverseChargeKind == "" {
+			continue
+		}
+		if _, ok := vat.ReverseCharge[reverseChargeKind]; !ok {
+			return fieldError(file, path+".reverse_charge_kind", "reverse_charge_kind", fmt.Sprintf("must reference configured reverse charge wording %q", reverseChargeKind))
 		}
 	}
 
