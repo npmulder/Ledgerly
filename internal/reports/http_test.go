@@ -161,9 +161,7 @@ func newReportsHTTPTestRouter(t *testing.T) http.Handler {
 	})
 }
 
-type reportsHTTPInvoicing struct {
-	fakeInvoicing
-}
+type reportsHTTPInvoicing struct{}
 
 func (reportsHTTPInvoicing) Invoice(context.Context, string) (invoicing.Invoice, error) {
 	return reportsHTTPInvoice(), nil
