@@ -143,6 +143,109 @@ func TestLogoutInvalidatesSession(t *testing.T) {
 	}
 }
 
+func TestPATMintListUseAndRevokeRoundTrip(t *testing.T) {
+	router, _, fakeClock := newTestRouter(t, LoginRateLimit{Capacity: 100, RefillEvery: time.Hour})
+	registerOwner(t, router)
+	cookie := loginOwner(t, router)
+
+	create := performJSON(router, nethttp.MethodPost, "/api/identity/pats", map[string]any{
+		"name":       "Read API",
+		"scope":      "read-only",
+		"expires_at": fakeClock.Now().Add(24 * time.Hour).Format(time.RFC3339),
+	}, cookie)
+	if create.Code != nethttp.StatusCreated {
+		t.Fatalf("create PAT status = %d, want %d; body=%s", create.Code, nethttp.StatusCreated, create.Body.String())
+	}
+	var createBody createPATResponse
+	if err := json.Unmarshal(create.Body.Bytes(), &createBody); err != nil {
+		t.Fatalf("decode create PAT response: %v; body=%s", err, create.Body.String())
+	}
+	if !strings.HasPrefix(createBody.Token, patTokenPrefix) {
+		t.Fatalf("PAT token = %q, want %s prefix", createBody.Token, patTokenPrefix)
+	}
+	if createBody.PersonalAccessToken.Name != "Read API" || createBody.PersonalAccessToken.Scope != PATScopeReadOnly {
+		t.Fatalf("created PAT metadata = %+v, want read-only Read API", createBody.PersonalAccessToken)
+	}
+
+	me := performBearerJSON(router, nethttp.MethodGet, "/api/identity/me", nil, createBody.Token)
+	if me.Code != nethttp.StatusOK {
+		t.Fatalf("PAT me status = %d, want %d; body=%s", me.Code, nethttp.StatusOK, me.Body.String())
+	}
+	if refreshed := sessionCookieFrom(me); refreshed != nil {
+		t.Fatalf("PAT me set session cookie %#v, want none", refreshed)
+	}
+	var meBody userResponse
+	if err := json.Unmarshal(me.Body.Bytes(), &meBody); err != nil {
+		t.Fatalf("decode PAT me response: %v; body=%s", err, me.Body.String())
+	}
+	if meBody.TokenName == nil || *meBody.TokenName != "Read API" {
+		t.Fatalf("PAT me token_name = %v, want Read API", meBody.TokenName)
+	}
+	if meBody.TokenScope == nil || *meBody.TokenScope != PATScopeReadOnly {
+		t.Fatalf("PAT me token_scope = %v, want read-only", meBody.TokenScope)
+	}
+
+	list := performJSON(router, nethttp.MethodGet, "/api/identity/pats", nil, cookie)
+	if list.Code != nethttp.StatusOK {
+		t.Fatalf("list PAT status = %d, want %d; body=%s", list.Code, nethttp.StatusOK, list.Body.String())
+	}
+	var listBody listPATsResponse
+	if err := json.Unmarshal(list.Body.Bytes(), &listBody); err != nil {
+		t.Fatalf("decode list PAT response: %v; body=%s", err, list.Body.String())
+	}
+	if len(listBody.Tokens) != 1 {
+		t.Fatalf("listed PATs = %+v, want one token", listBody.Tokens)
+	}
+	if listBody.Tokens[0].LastUsedAt == nil {
+		t.Fatalf("listed PAT last_used_at = nil, want timestamp after bearer use")
+	}
+
+	post := performBearerJSON(router, nethttp.MethodPost, "/api/identity/pats", map[string]any{
+		"name":  "blocked",
+		"scope": "full",
+	}, createBody.Token)
+	if post.Code != nethttp.StatusForbidden {
+		t.Fatalf("read-only POST status = %d, want %d; body=%s", post.Code, nethttp.StatusForbidden, post.Body.String())
+	}
+	if got := post.Header().Get("Content-Type"); got != httpserver.ProblemContentType {
+		t.Fatalf("read-only POST Content-Type = %q, want %s", got, httpserver.ProblemContentType)
+	}
+
+	revoke := performJSON(router, nethttp.MethodDelete, fmt.Sprintf("/api/identity/pats/%d", createBody.PersonalAccessToken.ID), nil, cookie)
+	if revoke.Code != nethttp.StatusNoContent {
+		t.Fatalf("revoke PAT status = %d, want %d; body=%s", revoke.Code, nethttp.StatusNoContent, revoke.Body.String())
+	}
+	afterRevoke := performBearerJSON(router, nethttp.MethodGet, "/api/identity/me", nil, createBody.Token)
+	if afterRevoke.Code != nethttp.StatusUnauthorized {
+		t.Fatalf("revoked PAT status = %d, want %d; body=%s", afterRevoke.Code, nethttp.StatusUnauthorized, afterRevoke.Body.String())
+	}
+}
+
+func TestExpiredPATRejected(t *testing.T) {
+	router, _, fakeClock := newTestRouter(t, LoginRateLimit{Capacity: 100, RefillEvery: time.Hour})
+	registerOwner(t, router)
+	cookie := loginOwner(t, router)
+
+	create := performJSON(router, nethttp.MethodPost, "/api/identity/pats", map[string]any{
+		"name":       "Temporary API",
+		"scope":      "full",
+		"expires_at": fakeClock.Now().Add(time.Hour).Format(time.RFC3339),
+	}, cookie)
+	if create.Code != nethttp.StatusCreated {
+		t.Fatalf("create PAT status = %d, want %d; body=%s", create.Code, nethttp.StatusCreated, create.Body.String())
+	}
+	var createBody createPATResponse
+	if err := json.Unmarshal(create.Body.Bytes(), &createBody); err != nil {
+		t.Fatalf("decode create PAT response: %v; body=%s", err, create.Body.String())
+	}
+
+	fakeClock.Advance(2 * time.Hour)
+	response := performBearerJSON(router, nethttp.MethodGet, "/api/identity/me", nil, createBody.Token)
+	if response.Code != nethttp.StatusUnauthorized {
+		t.Fatalf("expired PAT status = %d, want %d; body=%s", response.Code, nethttp.StatusUnauthorized, response.Body.String())
+	}
+}
+
 func TestAuthMiddlewareProtectsAPIRoutes(t *testing.T) {
 	router, _, _ := newTestRouter(t, LoginRateLimit{Capacity: 100, RefillEvery: time.Hour})
 
@@ -603,6 +706,21 @@ func performJSON(router nethttp.Handler, method, path string, payload any, cooki
 	return performRequest(router, method, path, &body, cookie)
 }
 
+func performBearerJSON(router nethttp.Handler, method, path string, payload any, token string) *httptest.ResponseRecorder {
+	var body bytes.Buffer
+	if payload != nil {
+		_ = json.NewEncoder(&body).Encode(payload)
+	}
+	request := httptest.NewRequest(method, path, &body)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+token)
+	request.RemoteAddr = "203.0.113.10:58124"
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	return response
+}
+
 func performRaw(router nethttp.Handler, method, path, body string, cookie *nethttp.Cookie) *httptest.ResponseRecorder {
 	return performRequest(router, method, path, strings.NewReader(body), cookie)
 }
@@ -829,10 +947,12 @@ func cloneCompanyProfile(profile CompanyProfile) CompanyProfile {
 }
 
 type memoryStore struct {
-	mu       sync.Mutex
-	nextID   int64
-	users    map[string]storedUser
-	sessions map[string]memorySession
+	mu        sync.Mutex
+	nextID    int64
+	nextPATID int64
+	users     map[string]storedUser
+	sessions  map[string]memorySession
+	pats      map[string]memoryPAT
 }
 
 type memorySession struct {
@@ -841,11 +961,23 @@ type memorySession struct {
 	createdAt time.Time
 }
 
+type memoryPAT struct {
+	id         int64
+	userID     int64
+	name       string
+	scope      PATScope
+	createdAt  time.Time
+	lastUsedAt *time.Time
+	expiresAt  *time.Time
+}
+
 func newMemoryStore() *memoryStore {
 	return &memoryStore{
-		nextID:   1,
-		users:    make(map[string]storedUser),
-		sessions: make(map[string]memorySession),
+		nextID:    1,
+		nextPATID: 1,
+		users:     make(map[string]storedUser),
+		sessions:  make(map[string]memorySession),
+		pats:      make(map[string]memoryPAT),
 	}
 }
 
@@ -955,6 +1087,93 @@ func (s *memoryStore) DeleteExpiredSessions(_ context.Context, now time.Time) er
 	return nil
 }
 
+func (s *memoryStore) CreatePAT(_ context.Context, userID int64, tokenHash []byte, name string, scope PATScope, expiresAt *time.Time) (PersonalAccessToken, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	key := hashKey(tokenHash)
+	createdAt := time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC)
+	record := memoryPAT{
+		id:        s.nextPATID,
+		userID:    userID,
+		name:      name,
+		scope:     scope,
+		createdAt: createdAt,
+		expiresAt: cloneTimePointer(expiresAt),
+	}
+	s.nextPATID++
+	s.pats[key] = record
+	return record.toPersonalAccessToken(), nil
+}
+
+func (s *memoryStore) ListPATs(_ context.Context, userID int64) ([]PersonalAccessToken, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	tokens := []PersonalAccessToken{}
+	for _, token := range s.pats {
+		if token.userID == userID {
+			tokens = append(tokens, token.toPersonalAccessToken())
+		}
+	}
+	return tokens, nil
+}
+
+func (s *memoryStore) DeletePAT(_ context.Context, userID int64, id int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for key, token := range s.pats {
+		if token.userID == userID && token.id == id {
+			delete(s.pats, key)
+			return nil
+		}
+	}
+	return nil
+}
+
+func (s *memoryStore) DeletePATByTokenHash(_ context.Context, tokenHash []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	delete(s.pats, hashKey(tokenHash))
+	return nil
+}
+
+func (s *memoryStore) FindPATByTokenHash(_ context.Context, tokenHash []byte) (storedPAT, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	token, ok := s.pats[hashKey(tokenHash)]
+	if !ok {
+		return storedPAT{}, ErrUnauthenticated
+	}
+	for _, user := range s.users {
+		if user.ID == token.userID {
+			return storedPAT{
+				PersonalAccessToken: token.toPersonalAccessToken(),
+				User:                user.User,
+			}, nil
+		}
+	}
+	return storedPAT{}, ErrUnauthenticated
+}
+
+func (s *memoryStore) MarkPATUsed(_ context.Context, tokenHash []byte, usedAt time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	key := hashKey(tokenHash)
+	token, ok := s.pats[key]
+	if !ok {
+		return ErrUnauthenticated
+	}
+	used := usedAt.UTC()
+	token.lastUsedAt = &used
+	s.pats[key] = token
+	return nil
+}
+
 func (s *memoryStore) userByEmail(email string) storedUser {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -983,6 +1202,25 @@ func (s *memoryStore) hasSession(key string) bool {
 
 func hashKey(hash []byte) string {
 	return hex.EncodeToString(hash)
+}
+
+func (p memoryPAT) toPersonalAccessToken() PersonalAccessToken {
+	return PersonalAccessToken{
+		ID:         p.id,
+		Name:       p.name,
+		Scope:      p.scope,
+		CreatedAt:  p.createdAt,
+		LastUsedAt: cloneTimePointer(p.lastUsedAt),
+		ExpiresAt:  cloneTimePointer(p.expiresAt),
+	}
+}
+
+func cloneTimePointer(value *time.Time) *time.Time {
+	if value == nil {
+		return nil
+	}
+	cloned := value.UTC()
+	return &cloned
 }
 
 type errorReader struct {

@@ -149,6 +149,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/identity/pats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List personal access tokens */
+        get: operations["identityListPATs"];
+        put?: never;
+        /** Create a personal access token */
+        post: operations["identityCreatePAT"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/identity/pats/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Revoke a personal access token */
+        delete: operations["identityRevokePAT"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/identity/profile": {
         parameters: {
             query?: never;
@@ -574,6 +609,33 @@ export interface components {
             /** Format: uri-reference */
             asset_url: string;
         };
+        IdentityPAT: {
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            expires_at: string | null;
+            /** Format: int64 */
+            id: number;
+            /** Format: date-time */
+            last_used_at: string | null;
+            name: string;
+            scope: components["schemas"]["IdentityPATScope"];
+        };
+        IdentityPATCreateRequest: {
+            /** Format: date-time */
+            expires_at?: string | null;
+            name: string;
+            scope: components["schemas"]["IdentityPATScope"];
+        };
+        IdentityPATCreateResponse: {
+            personal_access_token: components["schemas"]["IdentityPAT"];
+            token: string;
+        };
+        IdentityPATListResponse: {
+            tokens: components["schemas"]["IdentityPAT"][];
+        };
+        /** @enum {string} */
+        IdentityPATScope: "read-only" | "full";
         IdentityProfile: {
             bank_details: components["schemas"]["BankDetails"];
             company_number: string;
@@ -619,6 +681,8 @@ export interface components {
             /** Format: int64 */
             id: number;
             name: string;
+            token_name?: string | null;
+            token_scope?: components["schemas"]["IdentityPATScope"] | null;
         };
         InvoicingAddress: {
             country: string;
@@ -1173,6 +1237,142 @@ export interface operations {
             };
             /** @description Authentication required */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    identityListPATs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Personal access tokens */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityPATListResponse"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    identityCreatePAT: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IdentityPATCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Personal access token created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityPATCreateResponse"];
+                };
+            };
+            /** @description Invalid personal access token request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Read-only token cannot create personal access tokens */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Personal access token request body is too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    identityRevokePAT: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Personal access token revoked */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid personal access token id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Read-only token cannot revoke personal access tokens */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

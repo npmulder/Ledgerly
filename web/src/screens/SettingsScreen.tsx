@@ -12,9 +12,14 @@ import { Navigate, NavLink, Route, Routes } from "react-router-dom";
 
 import { isApiError } from "@/api/client";
 import {
+  createIdentityPAT,
   getIdentityProfile,
+  getIdentityPATs,
   patchIdentityProfile,
   replaceIdentityLogo,
+  revokeIdentityPAT,
+  type IdentityPAT,
+  type IdentityPATCreateRequest,
   type IdentityProfile,
   type IdentityProfilePatch,
 } from "@/api/identity";
@@ -118,6 +123,12 @@ type ClientFormState = {
   vatTreatment: ClientVATTreatment;
 };
 
+type PATFormState = {
+  expiresAt: string;
+  name: string;
+  scope: IdentityPATCreateRequest["scope"];
+};
+
 export function SettingsScreen() {
   return (
     <div className="settings-shell">
@@ -145,10 +156,14 @@ export function SettingsScreen() {
           <Route path="company" element={<CompanySettings />} />
           <Route path="jurisdiction" element={<JurisdictionSettings />} />
           <Route path="clients" element={<ClientsSettings />} />
+          <Route path="users" element={<UsersSettings />} />
           {settingsItems
             .slice(1)
             .filter(
-              (item) => item.path !== "jurisdiction" && item.path !== "clients",
+              (item) =>
+                item.path !== "jurisdiction" &&
+                item.path !== "clients" &&
+                item.path !== "users",
             )
             .map((item) => (
               <Route
@@ -899,6 +914,206 @@ function ClientsSettings() {
   );
 }
 
+function UsersSettings() {
+  const queryClient = useQueryClient();
+  const [formDraft, setFormDraft] = useState<PATFormState>({
+    expiresAt: "",
+    name: "",
+    scope: "read-only",
+  });
+  const [createdToken, setCreatedToken] = useState<string | null>(null);
+  const patsQuery = useQuery({
+    queryFn: getIdentityPATs,
+    queryKey: queryKeys.identity.pats(),
+  });
+  const tokens = patsQuery.data?.tokens ?? [];
+  const createMutation = useMutation({
+    mutationFn: createIdentityPAT,
+    onSettled: () => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.identity.pats(),
+      });
+    },
+    onSuccess: (response) => {
+      setCreatedToken(response.token);
+      setFormDraft({ expiresAt: "", name: "", scope: "read-only" });
+    },
+  });
+  const revokeMutation = useMutation({
+    mutationFn: revokeIdentityPAT,
+    onSettled: () => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.identity.pats(),
+      });
+    },
+  });
+
+  const createProblem = isApiError(createMutation.error)
+    ? createMutation.error.problem
+    : null;
+  const revokeProblem = isApiError(revokeMutation.error)
+    ? revokeMutation.error.problem
+    : null;
+
+  function handlePATFieldChange(field: keyof PATFormState) {
+    return (event: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+      setFormDraft((current) => ({
+        ...current,
+        [field]: event.target.value,
+      }));
+    };
+  }
+
+  function handlePATSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setCreatedToken(null);
+    createMutation.mutate(formToPATRequest(formDraft));
+  }
+
+  return (
+    <div className="settings-detail">
+      <PageTitle id="settings-page-title">Users</PageTitle>
+      <Card title="Personal access tokens">
+        <div className="pat-settings">
+          {patsQuery.isPending ? (
+            <p className="type-secondary">Loading personal access tokens.</p>
+          ) : null}
+          {patsQuery.isError ? (
+            <ProblemAlert
+              error={patsQuery.error}
+              fallbackTitle="Unable to load personal access tokens"
+            />
+          ) : null}
+          {revokeProblem ? <ProblemPanel problem={revokeProblem} /> : null}
+          {tokens.length === 0 && !patsQuery.isPending ? (
+            <EmptyState icon="+" title="No personal access tokens">
+              Create a token for CLI or agent access.
+            </EmptyState>
+          ) : null}
+          {tokens.length > 0 ? (
+            <Table className="pat-table">
+              <TableHead>
+                <TableRow>
+                  <TableHeaderCell>Name</TableHeaderCell>
+                  <TableHeaderCell>Scope</TableHeaderCell>
+                  <TableHeaderCell>Last used</TableHeaderCell>
+                  <TableHeaderCell>Expires</TableHeaderCell>
+                  <TableHeaderCell align="right">Actions</TableHeaderCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {tokens.map((token) => (
+                  <PATRow
+                    key={token.id}
+                    onRevoke={(id) => revokeMutation.mutate(id)}
+                    token={token}
+                    revokePending={revokeMutation.isPending}
+                  />
+                ))}
+              </TableBody>
+            </Table>
+          ) : null}
+        </div>
+      </Card>
+      <form className="settings-detail" onSubmit={handlePATSubmit}>
+        <Card
+          actions={
+            <Button
+              disabled={createMutation.isPending}
+              size="small"
+              type="submit"
+            >
+              {createMutation.isPending ? "Creating" : "Create token"}
+            </Button>
+          }
+          title="Create token"
+        >
+          <div className="pat-form">
+            {createProblem ? <ProblemPanel problem={createProblem} /> : null}
+            {createdToken ? (
+              <Field
+                helperText="This value is shown once. Store it before leaving this screen."
+                label="New token"
+              >
+                <Input
+                  className="type-mono-numeral"
+                  locked
+                  readOnly
+                  value={createdToken}
+                />
+              </Field>
+            ) : null}
+            <div className="pat-field-grid">
+              <Field label="Token name">
+                <Input
+                  name="name"
+                  onChange={handlePATFieldChange("name")}
+                  required
+                  value={formDraft.name}
+                />
+              </Field>
+              <Field label="Scope">
+                <Select
+                  name="scope"
+                  onChange={handlePATFieldChange("scope")}
+                  value={formDraft.scope}
+                >
+                  <option value="read-only">Read-only</option>
+                  <option value="full">Full</option>
+                </Select>
+              </Field>
+              <Field label="Expires">
+                <Input
+                  name="expires_at"
+                  onChange={handlePATFieldChange("expiresAt")}
+                  type="date"
+                  value={formDraft.expiresAt}
+                />
+              </Field>
+            </div>
+          </div>
+        </Card>
+      </form>
+    </div>
+  );
+}
+
+function PATRow({
+  onRevoke,
+  revokePending,
+  token,
+}: {
+  readonly onRevoke: (id: number) => void;
+  readonly revokePending: boolean;
+  readonly token: IdentityPAT;
+}) {
+  return (
+    <TableRow>
+      <TableCell>
+        <strong>{token.name}</strong>
+      </TableCell>
+      <TableCell>
+        <Badge variant={token.scope === "full" ? "sent" : "neutral"}>
+          {token.scope === "full" ? "Full" : "Read-only"}
+        </Badge>
+      </TableCell>
+      <TableCell>{formatNullableDateTime(token.last_used_at)}</TableCell>
+      <TableCell>{formatNullableDateTime(token.expires_at)}</TableCell>
+      <TableCell align="right">
+        <Button
+          disabled={revokePending}
+          onClick={() => onRevoke(token.id)}
+          size="small"
+          type="button"
+          variant="danger"
+        >
+          Revoke
+        </Button>
+      </TableCell>
+    </TableRow>
+  );
+}
+
 function ComingSoonSettings({ title }: { readonly title: string }) {
   return (
     <div className="settings-detail">
@@ -979,6 +1194,26 @@ function formToPatch(form: CompanyFormState): IdentityProfilePatch {
       month: Number(form.yearEndMonth),
     },
   };
+}
+
+function formToPATRequest(form: PATFormState): IdentityPATCreateRequest {
+  return {
+    expires_at: form.expiresAt
+      ? new Date(`${form.expiresAt}T23:59:59Z`).toISOString()
+      : null,
+    name: form.name.trim(),
+    scope: form.scope,
+  };
+}
+
+function formatNullableDateTime(value: string | null | undefined) {
+  if (!value) {
+    return "Never";
+  }
+  return new Intl.DateTimeFormat("en-GB", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
 }
 
 function applyProfilePatch(
