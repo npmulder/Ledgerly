@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/npmulder/ledgerly/internal/banking"
 	"github.com/npmulder/ledgerly/internal/invoicing"
 	"github.com/npmulder/ledgerly/internal/ledger"
 	"github.com/npmulder/ledgerly/internal/moneyfx/money"
@@ -168,7 +167,7 @@ func newReportsHTTPTestRouter(t *testing.T) http.Handler {
 
 	fakeLedger := newFakeLedger(
 		fakeEntry(1, "2026-04-10", "manual", "consulting-income", fakePosting("4000-sales", -100_000)),
-		fakeEntry(2, "2026-05-02", banking.ModuleName, "banking:20:recode", fakePosting("5010-software", 20_000)),
+		fakeEntry(2, "2026-05-02", bankingSourceModule, "banking:20:recode", fakePosting("5010-software", 20_000)),
 		fakeEntry(3, "2026-06-20", "manual", "fx", fakePosting(realisedFXAccount, -2_160)),
 		fakeEntry(4, "2026-06-25", invoicing.ModuleName, "invoice:INV-2026-0009:send", fakePosting(salesAccount, -1_510_310)),
 		fakeEntry(5, "2026-06-30", ModuleName, "manual-input-vat:q2-2026", ledger.Posting{
@@ -195,11 +194,9 @@ func newReportsHTTPTestRouter(t *testing.T) http.Handler {
 	module, err := NewModule(Config{
 		Ledger: fakeLedger,
 		Banking: fakeBanking{
-			transactions: map[banking.TransactionID]banking.Transaction{
+			transactions: map[BankingTransactionID]BankingTransaction{
 				20: {
-					ID:        20,
 					Date:      testDate(2026, time.May, 2),
-					Amount:    money.Money{Amount: -20_000, Currency: gbpCurrency},
 					Payee:     "GitHub",
 					Reference: "subscription",
 				},

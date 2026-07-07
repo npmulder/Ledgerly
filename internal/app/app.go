@@ -408,7 +408,7 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		identityProfile,
 		dashboardInvoicingService,
 		reports.WithClock(clk),
-		reports.WithBanking(bankingService),
+		reports.WithBanking(reportsBankingAdapter{service: bankingService}),
 	)
 
 	ledgerBuilder := buildLedgerModule
@@ -512,7 +512,7 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		Clock:            clk,
 		Ledger:           ledgerService,
 		Identity:         identityProfile,
-		ReportsBanking:   bankingService,
+		ReportsBanking:   reportsBankingAdapter{service: bankingService},
 		ReportsInvoicing: dashboardInvoicingService,
 		ReportsDLA:       dlaService,
 		ReportsDocuments: reportsDividendDocumentProvider{
@@ -1065,6 +1065,22 @@ func identityAssetIDFromURL(assetURL string) (identity.AssetID, error) {
 		return "", fmt.Errorf("app: invalid invoice PDF asset id")
 	}
 	return identity.AssetID(id), nil
+}
+
+type reportsBankingAdapter struct {
+	service *banking.Service
+}
+
+func (a reportsBankingAdapter) Transaction(ctx context.Context, id reports.BankingTransactionID) (reports.BankingTransaction, error) {
+	txn, err := a.service.Transaction(ctx, banking.TransactionID(id))
+	if err != nil {
+		return reports.BankingTransaction{}, err
+	}
+	return reports.BankingTransaction{
+		Date:      txn.Date,
+		Payee:     txn.Payee,
+		Reference: txn.Reference,
+	}, nil
 }
 
 type reportsDividendDocumentProvider struct {

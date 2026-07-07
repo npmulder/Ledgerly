@@ -8,12 +8,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/npmulder/ledgerly/internal/banking"
 	"github.com/npmulder/ledgerly/internal/ledger"
 	"github.com/npmulder/ledgerly/internal/moneyfx/money"
 )
 
-const unattributedExpensePayee = "Ledger entry"
+const (
+	bankingSourceModule      = "banking"
+	unattributedExpensePayee = "Ledger entry"
+)
 
 type expenseLedgerData struct {
 	total        money.Money
@@ -147,7 +149,7 @@ func addEntryToExpenseData(entry ledger.JournalEntry, accounts map[ledger.Accoun
 }
 
 func (s *Service) expensesReportFromLedgerData(ctx context.Context, period Period, data expenseLedgerData) (ExpensesReport, error) {
-	bankingCache := map[banking.TransactionID]banking.Transaction{}
+	bankingCache := map[BankingTransactionID]BankingTransaction{}
 	transactions := make([]ExpenseTransaction, 0, len(data.transactions))
 	payees := map[string]ExpensePayeeTotal{}
 	for _, row := range data.transactions {
@@ -186,7 +188,7 @@ func (s *Service) expensesReportFromLedgerData(ctx context.Context, period Perio
 func (s *Service) expenseTransactionFromLedgerRow(
 	ctx context.Context,
 	row expenseLedgerTransaction,
-	bankingCache map[banking.TransactionID]banking.Transaction,
+	bankingCache map[BankingTransactionID]BankingTransaction,
 ) (ExpenseTransaction, money.Money, error) {
 	date := row.date
 	payee := unattributedExpensePayee
@@ -218,19 +220,19 @@ func (s *Service) expenseTransactionFromLedgerRow(
 	}, row.amountGBP, nil
 }
 
-func bankingTransactionIDFromSourceRef(sourceModule string, sourceRef string) (banking.TransactionID, bool) {
-	if strings.TrimSpace(sourceModule) != banking.ModuleName {
+func bankingTransactionIDFromSourceRef(sourceModule string, sourceRef string) (BankingTransactionID, bool) {
+	if strings.TrimSpace(sourceModule) != bankingSourceModule {
 		return 0, false
 	}
 	parts := strings.Split(strings.TrimSpace(sourceRef), ":")
-	if len(parts) < 2 || parts[0] != banking.ModuleName {
+	if len(parts) < 2 || parts[0] != bankingSourceModule {
 		return 0, false
 	}
 	id, err := strconv.ParseInt(parts[1], 10, 64)
 	if err != nil || id <= 0 {
 		return 0, false
 	}
-	return banking.TransactionID(id), true
+	return BankingTransactionID(id), true
 }
 
 func sortedExpenseCategories(categories map[ledger.AccountCode]ExpenseCategory) []ExpenseCategory {

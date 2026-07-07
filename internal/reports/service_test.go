@@ -11,7 +11,6 @@ import (
 	"testing/fstest"
 	"time"
 
-	"github.com/npmulder/ledgerly/internal/banking"
 	"github.com/npmulder/ledgerly/internal/identity"
 	"github.com/npmulder/ledgerly/internal/invoicing"
 	"github.com/npmulder/ledgerly/internal/jurisdiction"
@@ -236,9 +235,9 @@ func TestProfitAndLossReleasesLedgerSnapshotBeforeInvoiceAttribution(t *testing.
 func TestExpensesByCategoryJoinsBankingTransactionsAndBuildsCSV(t *testing.T) {
 	ctx := context.Background()
 	fakeLedger := newFakeLedger(
-		fakeEntry(1, "2025-05-02", banking.ModuleName, "banking:10:recode", fakePosting("5010-software", 12_345)),
-		fakeEntry(2, "2025-05-04", banking.ModuleName, "banking:11:recode", fakePosting("6020-travel", 8_000)),
-		fakeEntry(3, "2025-05-05", banking.ModuleName, "banking:12:recode", fakePosting("5010-software", 4_321)),
+		fakeEntry(1, "2025-05-02", bankingSourceModule, "banking:10:recode", fakePosting("5010-software", 12_345)),
+		fakeEntry(2, "2025-05-04", bankingSourceModule, "banking:11:recode", fakePosting("6020-travel", 8_000)),
+		fakeEntry(3, "2025-05-05", bankingSourceModule, "banking:12:recode", fakePosting("5010-software", 4_321)),
 		fakeEntry(4, "2025-05-06", "manual", "manual-office", fakePosting("6030-office", 1_000)),
 	)
 	fakeLedger.accounts = append(fakeLedger.accounts,
@@ -250,25 +249,19 @@ func TestExpensesByCategoryJoinsBankingTransactionsAndBuildsCSV(t *testing.T) {
 		fakeIdentity{yearEnd: identity.YearEnd{Month: time.March, Day: 31}},
 		fakeInvoicing{},
 		WithBanking(fakeBanking{
-			transactions: map[banking.TransactionID]banking.Transaction{
+			transactions: map[BankingTransactionID]BankingTransaction{
 				10: {
-					ID:        10,
 					Date:      testDate(2025, time.May, 2),
-					Amount:    money.Money{Amount: -12_345, Currency: gbpCurrency},
 					Payee:     "GitHub",
 					Reference: "subscription may",
 				},
 				11: {
-					ID:        11,
 					Date:      testDate(2025, time.May, 4),
-					Amount:    money.Money{Amount: -8_000, Currency: gbpCurrency},
 					Payee:     "Steam Packet",
 					Reference: "ferry",
 				},
 				12: {
-					ID:        12,
 					Date:      testDate(2025, time.May, 5),
-					Amount:    money.Money{Amount: -4_321, Currency: gbpCurrency},
 					Payee:     "GitHub",
 					Reference: "actions minutes",
 				},
@@ -594,13 +587,13 @@ func (f fakeInvoicing) Client(ctx context.Context, id string) (invoicing.Client,
 }
 
 type fakeBanking struct {
-	transactions map[banking.TransactionID]banking.Transaction
+	transactions map[BankingTransactionID]BankingTransaction
 }
 
-func (f fakeBanking) Transaction(_ context.Context, id banking.TransactionID) (banking.Transaction, error) {
+func (f fakeBanking) Transaction(_ context.Context, id BankingTransactionID) (BankingTransaction, error) {
 	txn, ok := f.transactions[id]
 	if !ok {
-		return banking.Transaction{}, banking.ErrTransactionNotFound
+		return BankingTransaction{}, errors.New("transaction not found")
 	}
 	return txn, nil
 }

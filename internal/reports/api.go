@@ -4,7 +4,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/npmulder/ledgerly/internal/banking"
 	"github.com/npmulder/ledgerly/internal/dla"
 	"github.com/npmulder/ledgerly/internal/identity"
 	"github.com/npmulder/ledgerly/internal/invoicing"
@@ -235,9 +234,19 @@ type Ledger interface {
 	Accounts(context.Context) ([]ledger.Account, error)
 }
 
+type BankingTransactionID int64
+
+// BankingTransaction is the banking attribution reports needs for expense
+// drill-downs without importing the banking module implementation.
+type BankingTransaction struct {
+	Date      time.Time
+	Payee     string
+	Reference string
+}
+
 // Banking is the banking read surface reports needs for expense payee detail.
 type Banking interface {
-	Transaction(context.Context, banking.TransactionID) (banking.Transaction, error)
+	Transaction(context.Context, BankingTransactionID) (BankingTransaction, error)
 }
 
 type Identity interface {
