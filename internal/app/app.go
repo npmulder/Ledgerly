@@ -80,6 +80,7 @@ type ModuleDeps struct {
 	PDFBaseURL     string
 	MailSender     mail.Sender
 
+	ReportsBanking    reports.Banking
 	ReportsInvoicing  reports.Invoicing
 	ReportsDLA        reports.DLA
 	ReportsDocuments  reports.DividendDocumentProvider
@@ -388,12 +389,6 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		invoicing.WithLedger(ledgerService),
 		invoicing.WithEventBus(eventBus),
 	)
-	reportsService := reports.New(
-		ledgerService,
-		identityProfile,
-		dashboardInvoicingService,
-		reports.WithClock(clk),
-	)
 	bankingService := banking.NewService(
 		bankingPool,
 		ledgerService,
@@ -408,6 +403,13 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 	bankingHTTPModule := banking.NewHTTPModule(bankingService)
 	modules = append(modules, bankingHTTPModule.HTTPModule())
 	fragments = append(fragments, bankingHTTPModule.OpenAPIFragment())
+	reportsService := reports.New(
+		ledgerService,
+		identityProfile,
+		dashboardInvoicingService,
+		reports.WithClock(clk),
+		reports.WithBanking(bankingService),
+	)
 
 	ledgerBuilder := buildLedgerModule
 	if deps.ModuleBuilders != nil && deps.ModuleBuilders[ledger.ModuleName] != nil {
@@ -510,6 +512,7 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		Clock:            clk,
 		Ledger:           ledgerService,
 		Identity:         identityProfile,
+		ReportsBanking:   bankingService,
 		ReportsInvoicing: dashboardInvoicingService,
 		ReportsDLA:       dlaService,
 		ReportsDocuments: reportsDividendDocumentProvider{
@@ -744,6 +747,7 @@ func buildInvoicingModule(_ context.Context, deps ModuleDeps) (Module, error) {
 func buildReportsModule(_ context.Context, deps ModuleDeps) (Module, error) {
 	reportsModule, err := reports.NewModule(reports.Config{
 		Ledger:            deps.Ledger,
+		Banking:           deps.ReportsBanking,
 		Identity:          deps.Identity,
 		Invoicing:         deps.ReportsInvoicing,
 		DLA:               deps.ReportsDLA,

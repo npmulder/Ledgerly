@@ -65,6 +65,39 @@ type expenseLineResponse struct {
 	Amount      moneyResponse `json:"amount"`
 }
 
+type expensesResponse struct {
+	Period       periodResponse               `json:"period"`
+	Categories   []expenseCategoryResponse    `json:"categories"`
+	TopPayees    []expensePayeeResponse       `json:"top_payees"`
+	Transactions []expenseTransactionResponse `json:"transactions"`
+	Total        moneyResponse                `json:"total"`
+}
+
+type expenseCategoryResponse struct {
+	AccountCode      string        `json:"account_code"`
+	Category         string        `json:"category"`
+	Amount           moneyResponse `json:"amount"`
+	TransactionCount int           `json:"transaction_count"`
+}
+
+type expensePayeeResponse struct {
+	Payee            string        `json:"payee"`
+	Amount           moneyResponse `json:"amount"`
+	TransactionCount int           `json:"transaction_count"`
+}
+
+type expenseTransactionResponse struct {
+	EntryID      int64         `json:"entry_id"`
+	Date         string        `json:"date"`
+	Payee        string        `json:"payee"`
+	Reference    string        `json:"reference"`
+	Amount       moneyResponse `json:"amount"`
+	AccountCode  string        `json:"account_code"`
+	Category     string        `json:"category"`
+	SourceModule string        `json:"source_module"`
+	SourceRef    string        `json:"source_ref"`
+}
+
 type lineItemResponse struct {
 	Label  string        `json:"label"`
 	Amount moneyResponse `json:"amount"`
@@ -128,6 +161,8 @@ type shareResponse struct {
 func (m *Module) RegisterRoutes(r chi.Router) {
 	h := reportsHandler{service: m.service}
 	r.Get("/pl", h.getPL)
+	r.Get("/expenses", h.getExpenses)
+	r.Get("/expenses.csv", h.getExpensesCSV)
 	r.Get("/vat", h.getVAT)
 	r.Get("/calendar", h.getCalendar)
 	r.Get("/profit-ytd", h.getProfitYTD)
@@ -147,6 +182,37 @@ func (h reportsHandler) getPL(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 	writeReportsJSON(w, nethttp.StatusOK, plToResponse(pl))
+}
+
+func (h reportsHandler) getExpenses(w nethttp.ResponseWriter, r *nethttp.Request) {
+	period, err := parseReportsPeriod(r)
+	if err != nil {
+		writeReportsBadRequest(w, r, err)
+		return
+	}
+	report, err := h.service.ExpensesByCategory(r.Context(), period)
+	if err != nil {
+		writeReportsError(w, r, err)
+		return
+	}
+	writeReportsJSON(w, nethttp.StatusOK, expensesToResponse(report))
+}
+
+func (h reportsHandler) getExpensesCSV(w nethttp.ResponseWriter, r *nethttp.Request) {
+	period, err := parseReportsPeriod(r)
+	if err != nil {
+		writeReportsBadRequest(w, r, err)
+		return
+	}
+	csvBytes, err := h.service.ExpensesCSV(r.Context(), period)
+	if err != nil {
+		writeReportsError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="ledgerly-expenses-`+periodFilenamePart(period)+`.csv"`)
+	w.WriteHeader(nethttp.StatusOK)
+	_, _ = w.Write(csvBytes)
 }
 
 func (h reportsHandler) getVAT(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -333,6 +399,45 @@ func plToResponse(pl PL) plResponse {
 			AccountCode: string(line.AccountCode),
 			AccountName: line.AccountName,
 			Amount:      moneyToResponse(line.Amount),
+		})
+	}
+	return response
+}
+
+func expensesToResponse(report ExpensesReport) expensesResponse {
+	response := expensesResponse{
+		Period:       periodToResponse(report.Period),
+		Categories:   make([]expenseCategoryResponse, 0, len(report.Categories)),
+		TopPayees:    make([]expensePayeeResponse, 0, len(report.TopPayees)),
+		Transactions: make([]expenseTransactionResponse, 0, len(report.Transactions)),
+		Total:        moneyToResponse(report.Total),
+	}
+	for _, category := range report.Categories {
+		response.Categories = append(response.Categories, expenseCategoryResponse{
+			AccountCode:      string(category.AccountCode),
+			Category:         category.Category,
+			Amount:           moneyToResponse(category.Amount),
+			TransactionCount: category.TransactionCount,
+		})
+	}
+	for _, payee := range report.TopPayees {
+		response.TopPayees = append(response.TopPayees, expensePayeeResponse{
+			Payee:            payee.Payee,
+			Amount:           moneyToResponse(payee.Amount),
+			TransactionCount: payee.TransactionCount,
+		})
+	}
+	for _, transaction := range report.Transactions {
+		response.Transactions = append(response.Transactions, expenseTransactionResponse{
+			EntryID:      int64(transaction.EntryID),
+			Date:         transaction.Date.UTC().Format(time.DateOnly),
+			Payee:        transaction.Payee,
+			Reference:    transaction.Reference,
+			Amount:       moneyToResponse(transaction.Amount),
+			AccountCode:  string(transaction.AccountCode),
+			Category:     transaction.Category,
+			SourceModule: transaction.SourceModule,
+			SourceRef:    transaction.SourceRef,
 		})
 	}
 	return response

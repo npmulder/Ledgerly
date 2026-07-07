@@ -395,6 +395,7 @@ func newReportingReportsService(t testing.TB, h *harness.Harness, invoices *invo
 		reportingIdentity(t, h),
 		invoices,
 		reports.WithClock(h.Clock),
+		reports.WithBanking(banking.NewService(h.BankingPool, ledgerService)),
 		reports.WithDLA(dla.NewWithBusAndClock(h.DLAPool, h.Bus, h.Clock, ledgerService)),
 		reports.WithExportArchiveStore(archiveStore),
 		reports.WithPLPDFEngine(reportingPLPDFEngine{}),
@@ -721,7 +722,7 @@ func reportingPLFrozenFields(pl reports.PL) reportingPLSnapshot {
 
 func assertReportingExportMembers(t testing.TB, files map[string][]byte) {
 	t.Helper()
-	for _, name := range []string{"pl.csv", "pl.pdf", "vat.csv", "journal.csv", "dla.csv", "manifest.json"} {
+	for _, name := range []string{"expenses.csv", "pl.csv", "pl.pdf", "vat.csv", "journal.csv", "dla.csv", "manifest.json"} {
 		if _, ok := files[name]; !ok {
 			t.Fatalf("export archive missing %s; files=%v", name, reportingSortedKeys(files))
 		}

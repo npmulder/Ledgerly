@@ -11,6 +11,7 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/npmulder/ledgerly/internal/banking"
 	"github.com/npmulder/ledgerly/internal/identity"
 	"github.com/npmulder/ledgerly/internal/invoicing"
 	"github.com/npmulder/ledgerly/internal/jurisdiction"
@@ -230,6 +231,94 @@ func TestProfitAndLossReleasesLedgerSnapshotBeforeInvoiceAttribution(t *testing.
 		t.Fatalf("Income[0].ClientName = %q, want Acme Ltd", pl.Income[0].ClientName)
 	}
 	assertReportMoney(t, pl.Income[0].Amount, 100_000)
+}
+
+func TestExpensesByCategoryJoinsBankingTransactionsAndBuildsCSV(t *testing.T) {
+	ctx := context.Background()
+	fakeLedger := newFakeLedger(
+		fakeEntry(1, "2025-05-02", banking.ModuleName, "banking:10:recode", fakePosting("5010-software", 12_345)),
+		fakeEntry(2, "2025-05-04", banking.ModuleName, "banking:11:recode", fakePosting("6020-travel", 8_000)),
+		fakeEntry(3, "2025-05-05", banking.ModuleName, "banking:12:recode", fakePosting("5010-software", 4_321)),
+		fakeEntry(4, "2025-05-06", "manual", "manual-office", fakePosting("6030-office", 1_000)),
+	)
+	fakeLedger.accounts = append(fakeLedger.accounts,
+		ledger.Account{Code: "6020-travel", Name: "Travel", Type: ledger.AccountTypeExpense},
+		ledger.Account{Code: "6030-office", Name: "Office supplies", Type: ledger.AccountTypeExpense},
+	)
+	service := New(
+		fakeLedger,
+		fakeIdentity{yearEnd: identity.YearEnd{Month: time.March, Day: 31}},
+		fakeInvoicing{},
+		WithBanking(fakeBanking{
+			transactions: map[banking.TransactionID]banking.Transaction{
+				10: {
+					ID:        10,
+					Date:      testDate(2025, time.May, 2),
+					Amount:    money.Money{Amount: -12_345, Currency: gbpCurrency},
+					Payee:     "GitHub",
+					Reference: "subscription may",
+				},
+				11: {
+					ID:        11,
+					Date:      testDate(2025, time.May, 4),
+					Amount:    money.Money{Amount: -8_000, Currency: gbpCurrency},
+					Payee:     "Steam Packet",
+					Reference: "ferry",
+				},
+				12: {
+					ID:        12,
+					Date:      testDate(2025, time.May, 5),
+					Amount:    money.Money{Amount: -4_321, Currency: gbpCurrency},
+					Payee:     "GitHub",
+					Reference: "actions minutes",
+				},
+			},
+		}),
+	)
+
+	report, err := service.ExpensesByCategory(ctx, Period{
+		From: testDate(2025, time.May, 1),
+		To:   testDate(2025, time.May, 31),
+	})
+	if err != nil {
+		t.Fatalf("ExpensesByCategory() error = %v", err)
+	}
+	assertReportMoney(t, report.Total, 25_666)
+	if len(report.Categories) != 3 {
+		t.Fatalf("Categories = %#v, want three", report.Categories)
+	}
+	if report.Categories[0].Category != "Software" || report.Categories[0].TransactionCount != 2 {
+		t.Fatalf("first category = %#v, want Software with two rows", report.Categories[0])
+	}
+	assertReportMoney(t, report.Categories[0].Amount, 16_666)
+	if report.TopPayees[0].Payee != "GitHub" || report.TopPayees[0].TransactionCount != 2 {
+		t.Fatalf("top payee = %#v, want GitHub with two rows", report.TopPayees[0])
+	}
+	assertReportMoney(t, report.TopPayees[0].Amount, 16_666)
+	if got := report.Transactions[0]; got.Payee != unattributedExpensePayee || got.Reference != "manual-office" || got.Category != "Office supplies" {
+		t.Fatalf("newest fallback transaction = %#v, want manual fallback attribution", got)
+	}
+	if got := report.Transactions[1]; got.Payee != "GitHub" || got.Reference != "actions minutes" || got.Category != "Software" {
+		t.Fatalf("second transaction = %#v, want GitHub software detail", got)
+	}
+
+	csvBytes, err := service.ExpensesCSV(ctx, Period{
+		From: testDate(2025, time.May, 1),
+		To:   testDate(2025, time.May, 31),
+	})
+	if err != nil {
+		t.Fatalf("ExpensesCSV() error = %v", err)
+	}
+	csvText := string(csvBytes)
+	for _, want := range []string{
+		"date,payee,reference,amount,currency,category\r\n",
+		"2025-05-05,GitHub,actions minutes,43.21,GBP,Software\r\n",
+		"2025-05-02,GitHub,subscription may,123.45,GBP,Software\r\n",
+	} {
+		if !strings.Contains(csvText, want) {
+			t.Fatalf("expenses CSV missing %q:\n%s", want, csvText)
+		}
+	}
 }
 
 func loadReportsPack(t *testing.T, corporateRateLine string) {
@@ -502,6 +591,18 @@ func (f fakeInvoicing) Client(ctx context.Context, id string) (invoicing.Client,
 		return f.client(ctx, id)
 	}
 	return invoicing.Client{}, errors.New("unexpected client lookup")
+}
+
+type fakeBanking struct {
+	transactions map[banking.TransactionID]banking.Transaction
+}
+
+func (f fakeBanking) Transaction(_ context.Context, id banking.TransactionID) (banking.Transaction, error) {
+	txn, ok := f.transactions[id]
+	if !ok {
+		return banking.Transaction{}, banking.ErrTransactionNotFound
+	}
+	return txn, nil
 }
 
 func fakeEntry(id ledger.EntryID, date string, sourceModule string, sourceRef string, postings ...ledger.Posting) ledger.JournalEntry {

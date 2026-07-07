@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/npmulder/ledgerly/internal/banking"
 	"github.com/npmulder/ledgerly/internal/dla"
 	"github.com/npmulder/ledgerly/internal/identity"
 	"github.com/npmulder/ledgerly/internal/invoicing"
@@ -51,6 +52,45 @@ type ExpenseLine struct {
 	AccountCode ledger.AccountCode
 	AccountName string
 	Amount      money.Money
+}
+
+// ExpensesReport is the accountant drill-down for categorized expense
+// postings in a period.
+type ExpensesReport struct {
+	Period       Period
+	Categories   []ExpenseCategory
+	TopPayees    []ExpensePayeeTotal
+	Transactions []ExpenseTransaction
+	Total        money.Money
+}
+
+// ExpenseCategory is a GBP-presentational expense total grouped by account.
+type ExpenseCategory struct {
+	AccountCode      ledger.AccountCode
+	Category         string
+	Amount           money.Money
+	TransactionCount int
+}
+
+// ExpensePayeeTotal is a GBP-presentational total grouped by transaction payee.
+type ExpensePayeeTotal struct {
+	Payee            string
+	Amount           money.Money
+	TransactionCount int
+}
+
+// ExpenseTransaction is one categorized expense posting with transaction
+// attribution where a banking source reference is available.
+type ExpenseTransaction struct {
+	EntryID      ledger.EntryID
+	Date         time.Time
+	Payee        string
+	Reference    string
+	Amount       money.Money
+	AccountCode  ledger.AccountCode
+	Category     string
+	SourceModule string
+	SourceRef    string
 }
 
 // LineItem is a named GBP-presentational P&L row.
@@ -180,6 +220,7 @@ type DividendDocumentProvider interface {
 // Reports is the v1 reports read API.
 type Reports interface {
 	ProfitAndLoss(context.Context, Period) (PL, error)
+	ExpensesByCategory(context.Context, Period) (ExpensesReport, error)
 	ProfitYTD(context.Context, string) (money.Money, error)
 	VATPosition(context.Context) (VATPosition, error)
 	FilingCalendarContext(context.Context) ([]Filing, error)
@@ -192,6 +233,11 @@ type Ledger interface {
 	BalancesByType(context.Context, time.Time, time.Time) ([]ledger.AccountBalance, error)
 	Entries(context.Context, ledger.EntryFilter) ([]ledger.JournalEntry, error)
 	Accounts(context.Context) ([]ledger.Account, error)
+}
+
+// Banking is the banking read surface reports needs for expense payee detail.
+type Banking interface {
+	Transaction(context.Context, banking.TransactionID) (banking.Transaction, error)
 }
 
 type Identity interface {

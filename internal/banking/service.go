@@ -320,6 +320,16 @@ func (s *Service) SuggestionsForTransaction(ctx context.Context, txnID Transacti
 	return s.store.SuggestionsForTransaction(ctx, s.pool, txnID)
 }
 
+func (s *Service) Transaction(ctx context.Context, txnID TransactionID) (Transaction, error) {
+	if s.pool == nil {
+		return Transaction{}, fmt.Errorf("banking: transaction lookup requires pool")
+	}
+	if txnID <= 0 {
+		return Transaction{}, fmt.Errorf("banking: transaction id is required: %w", ErrInvalidTransactionFilter)
+	}
+	return s.store.Transaction(ctx, s.pool, txnID)
+}
+
 func (s *Service) CreatePayeeRule(ctx context.Context, input PayeeRuleInput) (PayeeRule, error) {
 	if s.pool == nil {
 		return PayeeRule{}, fmt.Errorf("banking: payee rule storage requires pool")

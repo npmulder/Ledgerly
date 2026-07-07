@@ -1062,6 +1062,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/reports/expenses": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Return categorized expenses for a period
+         * @description Returns expense totals by category, top payees, and transaction-level drill-down rows for an inclusive posting-date range.
+         */
+        get: operations["reportsGetExpenses"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/reports/expenses.csv": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download categorized expense transactions as CSV
+         * @description Returns date, payee, reference, amount, currency, and category for accountant expense drill-down.
+         */
+        get: operations["reportsDownloadExpensesCSV"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/reports/export": {
         parameters: {
             query?: never;
@@ -2205,10 +2245,43 @@ export interface components {
             /** Format: uri-reference */
             url: string;
         };
+        ReportsExpenseCategory: {
+            account_code: string;
+            amount: components["schemas"]["ReportsMoney"];
+            category: string;
+            /** Format: int32 */
+            transaction_count: number;
+        };
         ReportsExpenseLine: {
             account_code: string;
             account_name: string;
             amount: components["schemas"]["ReportsMoney"];
+        };
+        ReportsExpensePayee: {
+            amount: components["schemas"]["ReportsMoney"];
+            payee: string;
+            /** Format: int32 */
+            transaction_count: number;
+        };
+        ReportsExpenseTransaction: {
+            account_code: string;
+            amount: components["schemas"]["ReportsMoney"];
+            category: string;
+            /** Format: date */
+            date: string;
+            /** Format: int64 */
+            entry_id: number;
+            payee: string;
+            reference: string;
+            source_module: string;
+            source_ref: string;
+        };
+        ReportsExpensesResponse: {
+            categories: components["schemas"]["ReportsExpenseCategory"][];
+            period: components["schemas"]["ReportsPeriod"];
+            top_payees: components["schemas"]["ReportsExpensePayee"][];
+            total: components["schemas"]["ReportsMoney"];
+            transactions: components["schemas"]["ReportsExpenseTransaction"][];
         };
         ReportsFiling: {
             authority: string;
@@ -5376,6 +5449,92 @@ export interface operations {
             };
             /** @description Company profile not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    reportsGetExpenses: {
+        parameters: {
+            query: {
+                /** @description Inclusive posting date lower bound. */
+                from: string;
+                /** @description Inclusive posting date upper bound. */
+                to: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Categorized expenses report */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportsExpensesResponse"];
+                };
+            };
+            /** @description Invalid reports expenses query */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    reportsDownloadExpensesCSV: {
+        parameters: {
+            query: {
+                /** @description Inclusive posting date lower bound. */
+                from: string;
+                /** @description Inclusive posting date upper bound. */
+                to: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Categorized expense transactions CSV */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/csv": string;
+                };
+            };
+            /** @description Invalid reports expenses CSV query */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

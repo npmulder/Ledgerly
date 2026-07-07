@@ -30,6 +30,49 @@ func OpenAPIFragment() httpserver.OpenAPIFragment {
 					},
 				},
 			},
+			"/api/reports/expenses": map[string]any{
+				"get": map[string]any{
+					"tags":        []string{"reports"},
+					"summary":     "Return categorized expenses for a period",
+					"description": "Returns expense totals by category, top payees, and transaction-level drill-down rows for an inclusive posting-date range.",
+					"operationId": "reportsGetExpenses",
+					"security":    reportsSessionSecurity(),
+					"parameters": []map[string]any{
+						reportsDateQueryParameter("from", "Inclusive posting date lower bound."),
+						reportsDateQueryParameter("to", "Inclusive posting date upper bound."),
+					},
+					"responses": map[string]any{
+						"200": reportsJSONResponseRef("Categorized expenses report", "ReportsExpensesResponse"),
+						"400": reportsProblemResponse("Invalid reports expenses query"),
+						"401": reportsProblemResponse("Authentication required"),
+					},
+				},
+			},
+			"/api/reports/expenses.csv": map[string]any{
+				"get": map[string]any{
+					"tags":        []string{"reports"},
+					"summary":     "Download categorized expense transactions as CSV",
+					"description": "Returns date, payee, reference, amount, currency, and category for accountant expense drill-down.",
+					"operationId": "reportsDownloadExpensesCSV",
+					"security":    reportsSessionSecurity(),
+					"parameters": []map[string]any{
+						reportsDateQueryParameter("from", "Inclusive posting date lower bound."),
+						reportsDateQueryParameter("to", "Inclusive posting date upper bound."),
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "Categorized expense transactions CSV",
+							"content": map[string]any{
+								"text/csv": map[string]any{
+									"schema": map[string]any{"type": "string", "format": "binary"},
+								},
+							},
+						},
+						"400": reportsProblemResponse("Invalid reports expenses CSV query"),
+						"401": reportsProblemResponse("Authentication required"),
+					},
+				},
+			},
 			"/api/reports/vat": map[string]any{
 				"get": map[string]any{
 					"tags":        []string{"reports"},
@@ -216,6 +259,65 @@ func reportsComponents() map[string]any {
 					"account_code": map[string]any{"type": "string"},
 					"account_name": map[string]any{"type": "string"},
 					"amount":       map[string]any{"$ref": "#/components/schemas/ReportsMoney"},
+				},
+				"additionalProperties": false,
+			},
+			"ReportsExpenseCategory": map[string]any{
+				"type":     "object",
+				"required": []string{"account_code", "category", "amount", "transaction_count"},
+				"properties": map[string]any{
+					"account_code":      map[string]any{"type": "string"},
+					"category":          map[string]any{"type": "string"},
+					"amount":            map[string]any{"$ref": "#/components/schemas/ReportsMoney"},
+					"transaction_count": map[string]any{"type": "integer", "format": "int32"},
+				},
+				"additionalProperties": false,
+			},
+			"ReportsExpensePayee": map[string]any{
+				"type":     "object",
+				"required": []string{"payee", "amount", "transaction_count"},
+				"properties": map[string]any{
+					"payee":             map[string]any{"type": "string"},
+					"amount":            map[string]any{"$ref": "#/components/schemas/ReportsMoney"},
+					"transaction_count": map[string]any{"type": "integer", "format": "int32"},
+				},
+				"additionalProperties": false,
+			},
+			"ReportsExpenseTransaction": map[string]any{
+				"type": "object",
+				"required": []string{
+					"entry_id",
+					"date",
+					"payee",
+					"reference",
+					"amount",
+					"account_code",
+					"category",
+					"source_module",
+					"source_ref",
+				},
+				"properties": map[string]any{
+					"entry_id":      map[string]any{"type": "integer", "format": "int64"},
+					"date":          map[string]any{"type": "string", "format": "date"},
+					"payee":         map[string]any{"type": "string"},
+					"reference":     map[string]any{"type": "string"},
+					"amount":        map[string]any{"$ref": "#/components/schemas/ReportsMoney"},
+					"account_code":  map[string]any{"type": "string"},
+					"category":      map[string]any{"type": "string"},
+					"source_module": map[string]any{"type": "string"},
+					"source_ref":    map[string]any{"type": "string"},
+				},
+				"additionalProperties": false,
+			},
+			"ReportsExpensesResponse": map[string]any{
+				"type":     "object",
+				"required": []string{"period", "categories", "top_payees", "transactions", "total"},
+				"properties": map[string]any{
+					"period":       map[string]any{"$ref": "#/components/schemas/ReportsPeriod"},
+					"categories":   reportsArraySchema("ReportsExpenseCategory"),
+					"top_payees":   reportsArraySchema("ReportsExpensePayee"),
+					"transactions": reportsArraySchema("ReportsExpenseTransaction"),
+					"total":        map[string]any{"$ref": "#/components/schemas/ReportsMoney"},
 				},
 				"additionalProperties": false,
 			},

@@ -37,6 +37,7 @@ var (
 // Service composes existing module read APIs into derived report read models.
 type Service struct {
 	ledger         Ledger
+	banking        Banking
 	identity       Identity
 	facts          CompanyFactsProvider
 	invoicing      Invoicing
@@ -59,6 +60,14 @@ type Option func(*Service)
 func WithClock(clk clock.Clock) Option {
 	return func(s *Service) {
 		s.clock = clk
+	}
+}
+
+// WithBanking injects the banking transaction read API used for expense
+// drill-down payee/reference attribution.
+func WithBanking(api Banking) Option {
+	return func(s *Service) {
+		s.banking = api
 	}
 }
 
