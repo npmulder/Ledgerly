@@ -83,6 +83,7 @@ type ModuleDeps struct {
 	ReportsInvoicing  reports.Invoicing
 	ReportsDLA        reports.DLA
 	ReportsDocuments  reports.DividendDocumentProvider
+	ReportsReceipts   reports.ReceiptDocumentProvider
 	ReportsArchive    reports.ExportArchiveStore
 	ReportsPDFEngine  reports.PLPDFEngine
 	ReportsShareLimit int64
@@ -356,6 +357,7 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 				Month: facts.YearEnd.Month,
 				Day:   facts.YearEnd.Day,
 			},
+			IsVATRegistered: facts.IsVATRegistered,
 		}, nil
 	}
 
@@ -396,15 +398,21 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		dashboardInvoicingService,
 		reports.WithClock(clk),
 	)
-	bankingService := banking.NewService(
-		bankingPool,
-		ledgerService,
+	bankingOptions := []banking.ServiceOption{
 		banking.WithLedgerJournal(ledgerService),
 		banking.WithMoneyFX(moneyFXModule),
 		banking.WithInvoicingSettler(dashboardInvoicingService),
 		banking.WithDLAFileDrawer(dlaService),
 		banking.WithEventBus(eventBus),
 		banking.WithDirectorNames(identityDirectorNames{profile: identityProfile}),
+	}
+	if pdfAssetWriter.writer != nil {
+		bankingOptions = append(bankingOptions, banking.WithReceiptAssetStore(pdfAssetWriter))
+	}
+	bankingService := banking.NewService(
+		bankingPool,
+		ledgerService,
+		bankingOptions...,
 	)
 	subscribeBankingIdentityProfileRefresh(eventBus, identityProfile, profileOptions, bankingService)
 	bankingHTTPModule := banking.NewHTTPModule(bankingService)
@@ -518,6 +526,7 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 			dividends: dividendsService,
 			assets:    identityProfile,
 		},
+		ReportsReceipts:   reportsBankingReceiptProvider{banking: bankingService},
 		ReportsArchive:    pdfAssetWriter,
 		ReportsPDFEngine:  reportsPDFEngine,
 		ReportsShareLimit: deps.ReportsShareSizeLimit,
@@ -750,6 +759,7 @@ func buildReportsModule(_ context.Context, deps ModuleDeps) (Module, error) {
 		Invoicing:         deps.ReportsInvoicing,
 		DLA:               deps.ReportsDLA,
 		DividendDocuments: deps.ReportsDocuments,
+		ReceiptDocuments:  deps.ReportsReceipts,
 		ArchiveStore:      deps.ReportsArchive,
 		PDFEngine:         deps.ReportsPDFEngine,
 		Mailer:            deps.MailSender,
@@ -1023,6 +1033,39 @@ func (s identityInvoicePDFAssetStore) LoadAsset(ctx context.Context, ref string)
 	}, nil
 }
 
+func (s identityInvoicePDFAssetStore) StoreReceiptAsset(ctx context.Context, upload banking.ReceiptAssetUpload) (string, error) {
+	if s.writer == nil {
+		return "", fmt.Errorf("app: identity asset writer is required for banking receipts")
+	}
+	id, err := s.writer.StoreAsset(ctx, identity.AssetUpload{
+		MIME:  upload.MIME,
+		Bytes: upload.Bytes,
+	})
+	if err != nil {
+		return "", err
+	}
+	return string(id), nil
+}
+
+func (s identityInvoicePDFAssetStore) LoadReceiptAsset(ctx context.Context, ref string) (banking.ReceiptAsset, error) {
+	if s.profile == nil {
+		return banking.ReceiptAsset{}, fmt.Errorf("app: identity profile API is required for banking receipts")
+	}
+	id := identity.AssetID(strings.TrimSpace(ref))
+	if id == "" || strings.Contains(string(id), "/") {
+		return banking.ReceiptAsset{}, fmt.Errorf("app: invalid banking receipt asset reference")
+	}
+	asset, err := s.profile.Asset(ctx, id)
+	if err != nil {
+		return banking.ReceiptAsset{}, err
+	}
+	return banking.ReceiptAsset{
+		MIME:  asset.MIME,
+		Size:  asset.Size,
+		Bytes: append([]byte{}, asset.Bytes...),
+	}, nil
+}
+
 type exportArchiveCache struct {
 	mu    sync.Mutex
 	byKey map[string]reports.ArchiveRef
@@ -1117,6 +1160,59 @@ func (p reportsDividendDocumentProvider) loadDividendDocument(ctx context.Contex
 		ContentType: asset.MIME,
 		Bytes:       append([]byte{}, asset.Bytes...),
 	}, nil
+}
+
+type reportsBankingReceiptProvider struct {
+	banking interface {
+		ReceiptsBetween(context.Context, time.Time, time.Time) ([]banking.ReceiptDocument, error)
+		ReceiptAsset(context.Context, banking.TransactionID) (banking.Receipt, banking.ReceiptAsset, error)
+	}
+}
+
+func (p reportsBankingReceiptProvider) ReceiptDocuments(ctx context.Context, period reports.Period) ([]reports.StoredDocument, error) {
+	if p.banking == nil {
+		return nil, nil
+	}
+	receipts, err := p.banking.ReceiptsBetween(ctx, period.From, period.To)
+	if err != nil {
+		return nil, err
+	}
+	documents := make([]reports.StoredDocument, 0, len(receipts))
+	for _, record := range receipts {
+		receipt, asset, err := p.banking.ReceiptAsset(ctx, record.Transaction.ID)
+		if err != nil {
+			return nil, err
+		}
+		contentType := strings.TrimSpace(asset.MIME)
+		if contentType == "" {
+			contentType = receipt.MIME
+		}
+		documents = append(documents, reports.StoredDocument{
+			Path:        receiptDocumentName(record.Transaction, receipt),
+			ContentType: contentType,
+			Bytes:       append([]byte{}, asset.Bytes...),
+		})
+	}
+	return documents, nil
+}
+
+func receiptDocumentName(txn banking.Transaction, receipt banking.Receipt) string {
+	stem := strings.TrimSuffix(receipt.Filename, filepath.Ext(receipt.Filename))
+	base := safeReportDocumentName(fmt.Sprintf("%s-%d-%s", txn.Date.UTC().Format(time.DateOnly), txn.ID, stem))
+	return base + receiptDocumentExtension(receipt.MIME)
+}
+
+func receiptDocumentExtension(mediaType string) string {
+	switch strings.ToLower(strings.TrimSpace(mediaType)) {
+	case "application/pdf":
+		return ".pdf"
+	case "image/png":
+		return ".png"
+	case "image/jpeg":
+		return ".jpg"
+	default:
+		return ""
+	}
 }
 
 func safeReportDocumentName(value string) string {

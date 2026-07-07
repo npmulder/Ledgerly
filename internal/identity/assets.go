@@ -209,7 +209,7 @@ func normalizeDocumentAssetMIME(value string) (string, error) {
 	}
 	mediaType = strings.ToLower(mediaType)
 	switch mediaType {
-	case "application/pdf", "application/zip":
+	case "application/pdf", "application/zip", "image/png", "image/jpeg":
 		return mediaType, nil
 	default:
 		return "", fmt.Errorf("%w: %s", ErrUnsupportedAsset, mediaType)
@@ -222,6 +222,12 @@ func documentBytesMatchMIME(data []byte, mediaType string) bool {
 		return len(data) > 0 && bytes.HasPrefix(bytes.TrimSpace(data), []byte("%PDF-"))
 	case "application/zip":
 		return len(data) >= 4 && bytes.Equal(data[:4], []byte("PK\x03\x04"))
+	case "image/png":
+		_, format, err := image.DecodeConfig(bytes.NewReader(data))
+		return err == nil && format == "png"
+	case "image/jpeg":
+		_, format, err := image.DecodeConfig(bytes.NewReader(data))
+		return err == nil && format == "jpeg"
 	default:
 		return false
 	}

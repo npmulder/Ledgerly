@@ -3,7 +3,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 
 import {
+  attachBankingReceipt,
   confirmBankingMatch,
+  deleteBankingReceipt,
   excludeBankingTransaction,
   fileBankingTransactionToDLA,
   getBankingAccounts,
@@ -38,6 +40,7 @@ import {
 } from "@/screens/ExpenseCategoryPicker";
 
 const recentLimit = 8;
+const receiptAccept = "application/pdf,image/png,image/jpeg";
 
 type ToastState = {
   message: string;
@@ -54,6 +57,15 @@ type ExcludeContext = {
 };
 
 type RecentKindByID = Partial<Record<number, BankingReviewCard["kind"]>>;
+
+type AttachReceiptVariables = {
+  file: File;
+  transactionID: number;
+};
+
+type DeleteReceiptVariables = {
+  transactionID: number;
+};
 
 export function BankingScreen() {
   const queryClient = useQueryClient();
@@ -227,11 +239,44 @@ export function BankingScreen() {
     },
   });
 
+  const attachReceiptMutation = useMutation({
+    mutationFn: ({ file, transactionID }: AttachReceiptVariables) =>
+      attachBankingReceipt(transactionID, file),
+    onError: (error) => {
+      setToast({ message: problemMessage(error), tone: "error" });
+    },
+    onSettled: () => {
+      void refreshBankingData(queryClient);
+    },
+    onSuccess: (receipt) => {
+      setToast({
+        message: `Attached ${receipt.filename}`,
+        tone: "success",
+      });
+    },
+  });
+
+  const deleteReceiptMutation = useMutation({
+    mutationFn: ({ transactionID }: DeleteReceiptVariables) =>
+      deleteBankingReceipt(transactionID),
+    onError: (error) => {
+      setToast({ message: problemMessage(error), tone: "error" });
+    },
+    onSettled: () => {
+      void refreshBankingData(queryClient);
+    },
+    onSuccess: () => {
+      setToast({ message: "Receipt removed.", tone: "success" });
+    },
+  });
+
   const isCommandPending =
     confirmMutation.isPending ||
     dlaMutation.isPending ||
     recodeMutation.isPending ||
-    excludeMutation.isPending;
+    excludeMutation.isPending ||
+    attachReceiptMutation.isPending ||
+    deleteReceiptMutation.isPending;
   const selectedWorkCount = selectedAccount
     ? Math.max(scopedReviewCards.length, selectedAccount.unreconciled_count)
     : 0;
@@ -372,8 +417,14 @@ export function BankingScreen() {
               busy={isCommandPending}
               card={card}
               key={`${card.kind}-${card.suggestion_id}`}
+              onAttachReceipt={(transactionID, file) =>
+                attachReceiptMutation.mutate({ file, transactionID })
+              }
               onConfirm={(transactionID) =>
                 confirmMutation.mutate(transactionID)
+              }
+              onDeleteReceipt={(transactionID) =>
+                deleteReceiptMutation.mutate({ transactionID })
               }
               onExclude={(selectedCard, reason) =>
                 excludeMutation.mutate({ card: selectedCard, reason })
@@ -406,9 +457,16 @@ export function BankingScreen() {
             </EmptyState>
           ) : null}
           <RecentlyReconciled
+            busy={isCommandPending}
             isLoading={recentQuery.isPending}
             items={scopedRecent}
             kindByTransactionID={recentKinds}
+            onAttachReceipt={(transactionID, file) =>
+              attachReceiptMutation.mutate({ file, transactionID })
+            }
+            onDeleteReceipt={(transactionID) =>
+              deleteReceiptMutation.mutate({ transactionID })
+            }
           />
         </aside>
       </SplitMain>
@@ -480,14 +538,18 @@ function AccountCards({
 function ReviewCard({
   busy,
   card,
+  onAttachReceipt,
   onConfirm,
+  onDeleteReceipt,
   onExclude,
   onFileDLA,
   onRecode,
 }: {
   readonly busy: boolean;
   readonly card: BankingReviewCard;
+  readonly onAttachReceipt: (transactionID: number, file: File) => void;
   readonly onConfirm: (transactionID: number) => void;
+  readonly onDeleteReceipt: (transactionID: number) => void;
   readonly onExclude: (card: BankingReviewCard, reason: string) => void;
   readonly onFileDLA: (transactionID: number) => void;
   readonly onRecode: (transactionID: number, accountCode: string) => void;
@@ -516,6 +578,9 @@ function ReviewCard({
           </span>
           <span>{title}</span>
           <Badge variant="neutral">{formatConfidence(card.confidence)}</Badge>
+          {card.transaction.receipt ? (
+            <Badge variant="neutral">Receipt</Badge>
+          ) : null}
         </span>
       }
     >
@@ -531,10 +596,84 @@ function ReviewCard({
         </p>
       </div>
 
+      <ReceiptControls
+        busy={busy}
+        onAttachReceipt={onAttachReceipt}
+        onDeleteReceipt={onDeleteReceipt}
+        transaction={card.transaction}
+      />
+
       {card.kind === "match" ? <MatchDetails card={card} /> : null}
       {card.kind === "suggestion" ? <SuggestionDetails card={card} /> : null}
       {card.kind === "rule" ? <RuleDetails card={card} /> : null}
     </Card>
+  );
+}
+
+function ReceiptControls({
+  busy,
+  onAttachReceipt,
+  onDeleteReceipt,
+  transaction,
+}: {
+  readonly busy: boolean;
+  readonly onAttachReceipt: (transactionID: number, file: File) => void;
+  readonly onDeleteReceipt: (transactionID: number) => void;
+  readonly transaction: BankingReviewCard["transaction"];
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const receipt = transaction.receipt;
+
+  function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) {
+      return;
+    }
+    onAttachReceipt(transaction.id, file);
+  }
+
+  return (
+    <div className="banking-receipt-controls">
+      <input
+        accept={receiptAccept}
+        aria-label={`Receipt file for ${transaction.payee}`}
+        className="banking-import-input"
+        onChange={handleFileChange}
+        ref={inputRef}
+        type="file"
+      />
+      <Button
+        disabled={busy}
+        onClick={() => inputRef.current?.click()}
+        size="small"
+        type="button"
+        variant="secondary"
+      >
+        {receipt ? "Replace receipt" : "Attach receipt"}
+      </Button>
+      {receipt ? (
+        <>
+          <a
+            className="ui-button ui-button--secondary ui-button--small banking-receipt-link"
+            href={receipt.url}
+            rel="noreferrer"
+            target="_blank"
+          >
+            Preview receipt
+          </a>
+          <Button
+            disabled={busy}
+            onClick={() => onDeleteReceipt(transaction.id)}
+            size="small"
+            type="button"
+            variant="danger"
+          >
+            Delete receipt
+          </Button>
+        </>
+      ) : null}
+    </div>
   );
 }
 
@@ -724,13 +863,19 @@ function CardOverflow({
 }
 
 function RecentlyReconciled({
+  busy,
   isLoading,
   items,
   kindByTransactionID,
+  onAttachReceipt,
+  onDeleteReceipt,
 }: {
+  readonly busy: boolean;
   readonly isLoading: boolean;
   readonly items: BankingRecentTransaction[];
   readonly kindByTransactionID: RecentKindByID;
+  readonly onAttachReceipt: (transactionID: number, file: File) => void;
+  readonly onDeleteReceipt: (transactionID: number) => void;
 }) {
   return (
     <Card title="Recently reconciled">
@@ -757,6 +902,17 @@ function RecentlyReconciled({
               </span>
               <span className="type-mono-numeral">
                 {formatMoney(item.transaction.amount)}
+              </span>
+              <span className="banking-recent-list__receipt">
+                {item.transaction.receipt ? (
+                  <Badge variant="neutral">Receipt</Badge>
+                ) : null}
+                <ReceiptControls
+                  busy={busy}
+                  onAttachReceipt={onAttachReceipt}
+                  onDeleteReceipt={onDeleteReceipt}
+                  transaction={item.transaction}
+                />
               </span>
             </li>
           ))}

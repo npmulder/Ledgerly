@@ -14,6 +14,7 @@ type Config struct {
 	Invoicing         Invoicing
 	DLA               DLA
 	DividendDocuments DividendDocumentProvider
+	ReceiptDocuments  ReceiptDocumentProvider
 	ArchiveStore      ExportArchiveStore
 	PDFEngine         PLPDFEngine
 	Mailer            Mailer
@@ -47,6 +48,7 @@ func NewModule(cfg Config) (*Module, error) {
 			WithClock(cfg.Clock),
 			WithDLA(cfg.DLA),
 			WithDividendDocuments(cfg.DividendDocuments),
+			WithReceiptDocuments(cfg.ReceiptDocuments),
 			WithExportArchiveStore(cfg.ArchiveStore),
 			WithPLPDFEngine(cfg.PDFEngine),
 			WithMailer(cfg.Mailer),

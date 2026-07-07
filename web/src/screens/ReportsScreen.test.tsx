@@ -97,6 +97,27 @@ describe("ReportsScreen", () => {
     expect(badge).toHaveTextContent("DUE 30 JUL");
   });
 
+  it("omits the VAT filing row and due badge when the calendar has no VAT filing", async () => {
+    vi.stubGlobal(
+      "fetch",
+      reportsFetch({
+        calendar: calendarFixture(
+          defaultCalendarFilings().filter(
+            (filing) => filing.key !== "vat_return",
+          ),
+        ),
+      }),
+    );
+
+    renderReportsScreen();
+
+    const calendar = await screen.findByRole("list");
+    expect(within(calendar).queryByText("VAT return")).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText(/VAT return due-soon/),
+    ).not.toBeInTheDocument();
+  });
+
   it("shows a neutral VAT note without return figures when not registered", async () => {
     vi.stubGlobal(
       "fetch",
