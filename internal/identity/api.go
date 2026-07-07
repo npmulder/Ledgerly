@@ -142,6 +142,14 @@ type RegisterInput struct {
 	Name     string
 }
 
+// RegisterWithProfileResult is returned after a successful first-run bootstrap.
+type RegisterWithProfileResult struct {
+	User      User
+	Profile   CompanyProfile
+	Token     string
+	ExpiresAt time.Time
+}
+
 // LoginInput verifies a password and opens a session.
 type LoginInput struct {
 	Email    string

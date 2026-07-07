@@ -20,6 +20,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/npmulder/ledgerly/internal/platform/bus"
+	"github.com/npmulder/ledgerly/internal/platform/clock"
 	"github.com/npmulder/ledgerly/internal/platform/db"
 )
 
@@ -249,6 +250,101 @@ func TestUpdateProfilePublishesEventInSameTransaction(t *testing.T) {
 	if !handlerRan {
 		t.Fatal("ProfileUpdated handler did not run")
 	}
+}
+
+func TestRegisterWithProfileCreatesProfileSessionAndPublishesEventInSameTransaction(t *testing.T) {
+	ctx, pool := temporaryMigratedDatabaseNamed(t, fmt.Sprintf("ledgerly_prod_register_profile_%d", time.Now().UnixNano()))
+	eventBus := discardBus()
+	service := NewService(
+		NewPostgresStore(pool),
+		clock.NewFake(time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC)),
+		WithPasswordParams(PasswordParams{MemoryKiB: 64, Time: 1, Threads: 1, SaltLen: 8, KeyLen: 16}),
+		WithTokenReader(bytes.NewReader(bytes.Repeat([]byte{0x42}, 96))),
+		WithEventBus(eventBus),
+	)
+	profile := acmeProfile()
+	published := 0
+
+	eventBus.Subscribe(ProfileUpdatedEventName, func(ctx context.Context, gotTx db.Tx, evt bus.Event) error {
+		published++
+		if gotTx == nil {
+			t.Fatalf("handler tx = nil, want first-run transaction")
+		}
+		if _, ok := evt.(ProfileUpdated); !ok {
+			t.Fatalf("event type = %T, want identity.ProfileUpdated", evt)
+		}
+		gotProfile, err := NewProfileService(gotTx, nil).Profile(ctx)
+		if err != nil {
+			return err
+		}
+		if gotProfile.TradingName != profile.TradingName {
+			return fmt.Errorf("handler saw TradingName %q, want %q", gotProfile.TradingName, profile.TradingName)
+		}
+		var userCount int
+		if err := gotTx.QueryRow(ctx, "SELECT count(*) FROM identity.users").Scan(&userCount); err != nil {
+			return err
+		}
+		if userCount != 1 {
+			return fmt.Errorf("handler saw user count %d, want 1", userCount)
+		}
+		return nil
+	})
+
+	result, err := service.RegisterWithProfile(ctx, "OWNER@Example.COM", "correct horse battery staple", " Owner ", profile)
+	if err != nil {
+		t.Fatalf("RegisterWithProfile() error = %v", err)
+	}
+	if result.User.Email != "owner@example.com" || result.User.Name != "Owner" {
+		t.Fatalf("result user = %+v, want normalized owner", result.User)
+	}
+	if result.Profile.TradingName != "Acme Trading" || result.Profile.CompanyNumber != "ACME123" {
+		t.Fatalf("result profile = %+v, want Acme profile", result.Profile)
+	}
+	if result.Token == "" {
+		t.Fatal("RegisterWithProfile() token is empty")
+	}
+	if published != 1 {
+		t.Fatalf("ProfileUpdated events = %d, want 1", published)
+	}
+
+	credential, err := service.CheckCredential(ctx, Credential{Kind: CredentialKindSessionCookie, Token: result.Token})
+	if err != nil {
+		t.Fatalf("CheckCredential(first-run session) error = %v", err)
+	}
+	if credential.Principal.User.Email != "owner@example.com" {
+		t.Fatalf("session principal = %+v, want owner@example.com", credential.Principal.User)
+	}
+	gotProfile, err := New(pool, discardBus()).Profile(ctx)
+	if err != nil {
+		t.Fatalf("Profile() after RegisterWithProfile() error = %v", err)
+	}
+	if gotProfile.TradingName != profile.TradingName || gotProfile.Shareholders == nil || len(gotProfile.Shareholders) != 0 {
+		t.Fatalf("stored profile = %+v, want Acme profile with empty shareholders", gotProfile)
+	}
+}
+
+func TestCreateFirstUserWithProfileRollsBackUserAndSessionWhenProfileInsertFails(t *testing.T) {
+	ctx, pool := temporaryMigratedDatabaseNamed(t, fmt.Sprintf("ledgerly_prod_register_rollback_%d", time.Now().UnixNano()))
+	store := NewPostgresStore(pool)
+	profile := acmeProfile()
+	profile.CompanyNumber = " "
+
+	_, err := store.CreateFirstUserWithProfile(
+		ctx,
+		"owner@example.com",
+		"hash",
+		"Owner",
+		profile,
+		[]byte("session-hash"),
+		time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC),
+		nil,
+	)
+	if err == nil {
+		t.Fatal("CreateFirstUserWithProfile() error = nil, want profile insert failure")
+	}
+	assertIdentityTableCount(t, ctx, pool, "identity.users", 0)
+	assertIdentityTableCount(t, ctx, pool, "identity.company_profile", 0)
+	assertIdentityTableCount(t, ctx, pool, "identity.sessions", 0)
 }
 
 func TestValidateLogoUploadAcceptsSupportedImageTypes(t *testing.T) {
@@ -711,6 +807,42 @@ func npmProfile() CompanyProfile {
 		Shareholders: []Shareholder{
 			{Name: "N. Meyer", Shares: 100, Class: "ordinary £1"},
 		},
+	}
+}
+
+func acmeProfile() CompanyProfile {
+	incorporationDate, err := parseDate("2024-01-15")
+	if err != nil {
+		panic(err)
+	}
+	return CompanyProfile{
+		TradingName:   "Acme Trading",
+		LegalName:     "Acme Limited",
+		CompanyNumber: "ACME123",
+		RegisteredOffice: RegisteredOffice{
+			Line1:      "1 Athol Street",
+			Line2:      "",
+			Locality:   "Douglas",
+			Region:     "",
+			PostalCode: "",
+			Country:    "IM",
+		},
+		IncorporationDate: incorporationDate,
+		YearEnd:           YearEnd{Month: time.December, Day: 31},
+		BankDetails:       BankDetails{},
+		Shareholders:      []Shareholder{},
+	}
+}
+
+func assertIdentityTableCount(t *testing.T, ctx context.Context, tx db.Tx, table string, want int) {
+	t.Helper()
+
+	var got int
+	if err := tx.QueryRow(ctx, "SELECT count(*) FROM "+table).Scan(&got); err != nil {
+		t.Fatalf("count %s: %v", table, err)
+	}
+	if got != want {
+		t.Fatalf("%s rows = %d, want %d", table, got, want)
 	}
 }
 

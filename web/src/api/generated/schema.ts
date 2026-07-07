@@ -682,6 +682,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/identity/register-with-profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Register the first owner account and company profile
+         * @description Allowed only while no users and no company profile exist.
+         */
+        post: operations["identityRegisterWithProfile"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/invoicing/clients": {
         parameters: {
             query?: never;
@@ -1834,6 +1854,25 @@ export interface components {
             name: string;
             /** Format: password */
             password: string;
+        };
+        IdentityRegisterWithProfileRequest: {
+            company_number: string;
+            /** Format: email */
+            email: string;
+            /** Format: date */
+            incorporation_date: string;
+            legal_name: string;
+            name: string;
+            /** Format: password */
+            password: string;
+            registered_office: components["schemas"]["RegisteredOffice"];
+            trading_name: string;
+            year_end_day: number;
+            year_end_month: number;
+        };
+        IdentityRegisterWithProfileResult: {
+            profile: components["schemas"]["IdentityProfile"];
+            user: components["schemas"]["IdentityUser"];
         };
         IdentityUser: {
             /** Format: date-time */
@@ -4227,6 +4266,57 @@ export interface operations {
                 };
                 content: {
                     "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Registration is closed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Registration request body is too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    identityRegisterWithProfile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IdentityRegisterWithProfileRequest"];
+            };
+        };
+        responses: {
+            /** @description Owner and company profile created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityRegisterWithProfileResult"];
+                };
+            };
+            /** @description Invalid first-run registration request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ValidationProblem"];
                 };
             };
             /** @description Registration is closed */

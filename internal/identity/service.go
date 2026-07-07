@@ -45,7 +45,9 @@ type storedPAT struct {
 
 type Store interface {
 	UsersExist(ctx context.Context) (bool, error)
+	ProfileExists(ctx context.Context) (bool, error)
 	CreateFirstUser(ctx context.Context, email, passwordHash, name string) (User, error)
+	CreateFirstUserWithProfile(ctx context.Context, email, passwordHash, name string, profile CompanyProfile, tokenHash []byte, expiresAt time.Time, publish profileUpdatedPublisher) (User, error)
 	FindUserByEmail(ctx context.Context, email string) (storedUser, error)
 	CreateSession(ctx context.Context, userID int64, tokenHash []byte, expiresAt time.Time) error
 	FindSessionByTokenHash(ctx context.Context, tokenHash []byte) (storedSession, error)
@@ -60,9 +62,12 @@ type Store interface {
 	MarkPATUsed(ctx context.Context, tokenHash []byte, usedAt time.Time) error
 }
 
+type profileUpdatedPublisher func(context.Context, db.Tx) error
+
 // Service owns identity auth use cases.
 type Service struct {
 	store          Store
+	bus            *bus.Bus
 	clock          clock.Clock
 	passwordParams PasswordParams
 	tokenReader    io.Reader
@@ -81,6 +86,12 @@ func WithTokenReader(reader io.Reader) ServiceOption {
 		if reader != nil {
 			s.tokenReader = reader
 		}
+	}
+}
+
+func WithEventBus(eventBus *bus.Bus) ServiceOption {
+	return func(s *Service) {
+		s.bus = eventBus
 	}
 }
 
@@ -424,6 +435,77 @@ func (s *Service) Register(ctx context.Context, input RegisterInput) (User, erro
 	return s.store.CreateFirstUser(ctx, email, hash, name)
 }
 
+func (s *Service) RegisterWithProfile(ctx context.Context, email, password, name string, profile CompanyProfile) (RegisterWithProfileResult, error) {
+	normalizedEmail, err := normalizeEmail(email)
+	if err != nil {
+		return RegisterWithProfileResult{}, err
+	}
+	normalizedName := strings.TrimSpace(name)
+	if normalizedName == "" {
+		return RegisterWithProfileResult{}, fmt.Errorf("name is required")
+	}
+	if strings.TrimSpace(password) == "" {
+		return RegisterWithProfileResult{}, fmt.Errorf("password is required")
+	}
+	normalizedProfile, err := normalizeInitialCompanyProfile(profile)
+	if err != nil {
+		return RegisterWithProfileResult{}, err
+	}
+
+	usersExist, err := s.store.UsersExist(ctx)
+	if err != nil {
+		return RegisterWithProfileResult{}, err
+	}
+	profileExists, err := s.store.ProfileExists(ctx)
+	if err != nil {
+		return RegisterWithProfileResult{}, err
+	}
+	if usersExist || profileExists {
+		return RegisterWithProfileResult{}, ErrRegistrationClosed
+	}
+
+	hash, err := HashPassword(password, s.passwordParams, s.tokenReader)
+	if err != nil {
+		return RegisterWithProfileResult{}, err
+	}
+	token, err := newSessionToken(s.tokenReader)
+	if err != nil {
+		return RegisterWithProfileResult{}, fmt.Errorf("create session token: %w", err)
+	}
+	expiresAt := s.clock.Now().UTC().Add(sessionDuration)
+	tokenHash := hashSessionToken(token)
+
+	user, err := s.store.CreateFirstUserWithProfile(
+		ctx,
+		normalizedEmail,
+		hash,
+		normalizedName,
+		normalizedProfile,
+		tokenHash[:],
+		expiresAt,
+		s.publishProfileUpdatedInTx,
+	)
+	if err != nil {
+		return RegisterWithProfileResult{}, err
+	}
+	return RegisterWithProfileResult{
+		User:      user,
+		Profile:   normalizedProfile,
+		Token:     token,
+		ExpiresAt: expiresAt,
+	}, nil
+}
+
+func (s *Service) publishProfileUpdatedInTx(ctx context.Context, tx db.Tx) error {
+	if s.bus == nil {
+		return nil
+	}
+	if err := s.bus.Publish(ctx, tx, ProfileUpdated{}); err != nil {
+		return fmt.Errorf("publish profile updated: %w", err)
+	}
+	return nil
+}
+
 func (s *Service) Login(ctx context.Context, input LoginInput) (LoginResult, error) {
 	email, err := normalizeEmail(input.Email)
 	if err != nil {
@@ -688,6 +770,47 @@ func requiredProfileText(field string, value string) (string, error) {
 		return "", fmt.Errorf("identity: %s is required", field)
 	}
 	return trimmed, nil
+}
+
+func normalizeInitialCompanyProfile(profile CompanyProfile) (CompanyProfile, error) {
+	normalized := profile
+	var err error
+	if normalized.TradingName, err = requiredProfileText("trading name", normalized.TradingName); err != nil {
+		return CompanyProfile{}, err
+	}
+	if normalized.LegalName, err = requiredProfileText("legal name", normalized.LegalName); err != nil {
+		return CompanyProfile{}, err
+	}
+	if normalized.CompanyNumber, err = requiredProfileText("company number", normalized.CompanyNumber); err != nil {
+		return CompanyProfile{}, err
+	}
+	if normalized.IncorporationDate.IsZero() {
+		return CompanyProfile{}, fmt.Errorf("identity: incorporation date is required")
+	}
+	if err := normalized.YearEnd.validate(); err != nil {
+		return CompanyProfile{}, err
+	}
+	if normalized.VATNumber != nil {
+		vatNumber := strings.TrimSpace(*normalized.VATNumber)
+		if vatNumber == "" {
+			normalized.VATNumber = nil
+		} else {
+			normalized.VATNumber = &vatNumber
+		}
+	}
+	normalized.Shareholders = append([]Shareholder{}, normalized.Shareholders...)
+	if normalized.Shareholders == nil {
+		normalized.Shareholders = []Shareholder{}
+	}
+	if normalized.LogoAssetID != nil {
+		logoAssetID := AssetID(strings.TrimSpace(string(*normalized.LogoAssetID)))
+		if logoAssetID == "" {
+			normalized.LogoAssetID = nil
+		} else {
+			normalized.LogoAssetID = &logoAssetID
+		}
+	}
+	return normalized, nil
 }
 
 func normalizeEmail(value string) (string, error) {

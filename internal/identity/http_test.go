@@ -56,6 +56,115 @@ func TestFirstRunRegisterOnceOnly(t *testing.T) {
 	}
 }
 
+func TestFirstRunRegisterWithProfileCreatesSessionAndProfile(t *testing.T) {
+	router, store, _ := newTestRouter(t, LoginRateLimit{Capacity: 100, RefillEvery: time.Hour})
+
+	response := performJSON(router, nethttp.MethodPost, "/api/identity/register-with-profile", firstRunProfilePayload(), nil)
+	if response.Code != nethttp.StatusCreated {
+		t.Fatalf("register-with-profile status = %d, want %d; body=%s", response.Code, nethttp.StatusCreated, response.Body.String())
+	}
+	cookie := sessionCookieFrom(response)
+	if cookie == nil || cookie.Value == "" {
+		t.Fatalf("register-with-profile session cookie = %#v, want non-empty %s", cookie, SessionCookieName)
+	}
+
+	var body registerWithProfileResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode register-with-profile response: %v; body=%s", err, response.Body.String())
+	}
+	if body.User.Email != "owner@example.com" || body.User.Name != "Owner" {
+		t.Fatalf("response user = %+v, want owner@example.com Owner", body.User)
+	}
+	if body.Profile.TradingName != "Acme Trading" || body.Profile.LegalName != "Acme Limited" {
+		t.Fatalf("response profile = %+v, want Acme names", body.Profile)
+	}
+	if body.Profile.YearEnd.Month != 12 || body.Profile.YearEnd.Day != 31 {
+		t.Fatalf("response year_end = %+v, want 31 December", body.Profile.YearEnd)
+	}
+
+	user := store.userByEmail("owner@example.com")
+	if user.PasswordHash == "" || !strings.HasPrefix(user.PasswordHash, "$argon2id$") {
+		t.Fatalf("stored password hash = %q, want argon2id hash", user.PasswordHash)
+	}
+	profile := store.profileForTest()
+	if profile == nil || profile.TradingName != "Acme Trading" || profile.CompanyNumber != "ACME123" {
+		t.Fatalf("stored profile = %+v, want Acme profile", profile)
+	}
+
+	me := performJSON(router, nethttp.MethodGet, "/api/identity/me", nil, cookie)
+	if me.Code != nethttp.StatusOK {
+		t.Fatalf("me after register-with-profile status = %d, want %d; body=%s", me.Code, nethttp.StatusOK, me.Body.String())
+	}
+}
+
+func TestRegisterWithProfileClosesWhenUserOrProfileExists(t *testing.T) {
+	t.Run("existing user", func(t *testing.T) {
+		router, _, _ := newTestRouter(t, LoginRateLimit{Capacity: 100, RefillEvery: time.Hour})
+		registerOwner(t, router)
+
+		response := performJSON(router, nethttp.MethodPost, "/api/identity/register-with-profile", firstRunProfilePayload(), nil)
+		if response.Code != nethttp.StatusForbidden {
+			t.Fatalf("register-with-profile with user status = %d, want %d; body=%s", response.Code, nethttp.StatusForbidden, response.Body.String())
+		}
+		if got := response.Header().Get("Content-Type"); got != httpserver.ProblemContentType {
+			t.Fatalf("Content-Type = %q, want %s", got, httpserver.ProblemContentType)
+		}
+	})
+
+	t.Run("existing profile", func(t *testing.T) {
+		router, store, _ := newTestRouter(t, LoginRateLimit{Capacity: 100, RefillEvery: time.Hour})
+		store.setProfileForTest(npmProfile())
+
+		response := performJSON(router, nethttp.MethodPost, "/api/identity/register-with-profile", firstRunProfilePayload(), nil)
+		if response.Code != nethttp.StatusForbidden {
+			t.Fatalf("register-with-profile with profile status = %d, want %d; body=%s", response.Code, nethttp.StatusForbidden, response.Body.String())
+		}
+		if got := response.Header().Get("Content-Type"); got != httpserver.ProblemContentType {
+			t.Fatalf("Content-Type = %q, want %s", got, httpserver.ProblemContentType)
+		}
+	})
+}
+
+func TestRegisterWithProfileValidationErrorsUseFieldPointers(t *testing.T) {
+	router, _, _ := newTestRouter(t, LoginRateLimit{Capacity: 100, RefillEvery: time.Hour})
+	payload := firstRunProfilePayload()
+	payload["email"] = "not-an-email"
+	payload["trading_name"] = " "
+	payload["year_end_month"] = 2
+	payload["year_end_day"] = 30
+
+	response := performJSON(router, nethttp.MethodPost, "/api/identity/register-with-profile", payload, nil)
+	if response.Code != nethttp.StatusBadRequest {
+		t.Fatalf("invalid register-with-profile status = %d, want %d; body=%s", response.Code, nethttp.StatusBadRequest, response.Body.String())
+	}
+	if got := response.Header().Get("Content-Type"); got != httpserver.ProblemContentType {
+		t.Fatalf("Content-Type = %q, want %s", got, httpserver.ProblemContentType)
+	}
+
+	problem := decodeValidationProblem(t, response)
+	if problem.Type != problemTypeValidation {
+		t.Fatalf("problem type = %q, want %s", problem.Type, problemTypeValidation)
+	}
+	if problem.Status != nethttp.StatusBadRequest {
+		t.Fatalf("problem status = %d, want %d", problem.Status, nethttp.StatusBadRequest)
+	}
+	wantPointers := map[string]bool{
+		"/email":        false,
+		"/trading_name": false,
+		"/year_end_day": false,
+	}
+	for _, fieldErr := range problem.Errors {
+		if _, ok := wantPointers[fieldErr.Pointer]; ok {
+			wantPointers[fieldErr.Pointer] = true
+		}
+	}
+	for pointer, found := range wantPointers {
+		if !found {
+			t.Fatalf("problem errors = %+v, missing pointer %s", problem.Errors, pointer)
+		}
+	}
+}
+
 func TestWrongPasswordReturnsUnauthorized(t *testing.T) {
 	router, _, _ := newTestRouter(t, LoginRateLimit{Capacity: 100, RefillEvery: time.Hour})
 	registerOwner(t, router)
@@ -588,6 +697,11 @@ func TestOpenAPIIncludesIdentityRequestBodies(t *testing.T) {
 		t.Fatal("register requestBody missing from OpenAPI fragment")
 	}
 
+	registerWithProfile := paths["/api/identity/register-with-profile"].(map[string]any)["post"].(map[string]any)
+	if registerWithProfile["requestBody"] == nil {
+		t.Fatal("register-with-profile requestBody missing from OpenAPI fragment")
+	}
+
 	profile := paths["/api/identity/profile"].(map[string]any)
 	if profile["get"] == nil {
 		t.Fatal("profile GET missing from OpenAPI fragment")
@@ -608,7 +722,7 @@ func TestOpenAPIIncludesIdentityRequestBodies(t *testing.T) {
 
 	components := document["components"].(map[string]any)
 	schemas := components["schemas"].(map[string]any)
-	for _, schema := range []string{"IdentityProfile", "IdentityProfilePatch", "IdentityLogoUploadResponse", "ValidationProblem"} {
+	for _, schema := range []string{"IdentityRegisterWithProfileRequest", "IdentityRegisterWithProfileResult", "IdentityProfile", "IdentityProfilePatch", "IdentityLogoUploadResponse", "ValidationProblem"} {
 		if schemas[schema] == nil {
 			t.Fatalf("%s schema missing from OpenAPI fragment", schema)
 		}
@@ -696,6 +810,28 @@ func loginOwner(t *testing.T, router nethttp.Handler) *nethttp.Cookie {
 		t.Fatal("login session cookie is empty")
 	}
 	return cookie
+}
+
+func firstRunProfilePayload() map[string]any {
+	return map[string]any{
+		"email":              "OWNER@Example.COM",
+		"password":           "correct horse battery staple",
+		"name":               "Owner",
+		"trading_name":       "Acme Trading",
+		"legal_name":         "Acme Limited",
+		"company_number":     "ACME123",
+		"incorporation_date": "2024-01-15",
+		"year_end_month":     12,
+		"year_end_day":       31,
+		"registered_office": map[string]any{
+			"line1":       "1 Athol Street",
+			"line2":       "",
+			"locality":    "Douglas",
+			"region":      "",
+			"postal_code": "",
+			"country":     "IM",
+		},
+	}
 }
 
 func performJSON(router nethttp.Handler, method, path string, payload any, cookie *nethttp.Cookie) *httptest.ResponseRecorder {
@@ -951,6 +1087,7 @@ type memoryStore struct {
 	nextID    int64
 	nextPATID int64
 	users     map[string]storedUser
+	profile   *CompanyProfile
 	sessions  map[string]memorySession
 	pats      map[string]memoryPAT
 }
@@ -988,6 +1125,13 @@ func (s *memoryStore) UsersExist(_ context.Context) (bool, error) {
 	return len(s.users) > 0, nil
 }
 
+func (s *memoryStore) ProfileExists(_ context.Context) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.profile != nil, nil
+}
+
 func (s *memoryStore) CreateFirstUser(_ context.Context, email, passwordHash, name string) (User, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1007,6 +1151,52 @@ func (s *memoryStore) CreateFirstUser(_ context.Context, email, passwordHash, na
 	}
 	s.nextID++
 	s.users[email] = user
+	return user.User, nil
+}
+
+func (s *memoryStore) CreateFirstUserWithProfile(
+	ctx context.Context,
+	email string,
+	passwordHash string,
+	name string,
+	profile CompanyProfile,
+	tokenHash []byte,
+	expiresAt time.Time,
+	publish profileUpdatedPublisher,
+) (User, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if len(s.users) > 0 || s.profile != nil {
+		return User{}, ErrRegistrationClosed
+	}
+
+	user := storedUser{
+		User: User{
+			ID:        s.nextID,
+			Email:     email,
+			Name:      name,
+			CreatedAt: time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC),
+		},
+		PasswordHash: passwordHash,
+	}
+	s.nextID++
+
+	profileClone := cloneCompanyProfile(profile)
+	session := memorySession{
+		userID:    user.ID,
+		expiresAt: expiresAt,
+		createdAt: time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC),
+	}
+	if publish != nil {
+		if err := publish(ctx, nil); err != nil {
+			return User{}, err
+		}
+	}
+
+	s.users[email] = user
+	s.profile = &profileClone
+	s.sessions[hashKey(tokenHash)] = session
 	return user.User, nil
 }
 
@@ -1179,6 +1369,25 @@ func (s *memoryStore) userByEmail(email string) storedUser {
 	defer s.mu.Unlock()
 
 	return s.users[email]
+}
+
+func (s *memoryStore) setProfileForTest(profile CompanyProfile) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	profileClone := cloneCompanyProfile(profile)
+	s.profile = &profileClone
+}
+
+func (s *memoryStore) profileForTest() *CompanyProfile {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.profile == nil {
+		return nil
+	}
+	profileClone := cloneCompanyProfile(*s.profile)
+	return &profileClone
 }
 
 func (s *memoryStore) insertSessionForTest(key string, userID int64, expiresAt time.Time) {
