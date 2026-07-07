@@ -500,6 +500,32 @@
   border-bottom: 4px double rgb(20 33 61);
 }
 
+.dividend-print__brand {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 18px;
+}
+
+.dividend-print__brand img {
+  display: block;
+  max-width: 154px;
+  max-height: 58px;
+  object-fit: contain;
+}
+
+.dividend-print__brand-mark {
+  display: grid;
+  width: 58px;
+  height: 58px;
+  flex: 0 0 auto;
+  place-items: center;
+  background: rgb(20 33 61);
+  color: var(--color-card);
+  font-size: 17px;
+  font-weight: 800;
+}
+
 .dividend-print__eyebrow {
   color: rgb(101 117 139);
   font-size: 11px;

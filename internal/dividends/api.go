@@ -88,6 +88,9 @@ type CompanySnapshot struct {
 	CompanyNumber    string                    `json:"company_number"`
 	RegisteredOffice identity.RegisteredOffice `json:"registered_office"`
 	DirectorName     string                    `json:"director_name"`
+	LogoAssetID      *identity.AssetID         `json:"logo_asset_id,omitempty"`
+	LogoAssetURL     *string                   `json:"logo_asset_url,omitempty"`
+	LogoDataURI      *string                   `json:"logo_data_uri,omitempty"`
 }
 
 // ShareholderSnapshot is the declaration-time shareholding resolved by Declare.
@@ -165,6 +168,7 @@ type Ledger interface {
 // Identity is the identity fact surface dividends needs for financial years.
 type Identity interface {
 	Profile(context.Context) (identity.CompanyProfile, error)
+	Asset(context.Context, identity.AssetID) (identity.Asset, error)
 	CompanyFacts(context.Context) (identity.CompanyFacts, error)
 }
 

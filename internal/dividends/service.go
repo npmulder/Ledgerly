@@ -3,6 +3,7 @@ package dividends
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -341,7 +342,7 @@ func (s *Service) Declare(ctx context.Context, amount money.Money) (declaration 
 	if err != nil {
 		return Declaration{}, err
 	}
-	companySnapshot, err := declarationCompanySnapshot(profile, shareholder)
+	companySnapshot, err := s.declarationCompanySnapshot(ctx, profile, shareholder)
 	if err != nil {
 		return Declaration{}, err
 	}
@@ -714,13 +715,27 @@ func declarationShareholder(profile identity.CompanyProfile) (identity.Sharehold
 	return shareholder, nil
 }
 
-func declarationCompanySnapshot(profile identity.CompanyProfile, shareholder identity.Shareholder) (CompanySnapshot, error) {
+func (s *Service) declarationCompanySnapshot(ctx context.Context, profile identity.CompanyProfile, shareholder identity.Shareholder) (CompanySnapshot, error) {
 	snapshot := CompanySnapshot{
 		TradingName:      strings.TrimSpace(profile.TradingName),
 		LegalName:        strings.TrimSpace(profile.LegalName),
 		CompanyNumber:    strings.TrimSpace(profile.CompanyNumber),
 		RegisteredOffice: profile.RegisteredOffice,
 		DirectorName:     strings.TrimSpace(shareholder.Name),
+	}
+	if profile.LogoAssetID != nil {
+		logoID := identity.AssetID(strings.TrimSpace(string(*profile.LogoAssetID)))
+		if logoID != "" {
+			logoURL := "/api/identity/assets/" + string(logoID)
+			snapshot.LogoAssetID = &logoID
+			snapshot.LogoAssetURL = &logoURL
+			asset, err := s.identity.Asset(ctx, logoID)
+			if err != nil {
+				return CompanySnapshot{}, fmt.Errorf("dividends: snapshot company logo asset: %w", err)
+			}
+			dataURI := "data:" + asset.MIME + ";base64," + base64.StdEncoding.EncodeToString(asset.Bytes)
+			snapshot.LogoDataURI = &dataURI
+		}
 	}
 	normalized, err := normalizeCompanySnapshot(&snapshot)
 	if err != nil {

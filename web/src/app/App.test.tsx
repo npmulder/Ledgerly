@@ -10,6 +10,8 @@ const originalLocalStorage = Object.getOwnPropertyDescriptor(
   window,
   "localStorage",
 );
+const dividendSnapshotLogoDataURI =
+  "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciLz4=";
 
 afterEach(() => {
   cleanup();
@@ -182,6 +184,10 @@ describe("App routing shell", () => {
     expect(screen.getByText("£30.00")).toBeInTheDocument();
     expect(screen.getByText("£3,000.00")).toBeInTheDocument();
     expect(screen.getByText(/withholding: none/)).toBeInTheDocument();
+    expect(document.querySelector(".dividend-print__brand img")).toHaveAttribute(
+      "src",
+      dividendSnapshotLogoDataURI,
+    );
     expect(
       document.querySelector(".app-shell__header"),
     ).not.toBeInTheDocument();
@@ -440,6 +446,9 @@ function dividendDocumentPayload() {
         company_number: "137792C",
         director_name: "N. Meyer",
         legal_name: "NPM Limited",
+        logo_asset_id: "logo-snapshot",
+        logo_asset_url: "/api/identity/assets/logo-snapshot",
+        logo_data_uri: dividendSnapshotLogoDataURI,
         registered_office: {
           country: "IM",
           line1: "18 Athol St",
