@@ -122,6 +122,45 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/banking/payee-rules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List payee rules
+         * @description Returns learned and manually-created payee categorisation rules for review and correction.
+         */
+        get: operations["bankingListPayeeRules"];
+        put?: never;
+        /** Create a payee rule */
+        post: operations["bankingCreatePayeeRule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/banking/payee-rules/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update a payee rule */
+        put: operations["bankingUpdatePayeeRule"];
+        post?: never;
+        /** Delete a payee rule */
+        delete: operations["bankingDeletePayeeRule"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/banking/recent": {
         parameters: {
             query?: never;
@@ -981,7 +1020,11 @@ export interface paths {
         /** List chart of accounts */
         get: operations["ledgerListAccounts"];
         put?: never;
-        post?: never;
+        /**
+         * Create an expense account
+         * @description Creates a user-managed ledger expense account for Banking recode and DLA expense categories. Only expense accounts can be created through this endpoint.
+         */
+        post: operations["ledgerCreateExpenseAccount"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1397,6 +1440,15 @@ export interface components {
             match_mode: "exact" | "contains";
             matcher: string;
             times_applied: number;
+        };
+        BankingPayeeRuleRequest: {
+            account_code: string;
+            /** @enum {string} */
+            match_mode: "exact" | "contains";
+            matcher: string;
+        };
+        BankingPayeeRulesResponse: {
+            rules: components["schemas"]["BankingPayeeRule"][];
         };
         BankingReasonRequest: {
             reason: string;
@@ -2168,6 +2220,16 @@ export interface components {
         LedgerAccountsResponse: {
             accounts: components["schemas"]["LedgerAccount"][];
         };
+        LedgerCreateExpenseAccountRequest: {
+            /** @description Unique ledger account code in ####-slug form. */
+            code: string;
+            name: string;
+            /**
+             * @description Optional guard value; when present it must be expense.
+             * @enum {string}
+             */
+            type?: "expense";
+        };
         LedgerEntriesResponse: {
             entries: components["schemas"]["LedgerEntry"][];
             next_cursor: string | null;
@@ -2686,6 +2748,215 @@ export interface operations {
             };
             /** @description Authentication required */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    bankingListPayeeRules: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Payee rules */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BankingPayeeRulesResponse"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    bankingCreatePayeeRule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BankingPayeeRuleRequest"];
+            };
+        };
+        responses: {
+            /** @description Payee rule created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BankingPayeeRule"];
+                };
+            };
+            /** @description Malformed payee-rule request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Payee-rule request body is too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Payee-rule validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    bankingUpdatePayeeRule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Payee rule ID. */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BankingPayeeRuleRequest"];
+            };
+        };
+        responses: {
+            /** @description Payee rule updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BankingPayeeRule"];
+                };
+            };
+            /** @description Malformed payee-rule request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Payee rule was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Payee-rule request body is too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Payee-rule validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    bankingDeletePayeeRule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Payee rule ID. */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Payee rule deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Malformed payee-rule ID */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Payee rule was not found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5232,7 +5503,10 @@ export interface operations {
     };
     ledgerListAccounts: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Optionally filter accounts by ledger account type. Use type=expense for recode/category pickers. */
+                type?: "asset" | "liability" | "equity" | "income" | "expense";
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -5248,8 +5522,95 @@ export interface operations {
                     "application/json": components["schemas"]["LedgerAccountsResponse"];
                 };
             };
+            /** @description Invalid account query */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description Authentication required */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    ledgerCreateExpenseAccount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LedgerCreateExpenseAccountRequest"];
+            };
+        };
+        responses: {
+            /** @description Expense account created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LedgerAccount"];
+                };
+            };
+            /** @description Invalid JSON request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Account code already exists */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Request body too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unsupported media type */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Account validation failed */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -1071,6 +1071,17 @@
   gap: var(--layout-grid-gap-large);
 }
 
+.banking-rules-screen {
+  display: grid;
+  align-content: start;
+  min-width: 0;
+  gap: var(--layout-grid-gap-large);
+}
+
+.banking-rules-screen > * {
+  min-width: 0;
+}
+
 .banking-screen__header {
   display: flex;
   align-items: flex-end;
@@ -1204,6 +1215,10 @@
   line-height: 1.2;
 }
 
+.banking-review-card {
+  overflow: visible;
+}
+
 .banking-review-card .ui-card__body {
   display: grid;
   gap: 14px;
@@ -1323,15 +1338,51 @@
   position: absolute;
   z-index: 5;
   top: calc(100% + 6px);
-  right: 0;
   display: grid;
-  min-width: 220px;
   gap: 10px;
   padding: 12px;
   border: var(--border-card);
   border-radius: var(--radius-card);
   background: var(--color-card);
   box-shadow: var(--shadow-screen);
+}
+
+.banking-recode__panel {
+  left: 0;
+  min-width: 260px;
+  max-width: min(320px, calc(100vw - 48px));
+}
+
+.banking-card-menu__panel {
+  right: 0;
+  min-width: 140px;
+}
+
+.expense-category-picker {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.expense-category-picker__form {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--color-border-input);
+  border-radius: var(--radius-input);
+  background: var(--color-panel);
+}
+
+.expense-category-picker__fields,
+.expense-category-picker__actions {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.expense-category-picker__actions {
+  grid-template-columns: repeat(2, max-content);
 }
 
 .banking-card-menu {
@@ -1363,6 +1414,36 @@
 
 .banking-card-menu__panel button:hover {
   background: var(--color-danger-row-tint);
+}
+
+.banking-rule-form {
+  display: grid;
+  grid-template-columns:
+    minmax(180px, 1.4fr) minmax(140px, 0.8fr) minmax(160px, 1fr)
+    auto;
+  align-items: end;
+  gap: var(--layout-grid-gap);
+}
+
+.banking-rule-form .ui-button {
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.banking-rules-table .ui-table {
+  min-width: 860px;
+}
+
+.banking-rules-table .ui-input,
+.banking-rules-table .ui-select {
+  min-width: 150px;
+}
+
+.banking-rule-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .banking-recent-list {
@@ -3244,6 +3325,16 @@ article.ui-stat-card.dashboard-stat-card--unavailable {
 
   .banking-account-card__side {
     justify-items: start;
+  }
+
+  .banking-rule-form {
+    grid-template-columns: 1fr;
+  }
+
+  .banking-rule-form .ui-button,
+  .banking-rule-actions,
+  .banking-rule-actions .ui-button {
+    width: 100%;
   }
 
   .banking-review-card__actions,
