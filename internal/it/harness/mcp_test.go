@@ -212,6 +212,31 @@ func TestMCPWriteToolsAgainstHarness(t *testing.T) {
 	if got := len(fakeMailer.Messages()); got != 1 {
 		t.Fatalf("mail count after read-only rejection = %d, want 1", got)
 	}
+
+	draftCountBeforeInvalid := invoiceListTotalCount(t, h, "draft")
+	invalidInput := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":"create-invalid-qty","method":"tools/call","params":{"name":"create_draft_invoice","arguments":{"clientId":"` + fabrikam.ID + `","lines":[{"description":"Invalid quantity","qty":"abc","unitPriceMinor":1000,"currency":"GBP"}]}}}`,
+		`{"jsonrpc":"2.0","id":"create-zero-qty","method":"tools/call","params":{"name":"create_draft_invoice","arguments":{"clientId":"` + fabrikam.ID + `","lines":[{"description":"Zero quantity","qty":"0","unitPriceMinor":1000,"currency":"GBP"}]}}}`,
+		"",
+	}, "\n")
+	invalidResponses := runLedgerlyMCP(t, repoRoot, configPath, invalidInput)
+	assertHarnessProtocolErrorContains(t, invalidResponses[`"create-invalid-qty"`], "must be a positive decimal")
+	assertHarnessProtocolErrorContains(t, invalidResponses[`"create-zero-qty"`], "must be greater than zero")
+	if got := invoiceListTotalCount(t, h, "draft"); got != draftCountBeforeInvalid {
+		t.Fatalf("draft count after invalid quantities = %d, want unchanged %d", got, draftCountBeforeInvalid)
+	}
+
+	archiveInvoicingClient(t, h, fabrikam.ID)
+	draftCountBeforeArchived := invoiceListTotalCount(t, h, "draft")
+	archivedInput := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":"create-archived-client","method":"tools/call","params":{"name":"create_draft_invoice","arguments":{"clientId":"` + fabrikam.ID + `","lines":[{"description":"Archived client","qty":"1","unitPriceMinor":1000,"currency":"GBP"}]}}}`,
+		"",
+	}, "\n")
+	archivedResponses := runLedgerlyMCP(t, repoRoot, configPath, archivedInput)
+	assertHarnessProtocolErrorContains(t, archivedResponses[`"create-archived-client"`], "did not match an active client")
+	if got := invoiceListTotalCount(t, h, "draft"); got != draftCountBeforeArchived {
+		t.Fatalf("draft count after archived client rejection = %d, want unchanged %d", got, draftCountBeforeArchived)
+	}
 }
 
 func runLedgerlyMCP(t *testing.T, repoRoot string, configPath string, input string) map[string]mcpHarnessResponse {
@@ -347,6 +372,25 @@ func assertHarnessToolErrorContains(t *testing.T, response mcpHarnessResponse, w
 	if len(result.Content) != 1 || !strings.Contains(result.Content[0].Text, want) {
 		t.Fatalf("tool error content = %+v, want %q", result.Content, want)
 	}
+}
+
+func assertHarnessProtocolErrorContains(t *testing.T, response mcpHarnessResponse, want string) {
+	t.Helper()
+	if response.Error == nil {
+		t.Fatalf("MCP protocol error = nil, want message containing %q", want)
+	}
+	if !strings.Contains(response.Error.Message, want) {
+		t.Fatalf("MCP protocol error = %+v, want message containing %q", response.Error, want)
+	}
+}
+
+func invoiceListTotalCount(t *testing.T, h *harness.Harness, status string) int {
+	t.Helper()
+	response := performInvoiceRequest(t, h, http.MethodGet, "/api/invoicing/invoices?status="+url.QueryEscape(status)+"&limit=100&offset=0", nil, true)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("list %s invoices status = %d, want %d; body=%s", status, response.StatusCode, http.StatusOK, response.BodyString())
+	}
+	return decodeInvoicesResponse(t, response).TotalCount
 }
 
 func assertAuditLogContains(t *testing.T, stderr string, toolName string, patName string) {

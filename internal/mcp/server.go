@@ -625,25 +625,26 @@ func (s *Server) resolveInvoiceClientID(ctx context.Context, args createDraftInv
 	switch {
 	case clientID != "" && clientName != "":
 		return "", invalidParams("create_draft_invoice accepts either clientId or clientName, not both")
-	case clientID != "":
-		return clientID, nil
-	case clientName == "":
+	case clientID == "" && clientName == "":
 		return "", invalidParams("create_draft_invoice requires clientId or clientName")
 	}
 
-	response, err := s.client.InvoicingListClientsWithResponse(ctx, &gen.InvoicingListClientsParams{})
+	activeClients, err := s.activeInvoiceClients(ctx)
 	if err != nil {
-		return "", apiUnavailable(err)
+		return "", err
 	}
-	if response.JSON200 == nil {
-		return "", apiProblem(response.StatusCode(), response.Status(), response.Body, response.ApplicationproblemJSON401)
+
+	if clientID != "" {
+		for _, client := range activeClients {
+			if strings.TrimSpace(client.Id) == clientID {
+				return clientID, nil
+			}
+		}
+		return "", invalidParams(fmt.Sprintf("create_draft_invoice.clientId %q did not match an active client", clientID))
 	}
 
 	var matches []gen.InvoicingClient
-	for _, client := range response.JSON200.Clients {
-		if client.ArchivedAt != nil {
-			continue
-		}
+	for _, client := range activeClients {
 		if strings.EqualFold(strings.TrimSpace(client.Name), clientName) {
 			matches = append(matches, client)
 		}
@@ -656,6 +657,25 @@ func (s *Server) resolveInvoiceClientID(ctx context.Context, args createDraftInv
 	default:
 		return "", invalidParams(fmt.Sprintf("create_draft_invoice.clientName %q matched multiple active clients; use clientId", clientName))
 	}
+}
+
+func (s *Server) activeInvoiceClients(ctx context.Context) ([]gen.InvoicingClient, error) {
+	includeArchived := false
+	response, err := s.client.InvoicingListClientsWithResponse(ctx, &gen.InvoicingListClientsParams{IncludeArchived: &includeArchived})
+	if err != nil {
+		return nil, apiUnavailable(err)
+	}
+	if response.JSON200 == nil {
+		return nil, apiProblem(response.StatusCode(), response.Status(), response.Body, response.ApplicationproblemJSON401)
+	}
+	activeClients := make([]gen.InvoicingClient, 0, len(response.JSON200.Clients))
+	for _, client := range response.JSON200.Clients {
+		if client.ArchivedAt != nil {
+			continue
+		}
+		activeClients = append(activeClients, client)
+	}
+	return activeClients, nil
 }
 
 func invoiceLinesFromArgs(args []draftInvoiceLineArg) ([]gen.InvoicingInvoiceLineInput, string, error) {
@@ -707,6 +727,9 @@ func parseQuantityArg(raw json.RawMessage) (string, error) {
 		if qty == "" {
 			return "", errors.New("must not be empty")
 		}
+		if err := validatePositiveDecimalQuantity(qty); err != nil {
+			return "", err
+		}
 		return qty, nil
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
@@ -717,9 +740,37 @@ func parseQuantityArg(raw json.RawMessage) (string, error) {
 		if qty == "" {
 			return "", errors.New("must not be empty")
 		}
+		if err := validatePositiveDecimalQuantity(qty); err != nil {
+			return "", err
+		}
 		return qty, nil
 	}
 	return "", errors.New("must be a decimal string or JSON number")
+}
+
+func validatePositiveDecimalQuantity(value string) error {
+	parts := strings.Split(value, ".")
+	if len(parts) > 2 || parts[0] == "" {
+		return errors.New("must be a positive decimal")
+	}
+	positive := false
+	for _, part := range parts {
+		if part == "" {
+			return errors.New("must be a positive decimal")
+		}
+		for _, char := range part {
+			if char < '0' || char > '9' {
+				return errors.New("must be a positive decimal")
+			}
+			if char != '0' {
+				positive = true
+			}
+		}
+	}
+	if !positive {
+		return errors.New("must be greater than zero")
+	}
+	return nil
 }
 
 func (s *Server) editorURL(invoiceID string) string {
