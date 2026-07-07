@@ -67,11 +67,13 @@ type StatusPayload struct {
 }
 
 // TxnRef is the opaque banking-origin payload needed to file a director drawing.
-// Amount must already be converted to GBP by the caller.
+// Amount is the GBP DLA presentation amount. CashAmount is the positive native
+// amount that left the bank account; zero defaults to Amount for GBP cash.
 type TxnRef struct {
 	Ref             string
 	Date            time.Time
 	Amount          money.Money
+	CashAmount      money.Money
 	CashAccountCode ledger.AccountCode
 	Description     string
 }
@@ -84,6 +86,7 @@ type NewEntry struct {
 	Description        string
 	Amount             money.Money
 	Source             string
+	CashAmount         money.Money
 	CashAccountCode    ledger.AccountCode
 	ExpenseAccountCode ledger.AccountCode
 }

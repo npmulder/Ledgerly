@@ -34,7 +34,7 @@ func TestSeededChartOfAccounts(t *testing.T) {
 	assertSeedAccount(t, byCode, "1100-debtors-eur", "Trade debtors EUR", AccountTypeAsset, "EUR")
 	assertSeedAccount(t, byCode, "1101-debtors-gbp", "Trade debtors GBP", AccountTypeAsset, "GBP")
 	assertSeedAccount(t, byCode, "2200-vat-control", "VAT control", AccountTypeLiability, "")
-	assertSeedAccount(t, byCode, "2300-directors-loan", "Director's loan account", AccountTypeLiability, "GBP")
+	assertSeedAccount(t, byCode, "2300-directors-loan", "Director's loan account", AccountTypeLiability, "")
 	assertSeedAccount(t, byCode, "3000-retained-earnings", "Retained earnings", AccountTypeEquity, "GBP")
 	assertSeedAccount(t, byCode, "4000-sales", "Sales", AccountTypeIncome, "")
 	assertSeedAccount(t, byCode, "4900-fx-gain-loss", "Realised FX gain/loss", AccountTypeIncome, "GBP")

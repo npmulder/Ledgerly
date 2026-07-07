@@ -142,6 +142,7 @@ func (s *Service) FileToDLA(ctx context.Context, txnID TransactionID) (_ FileToD
 		Ref:             bankingTxnRef(txn.ID),
 		Date:            txn.Date,
 		Amount:          drawingGBP,
+		CashAmount:      drawingNative,
 		CashAccountCode: account.LedgerAccountCode,
 		Description:     fmt.Sprintf("Banking DLA drawing %s", transactionDisplayRef(txn)),
 	}); err != nil {
