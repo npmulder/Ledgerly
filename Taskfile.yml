@@ -133,3 +133,14 @@ tasks:
           git status --short -- internal/cli/gen
           exit 1
         fi
+
+  docs:generate:
+    desc: Generate committed CLI documentation
+    cmds:
+      - go run ./cmd/ledgerly docs generate --output docs/cli.md
+
+  docs:drift-check:
+    desc: Regenerate CLI documentation and fail when committed output is stale
+    cmds:
+      - task: docs:generate
+      - git diff --exit-code -- docs/cli.md

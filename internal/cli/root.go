@@ -6,20 +6,25 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/npmulder/ledgerly/internal/cli/gen"
 )
 
 type Runtime struct {
-	stdout     io.Writer
-	stderr     io.Writer
-	httpClient *http.Client
-	configPath string
-	json       bool
-	yes        bool
+	stdout      io.Writer
+	stderr      io.Writer
+	stdin       io.Reader
+	httpClient  *http.Client
+	configPath  string
+	commandArgs []string
+	json        bool
+	yes         bool
+	stdinIsTTY  func() bool
 }
 
 type Option func(*Runtime)
@@ -30,10 +35,24 @@ func WithHTTPClient(client *http.Client) Option {
 	}
 }
 
+func WithInput(stdin io.Reader, isTTY bool) Option {
+	return func(runtime *Runtime) {
+		runtime.stdin = stdin
+		runtime.stdinIsTTY = func() bool {
+			return isTTY
+		}
+	}
+}
+
 func Execute(ctx context.Context, args []string, stdout, stderr io.Writer, opts ...Option) error {
 	runtime := &Runtime{
-		stdout: stdout,
-		stderr: stderr,
+		stdout:      stdout,
+		stderr:      stderr,
+		stdin:       os.Stdin,
+		commandArgs: append([]string(nil), args...),
+	}
+	runtime.stdinIsTTY = func() bool {
+		return isTerminal(runtime.stdin)
 	}
 	for _, opt := range opts {
 		opt(runtime)
@@ -73,8 +92,17 @@ func newRootCommand(runtime *Runtime) *cobra.Command {
 		newReportCommand(runtime),
 		newAdvisorCommand(runtime),
 		newRatesCommand(runtime),
+		newDocsCommand(runtime),
 	)
 	return root
+}
+
+func isTerminal(reader io.Reader) bool {
+	file, ok := reader.(*os.File)
+	if !ok {
+		return false
+	}
+	return term.IsTerminal(int(file.Fd()))
 }
 
 func newAuthCommand(runtime *Runtime) *cobra.Command {

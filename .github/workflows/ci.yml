@@ -183,6 +183,9 @@ jobs:
       - name: Unit tests
         run: task test
 
+      - name: CLI docs drift check
+        run: task docs:drift-check
+
       - name: Money package coverage
         run: |
           go test ./internal/moneyfx/money -covermode=count -coverprofile=/tmp/moneyfx-money.cover
