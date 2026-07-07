@@ -137,6 +137,18 @@ describe("App routing shell", () => {
     expect(screen.queryByRole("banner")).not.toBeInTheDocument();
   });
 
+  it("renders registration outside the authenticated shell", () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({}, 404));
+
+    renderAtWithFetch("/register", fetchImpl);
+
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Set up Ledgerly" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("banner")).not.toBeInTheDocument();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it("renders a shell 404 for unknown app routes", async () => {
     renderAt("/missing-screen");
 
