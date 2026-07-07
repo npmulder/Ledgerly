@@ -1172,7 +1172,7 @@ func renderReportPL(runtime *Runtime, data *gen.ReportsPLResponse) error {
 }
 
 func renderReportVAT(runtime *Runtime, data *gen.ReportsVATResponse) error {
-	if data.Status == gen.ReportsVATResponseStatusNotRegistered {
+	if data.Status == gen.NotRegistered {
 		_, err := fmt.Fprintln(runtime.stdout, "Not VAT registered.")
 		if err != nil {
 			return err

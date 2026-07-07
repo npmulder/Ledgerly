@@ -334,6 +334,12 @@ const (
 	ReportsShareResponseStatusSent       ReportsShareResponseStatus = "sent"
 )
 
+// Defines values for ReportsVATResponseStatus.
+const (
+	NotRegistered ReportsVATResponseStatus = "not_registered"
+	Registered    ReportsVATResponseStatus = "registered"
+)
+
 // Defines values for AdvisorListInsightsParamsSurface.
 const (
 	Banking   AdvisorListInsightsParamsSurface = "banking"
@@ -1685,12 +1691,6 @@ type ReportsVATResponse struct {
 
 // ReportsVATResponseStatus defines model for ReportsVATResponse.Status.
 type ReportsVATResponseStatus string
-
-// Defines values for ReportsVATResponseStatus.
-const (
-	ReportsVATResponseStatusNotRegistered ReportsVATResponseStatus = "not_registered"
-	ReportsVATResponseStatusRegistered    ReportsVATResponseStatus = "registered"
-)
 
 // Shareholder defines model for Shareholder.
 type Shareholder struct {
