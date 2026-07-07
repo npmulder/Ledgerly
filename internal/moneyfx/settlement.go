@@ -2,7 +2,6 @@ package moneyfx
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"math/big"
 	"strings"
@@ -40,7 +39,7 @@ type realisedFXHandler struct {
 
 // Handle consumes invoicing.InvoiceSettled events.
 func (h realisedFXHandler) Handle(ctx context.Context, tx db.Tx, evt bus.Event) error {
-	settled, err := invoiceSettledEvent(evt)
+	settled, err := invoicing.InvoiceSettledFromEvent(evt)
 	if err != nil {
 		return err
 	}
@@ -58,7 +57,7 @@ func (h realisedFXHandler) Handle(ctx context.Context, tx db.Tx, evt bus.Event) 
 // Dr 1101-debtors-gbp GBP 45.00 / Cr 4900-fx-gain-loss GBP 45.00. A loss
 // reverses those signs. No EUR native posting is added; the realised FX entry
 // is GBP-only and internally zero-balanced.
-func (h realisedFXHandler) handleInvoiceSettled(ctx context.Context, tx db.Tx, evt invoicing.InvoiceSettled) error {
+func (h realisedFXHandler) handleInvoiceSettled(ctx context.Context, tx db.Tx, evt invoicing.InvoiceSettled) (err error) {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -74,6 +73,16 @@ func (h realisedFXHandler) handleInvoiceSettled(ctx context.Context, tx db.Tx, e
 	if h.bus == nil {
 		return fmt.Errorf("moneyfx: realised FX requires event bus")
 	}
+
+	restoreScope, err := db.ScopeTransactionToModule(ctx, tx, ModuleName)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if restoreErr := restoreScope(ctx); err == nil && restoreErr != nil {
+			err = restoreErr
+		}
+	}()
 
 	normalized, err := normalizeInvoiceSettled(evt)
 	if err != nil {
@@ -225,18 +234,4 @@ func normalizeInvoiceSettled(evt invoicing.InvoiceSettled) (invoicing.InvoiceSet
 		return invoicing.InvoiceSettled{}, fmt.Errorf("moneyfx: settlement source ref is required")
 	}
 	return normalized, nil
-}
-
-func invoiceSettledEvent(evt bus.Event) (invoicing.InvoiceSettled, error) {
-	switch e := evt.(type) {
-	case invoicing.InvoiceSettled:
-		return e, nil
-	case *invoicing.InvoiceSettled:
-		if e == nil {
-			return invoicing.InvoiceSettled{}, errors.New("moneyfx: nil InvoiceSettled event")
-		}
-		return *e, nil
-	default:
-		return invoicing.InvoiceSettled{}, fmt.Errorf("moneyfx: got %T, want invoicing.InvoiceSettled", evt)
-	}
 }

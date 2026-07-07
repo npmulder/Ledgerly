@@ -4,6 +4,7 @@ package db
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -48,6 +49,46 @@ type Tx interface {
 	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// ScopeTransactionToModule switches tx to module's role and search_path until
+// the returned restore function is called.
+//
+// Use this in same-transaction cross-module event subscribers before writing
+// through the subscriber module's store. The transaction remains the publisher's
+// original transaction; only the transaction-local role and search_path change.
+// The database user or current module role must be allowed to SET ROLE to the
+// target module role.
+func ScopeTransactionToModule(ctx context.Context, tx Tx, module string) (func(context.Context) error, error) {
+	if tx == nil {
+		return nil, errors.New("db: nil transaction")
+	}
+	role, err := RoleForModule(module)
+	if err != nil {
+		return nil, err
+	}
+
+	var previousRole string
+	var previousSearchPath string
+	if err := tx.QueryRow(ctx, "SELECT current_role, current_setting('search_path')").Scan(&previousRole, &previousSearchPath); err != nil {
+		return nil, fmt.Errorf("db: read transaction module scope: %w", err)
+	}
+	if _, err := tx.Exec(ctx, "SET LOCAL ROLE "+pgx.Identifier{role}.Sanitize()); err != nil {
+		return nil, fmt.Errorf("db: set transaction role %s: %w", role, err)
+	}
+	if _, err := tx.Exec(ctx, "SELECT set_config('search_path', $1, true)", module); err != nil {
+		return nil, fmt.Errorf("db: set transaction search_path %s: %w", module, err)
+	}
+
+	return func(ctx context.Context) error {
+		if _, err := tx.Exec(ctx, "SET LOCAL ROLE "+pgx.Identifier{previousRole}.Sanitize()); err != nil {
+			return fmt.Errorf("db: restore transaction role %s: %w", previousRole, err)
+		}
+		if _, err := tx.Exec(ctx, "SELECT set_config('search_path', $1, true)", previousSearchPath); err != nil {
+			return fmt.Errorf("db: restore transaction search_path %s: %w", previousSearchPath, err)
+		}
+		return nil
+	}, nil
 }
 
 // PoolOption customizes a pgx pool before it is opened.

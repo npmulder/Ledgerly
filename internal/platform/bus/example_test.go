@@ -19,6 +19,14 @@ func (invoiceSettled) Name() string {
 	return "invoicing.InvoiceSettled"
 }
 
+func invoiceSettledFromEvent(evt bus.Event) (invoiceSettled, error) {
+	settled, ok := evt.(invoiceSettled)
+	if !ok {
+		return invoiceSettled{}, fmt.Errorf("got %T, want invoiceSettled", evt)
+	}
+	return settled, nil
+}
+
 // internal/invoicing/api.go
 type invoicingAPI struct {
 	bus *bus.Bus
@@ -34,7 +42,10 @@ type moneyfxAPI struct{}
 
 func (moneyfxAPI) SubscribeEvents(b *bus.Bus) {
 	b.Subscribe("invoicing.InvoiceSettled", func(_ context.Context, tx db.Tx, evt bus.Event) error {
-		settled := evt.(invoiceSettled)
+		settled, err := invoiceSettledFromEvent(evt)
+		if err != nil {
+			return err
+		}
 
 		// Real code would post realised FX through the ledger API using tx.
 		_ = tx
