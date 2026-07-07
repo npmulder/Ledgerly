@@ -32,7 +32,7 @@ func TestReportsExportPackHTTPAssemblesZipAndSharesAttachment(t *testing.T) {
 		MailSender: fakeMailer,
 		ReportsPDF: fakeReportsPDFEngine{},
 	})
-	seedReportsExportQuarter(t, h)
+	seedReportsExportQuarter(t, h, fixtures.CompanyVATRegistered(true))
 
 	var pl reportsPLResponse
 	getJSON(t, h, "/api/reports/pl?from=2026-04-01&to=2026-06-30", &pl)
@@ -86,6 +86,24 @@ func TestReportsExportPackHTTPAssemblesZipAndSharesAttachment(t *testing.T) {
 	}
 }
 
+func TestReportsExportPackHTTPOmitsVATWhenNotRegistered(t *testing.T) {
+	h := harness.New(t, harness.Options{
+		ClockStart: time.Date(2026, 6, 15, 9, 0, 0, 0, time.UTC),
+		ReportsPDF: fakeReportsPDFEngine{},
+	})
+	seedReportsExportQuarter(t, h, fixtures.CompanyVATRegistered(false))
+
+	location := exportLocation(t, h, "/api/reports/export?from=2026-04-01&to=2026-06-30")
+	files := readZipFiles(t, getBytes(t, h, location))
+
+	if _, ok := files["vat.csv"]; ok {
+		t.Fatalf("vat.csv present for non-registered company; files=%v", sortedKeys(files))
+	}
+	if bytes.Contains(files["manifest.json"], []byte("vat.csv")) {
+		t.Fatalf("manifest includes vat.csv for non-registered company: %s", string(files["manifest.json"]))
+	}
+}
+
 func TestReportsShareExportPackOversizeReturnsManualSend(t *testing.T) {
 	fakeMailer := mail.NewMemorySender()
 	h := harness.New(t, harness.Options{
@@ -94,7 +112,7 @@ func TestReportsShareExportPackOversizeReturnsManualSend(t *testing.T) {
 		ReportsPDF:        fakeReportsPDFEngine{},
 		ReportsShareLimit: 1,
 	})
-	seedReportsExportQuarter(t, h)
+	seedReportsExportQuarter(t, h, fixtures.CompanyVATRegistered(true))
 
 	share := postShareExport(t, h, "accountant@example.test", "2026-04-01", "2026-06-30")
 	if share.Status != string(reports.ShareStatusManualSend) {
@@ -108,9 +126,9 @@ func TestReportsShareExportPackOversizeReturnsManualSend(t *testing.T) {
 	}
 }
 
-func seedReportsExportQuarter(t *testing.T, h *harness.Harness) {
+func seedReportsExportQuarter(t *testing.T, h *harness.Harness, companyOverrides ...fixtures.CompanyOverride) {
 	t.Helper()
-	fixtures.Company(t, h)
+	fixtures.Company(t, h, companyOverrides...)
 	fixtures.Rates(t, h)
 	fabrikam := fixtures.Fabrikam(t, h)
 

@@ -63,6 +63,9 @@ func (s *Service) FilingCalendarContext(ctx context.Context) ([]Filing, error) {
 
 	filings := make([]Filing, 0, len(deadlines))
 	for _, deadline := range deadlines {
+		if deadline.Key == vatReturnFilingKey && !facts.IsVATRegistered {
+			continue
+		}
 		if candidate, ok := candidatesByKey[deadline.Key]; ok && candidate.DueDate.Before(today) {
 			deadline = candidate
 		}

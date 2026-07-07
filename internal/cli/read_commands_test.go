@@ -422,7 +422,7 @@ const dividendHistoryFixture = `{"declarations":[{"id":"div_1","declared_date":"
 
 const reportPLFixture = `{"period":{"from":"2026-04-01","to":"2026-06-30"},"tax_year":"2026-27","income":[{"label":"Contoso services","client_id":"client_contoso","client_name":"Contoso GmbH","currency":"EUR","amount":{"amount_minor":450000,"currency":"GBP"}}],"income_total":{"amount_minor":451500,"currency":"GBP"},"realised_fx_gains":{"label":"Realised FX gains on settlement","amount":{"amount_minor":1500,"currency":"GBP"}},"expenses":[{"account_code":"5010-software","account_name":"Software","amount":{"amount_minor":10000,"currency":"GBP"}}],"expense_total":{"amount_minor":10000,"currency":"GBP"},"profit_before_tax":{"amount_minor":441500,"currency":"GBP"},"corporate_tax":{"label":"IoM income tax at 0%","rate":"0","tax_year":"2026-27","amount":{"amount_minor":0,"currency":"GBP"}},"net_profit":{"amount_minor":441500,"currency":"GBP"}}`
 
-const reportVATFixture = `{"period":{"from":"2026-04-01","to":"2026-06-30"},"box1":{"amount_minor":90000,"currency":"GBP"},"box4":{"amount_minor":2000,"currency":"GBP"},"box6":{"amount_minor":450000,"currency":"GBP"},"net_position":{"amount_minor":88000,"currency":"GBP"}}`
+const reportVATFixture = `{"period":{"from":"2026-04-01","to":"2026-06-30"},"status":"registered","box1":{"amount_minor":90000,"currency":"GBP"},"box4":{"amount_minor":2000,"currency":"GBP"},"box6":{"amount_minor":450000,"currency":"GBP"},"net_position":{"amount_minor":88000,"currency":"GBP"}}`
 
 const reportCalendarFixture = `{"filings":[{"key":"vat_return","label":"VAT return","authority":"IoM C&E","due_date":"2026-07-31","days_until":24,"status":"due-soon"}]}`
 

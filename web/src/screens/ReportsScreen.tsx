@@ -375,17 +375,22 @@ function VATReturnCard({
   readonly period: ReportsPeriod;
   readonly vat: ReportsVAT | undefined;
 }) {
-  const reclaim = (vat?.net_position.amount_minor ?? 0) < 0;
+  const hasFigures = hasVATFigures(vat);
+  const reclaim = hasFigures && vat.net_position.amount_minor < 0;
 
   return (
     <Card
       className="reports-vat-card"
       title={<span>VAT return · {formatVATPeriodLabel(period.vatPeriod)}</span>}
-      actions={filing ? <DueBadge filing={filing} prefix="DUE" /> : null}
+      actions={
+        filing && hasFigures ? <DueBadge filing={filing} prefix="DUE" /> : null
+      }
     >
       {isLoading ? (
         <p className="type-secondary">Loading VAT return.</p>
-      ) : vat ? (
+      ) : vat?.status === "not_registered" ? (
+        <p className="type-secondary">Not VAT registered.</p>
+      ) : hasFigures ? (
         <>
           <div className="reports-vat-lines">
             <ReportLine amount={vat.box1} label="Box 1 · VAT due on sales" />
@@ -413,6 +418,21 @@ function VATReturnCard({
         <p className="type-secondary">Unable to load VAT return.</p>
       )}
     </Card>
+  );
+}
+
+function hasVATFigures(vat: ReportsVAT | undefined): vat is ReportsVAT & {
+  readonly box1: ReportsMoney;
+  readonly box4: ReportsMoney;
+  readonly box6: ReportsMoney;
+  readonly net_position: ReportsMoney;
+} {
+  return (
+    vat?.status === "registered" &&
+    vat.box1 !== undefined &&
+    vat.box4 !== undefined &&
+    vat.box6 !== undefined &&
+    vat.net_position !== undefined
   );
 }
 

@@ -269,9 +269,10 @@ func reportsComponents() map[string]any {
 			},
 			"ReportsVATResponse": map[string]any{
 				"type":     "object",
-				"required": []string{"period", "box1", "box4", "box6", "net_position"},
+				"required": []string{"period", "status"},
 				"properties": map[string]any{
 					"period":       map[string]any{"$ref": "#/components/schemas/ReportsPeriod"},
+					"status":       map[string]any{"type": "string", "enum": []string{string(VATRegistrationRegistered), string(VATRegistrationNotRegistered)}},
 					"box1":         map[string]any{"$ref": "#/components/schemas/ReportsMoney"},
 					"box4":         map[string]any{"$ref": "#/components/schemas/ReportsMoney"},
 					"box6":         map[string]any{"$ref": "#/components/schemas/ReportsMoney"},

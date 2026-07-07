@@ -334,6 +334,12 @@ const (
 	ReportsShareResponseStatusSent       ReportsShareResponseStatus = "sent"
 )
 
+// Defines values for ReportsVATResponseStatus.
+const (
+	NotRegistered ReportsVATResponseStatus = "not_registered"
+	Registered    ReportsVATResponseStatus = "registered"
+)
+
 // Defines values for AdvisorListInsightsParamsSurface.
 const (
 	Banking   AdvisorListInsightsParamsSurface = "banking"
@@ -1675,12 +1681,16 @@ type ReportsTaxLine struct {
 
 // ReportsVATResponse defines model for ReportsVATResponse.
 type ReportsVATResponse struct {
-	Box1        ReportsMoney  `json:"box1"`
-	Box4        ReportsMoney  `json:"box4"`
-	Box6        ReportsMoney  `json:"box6"`
-	NetPosition ReportsMoney  `json:"net_position"`
-	Period      ReportsPeriod `json:"period"`
+	Box1        *ReportsMoney            `json:"box1,omitempty"`
+	Box4        *ReportsMoney            `json:"box4,omitempty"`
+	Box6        *ReportsMoney            `json:"box6,omitempty"`
+	NetPosition *ReportsMoney            `json:"net_position,omitempty"`
+	Period      ReportsPeriod            `json:"period"`
+	Status      ReportsVATResponseStatus `json:"status"`
 }
+
+// ReportsVATResponseStatus defines model for ReportsVATResponse.Status.
+type ReportsVATResponseStatus string
 
 // Shareholder defines model for Shareholder.
 type Shareholder struct {

@@ -2383,11 +2383,13 @@ export interface components {
             tax_year: string;
         };
         ReportsVATResponse: {
-            box1: components["schemas"]["ReportsMoney"];
-            box4: components["schemas"]["ReportsMoney"];
-            box6: components["schemas"]["ReportsMoney"];
-            net_position: components["schemas"]["ReportsMoney"];
+            box1?: components["schemas"]["ReportsMoney"];
+            box4?: components["schemas"]["ReportsMoney"];
+            box6?: components["schemas"]["ReportsMoney"];
+            net_position?: components["schemas"]["ReportsMoney"];
             period: components["schemas"]["ReportsPeriod"];
+            /** @enum {string} */
+            status: "registered" | "not_registered";
         };
         Shareholder: {
             class: string;
