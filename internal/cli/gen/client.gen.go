@@ -827,6 +827,8 @@ type DividendsCompanySnapshot struct {
 	CompanyNumber    string           `json:"company_number"`
 	DirectorName     string           `json:"director_name"`
 	LegalName        string           `json:"legal_name"`
+	LogoAssetId      *string          `json:"logo_asset_id"`
+	LogoAssetUrl     *string          `json:"logo_asset_url"`
 	RegisteredOffice DividendsAddress `json:"registered_office"`
 	TradingName      string           `json:"trading_name"`
 }
