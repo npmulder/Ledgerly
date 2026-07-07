@@ -51,6 +51,47 @@ func TestReportsVATReturnBoxesDomesticReverseChargeAndManualInputVAT(t *testing.
 	assertMoney(t, figures.NetPosition, -2_120, "GBP")
 }
 
+func TestReportsVATReturnSkipsUnregisteredCompanyInvoiceSends(t *testing.T) {
+	h := harness.New(t, harness.Options{ClockStart: time.Date(2025, 5, 1, 9, 0, 0, 0, time.UTC)})
+	profile := testIdentityProfile(t, h)
+	setTestVATRegistered(t, profile, false)
+	invoiceService := newInvoiceService(t, h, invoicing.WithIdentity(profile))
+	reportService := newReportsService(t, h, invoiceService)
+	ctx := context.Background()
+
+	fabrikam := fixtures.Fabrikam(t, h)
+	domestic := createInvoiceDraftForReports(t, invoiceService, fabrikam.ID, invoicing.Money{Amount: 10_000, Currency: string(invoicing.CurrencyGBP)})
+	sent, err := invoiceService.Send(ctx, domestic.ID)
+	if err != nil {
+		t.Fatalf("Send(unregistered domestic) error = %v", err)
+	}
+	assertMoney(t, sent.Totals.VAT, 0, "GBP")
+	if sent.SendLedgerEntryID == nil {
+		t.Fatal("SendLedgerEntryID = nil, want persisted send entry")
+	}
+
+	invoicePool := testdb.AsModule(t, invoicing.ModuleName)
+	var vatRegisteredAtSend bool
+	if err := invoicePool.QueryRow(ctx, `
+SELECT vat_registered_at_send
+FROM invoicing.invoice_send_vat_context
+WHERE send_ledger_entry_id = $1`, *sent.SendLedgerEntryID).Scan(&vatRegisteredAtSend); err != nil {
+		t.Fatalf("read send VAT context registration snapshot: %v", err)
+	}
+	if vatRegisteredAtSend {
+		t.Fatal("vat_registered_at_send = true, want false")
+	}
+
+	figures, err := reportService.VATReturn(ctx, reports.VATQuarterForDate(time.Date(2025, 5, 15, 0, 0, 0, 0, time.UTC)))
+	if err != nil {
+		t.Fatalf("VATReturn() error = %v", err)
+	}
+
+	assertMoney(t, figures.Box1, 0, "GBP")
+	assertMoney(t, figures.Box6, 0, "GBP")
+	assertMoney(t, figures.NetPosition, 0, "GBP")
+}
+
 func TestReportsVATReturnQuarterBoundaries(t *testing.T) {
 	h := harness.New(t, harness.Options{ClockStart: time.Date(2025, 6, 30, 9, 0, 0, 0, time.UTC)})
 	invoiceService := newInvoiceService(t, h)

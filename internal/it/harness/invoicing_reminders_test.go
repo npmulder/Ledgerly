@@ -26,7 +26,7 @@ func TestInvoicingInvoiceReminderHTTPEndpointSendsPDFAndRecordsRow(t *testing.T)
 		ClockStart: time.Date(2025, 5, 11, 9, 0, 0, 0, time.UTC),
 		MailSender: fakeMailer,
 	})
-	fixtures.Company(t, h)
+	fixtures.Company(t, h, fixtures.CompanyVATRegistered(true))
 	fixtures.Rates(t, h)
 	fabrikam := fixtures.Fabrikam(t, h)
 

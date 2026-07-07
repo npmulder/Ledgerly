@@ -90,7 +90,7 @@ func invoiceMatchTotals(invoice Invoice) (Invoice, error) {
 	}
 
 	vat := Money{Currency: string(invoice.Currency)}
-	if invoice.VATTreatment == VATTreatmentDomestic && !subtotal.IsZero() {
+	if invoice.VATTreatment == VATTreatmentDomestic && sentInvoiceVATRegistered(invoice) && !subtotal.IsZero() {
 		vatRate, _, err := jurisdiction.VATStandardRateForDate(invoice.IssueDate)
 		if err != nil {
 			return Invoice{}, fmt.Errorf("invoicing: VAT rate: %w", err)

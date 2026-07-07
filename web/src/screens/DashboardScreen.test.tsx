@@ -549,6 +549,7 @@ function invoiceFixture(
       vat: { amount: 0, currency: "EUR" },
     },
     updated_at: "2026-07-06T09:00:00Z",
+    vat_registered: true,
     vat_treatment: "reverse-charge-eu-b2b",
     ...overrides,
   };

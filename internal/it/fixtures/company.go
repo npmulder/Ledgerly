@@ -104,6 +104,13 @@ func CompanyYearEnd(month time.Month, day int) CompanyOverride {
 	}
 }
 
+// CompanyVATRegistered overrides whether the company is registered for VAT.
+func CompanyVATRegistered(registered bool) CompanyOverride {
+	return func(profile *identity.CompanyProfile) {
+		profile.IsVATRegistered = registered
+	}
+}
+
 // CompanyIncorporationDate overrides the incorporation date.
 func CompanyIncorporationDate(date time.Time) CompanyOverride {
 	return func(profile *identity.CompanyProfile) {

@@ -5,6 +5,10 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/npmulder/ledgerly/internal/identity"
+	"github.com/npmulder/ledgerly/internal/jurisdiction"
 )
 
 func TestNormalizeClientValidationMatrix(t *testing.T) {
@@ -80,6 +84,82 @@ func TestNormalizeClientAcceptsContosoVATNumber(t *testing.T) {
 	}
 	if client.VATNumber == nil || *client.VATNumber != "DE 129 273 398" {
 		t.Fatalf("VATNumber = %v, want trimmed Contoso VAT number", client.VATNumber)
+	}
+}
+
+func TestComputeTotalsDomesticVATRequiresCompanyRegistration(t *testing.T) {
+	if err := jurisdiction.LoadActive(jurisdiction.DefaultSelector); err != nil {
+		t.Fatalf("LoadActive(%q) error = %v", jurisdiction.DefaultSelector, err)
+	}
+	service := &Service{
+		identity: vatRegistrationIdentity{registered: false},
+	}
+	invoice := Invoice{
+		ID:           "invoice_unregistered_domestic",
+		ClientID:     "client_domestic",
+		Status:       InvoiceStatusDraft,
+		IssueDate:    time.Date(2025, 5, 1, 0, 0, 0, 0, time.UTC),
+		DueDate:      time.Date(2025, 5, 31, 0, 0, 0, 0, time.UTC),
+		Currency:     CurrencyGBP,
+		VATTreatment: VATTreatmentDomestic,
+		Lines: []InvoiceLine{{
+			ID:          "line_1",
+			InvoiceID:   "invoice_unregistered_domestic",
+			Position:    1,
+			Description: "Consulting",
+			Qty:         MustQuantity("1"),
+			UnitPrice:   Money{Amount: 100_000, Currency: string(CurrencyGBP)},
+		}},
+	}
+
+	computed, err := service.computeTotals(context.Background(), invoice, false)
+	if err != nil {
+		t.Fatalf("computeTotals() error = %v", err)
+	}
+	if computed.Totals.VAT.Amount != 0 {
+		t.Fatalf("VAT = %v, want zero when company is not VAT registered", computed.Totals.VAT)
+	}
+	if computed.Totals.Total.Amount != 100_000 {
+		t.Fatalf("Total = %v, want subtotal only", computed.Totals.Total)
+	}
+}
+
+func TestComputeTotalsUsesCapturedVATRegistrationSnapshot(t *testing.T) {
+	if err := jurisdiction.LoadActive(jurisdiction.DefaultSelector); err != nil {
+		t.Fatalf("LoadActive(%q) error = %v", jurisdiction.DefaultSelector, err)
+	}
+	service := &Service{
+		identity: vatRegistrationIdentity{registered: true},
+	}
+	vatRegisteredAtSend := false
+	invoice := Invoice{
+		ID:                  "invoice_snapshot_domestic",
+		ClientID:            "client_domestic",
+		Status:              InvoiceStatusDraft,
+		IssueDate:           time.Date(2025, 5, 1, 0, 0, 0, 0, time.UTC),
+		DueDate:             time.Date(2025, 5, 31, 0, 0, 0, 0, time.UTC),
+		Currency:            CurrencyGBP,
+		VATTreatment:        VATTreatmentDomestic,
+		VATRegisteredAtSend: &vatRegisteredAtSend,
+		Lines: []InvoiceLine{{
+			ID:          "line_1",
+			InvoiceID:   "invoice_snapshot_domestic",
+			Position:    1,
+			Description: "Consulting",
+			Qty:         MustQuantity("1"),
+			UnitPrice:   Money{Amount: 100_000, Currency: string(CurrencyGBP)},
+		}},
+	}
+
+	computed, err := service.computeTotals(context.Background(), invoice, false)
+	if err != nil {
+		t.Fatalf("computeTotals() error = %v", err)
+	}
+	if computed.VATRegistered {
+		t.Fatal("VATRegistered = true, want captured false snapshot")
+	}
+	if computed.Totals.VAT.Amount != 0 {
+		t.Fatalf("VAT = %v, want zero from captured false snapshot", computed.Totals.VAT)
 	}
 }
 
@@ -168,4 +248,32 @@ func TestValidationErrorStringIncludesFirstField(t *testing.T) {
 	if !strings.Contains(err.Error(), "/name is required") {
 		t.Fatalf("ValidationError.Error() = %q, want first field detail", err.Error())
 	}
+}
+
+type vatRegistrationIdentity struct {
+	registered bool
+}
+
+func (i vatRegistrationIdentity) Profile(context.Context) (identity.CompanyProfile, error) {
+	return identity.CompanyProfile{IsVATRegistered: i.registered}, nil
+}
+
+func (vatRegistrationIdentity) UpdateProfile(context.Context, identity.UpdateProfilePatch) error {
+	return nil
+}
+
+func (vatRegistrationIdentity) ReplaceLogo(context.Context, identity.LogoUpload) (identity.AssetID, error) {
+	return "", nil
+}
+
+func (vatRegistrationIdentity) Asset(context.Context, identity.AssetID) (identity.Asset, error) {
+	return identity.Asset{}, nil
+}
+
+func (i vatRegistrationIdentity) CompanyFacts(context.Context) (identity.CompanyFacts, error) {
+	return identity.CompanyFacts{IsVATRegistered: i.registered}, nil
+}
+
+func (i vatRegistrationIdentity) IsVATRegistered(context.Context) (bool, error) {
+	return i.registered, nil
 }

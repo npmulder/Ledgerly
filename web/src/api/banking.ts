@@ -17,6 +17,7 @@ export type BankingRecentResponse =
   components["schemas"]["BankingRecentResponse"];
 export type BankingRecentTransaction =
   components["schemas"]["BankingRecentTransaction"];
+export type BankingReceipt = components["schemas"]["BankingReceipt"];
 export type BankingReviewCard = components["schemas"]["BankingReviewCard"];
 export type BankingReviewQueue = components["schemas"]["BankingReviewQueue"];
 
@@ -42,6 +43,17 @@ export function importBankingCSV(accountID: number, file: File) {
   form.append("file", file, file.name);
 
   return apiClient.postForm(importPath(accountID), form);
+}
+
+export function attachBankingReceipt(transactionID: number, file: File) {
+  const form = new FormData();
+  form.append("receipt", file, file.name);
+
+  return apiClient.put(transactionReceiptPath(transactionID), form);
+}
+
+export function deleteBankingReceipt(transactionID: number) {
+  return apiClient.delete(transactionReceiptPath(transactionID));
 }
 
 export function getBankingPayeeRules() {
@@ -112,4 +124,10 @@ function transactionCommandPath(
     | "/api/banking/transactions/{id}/exclude"
     | "/api/banking/transactions/{id}/file-dla"
     | "/api/banking/transactions/{id}/recode";
+}
+
+function transactionReceiptPath(transactionID: number) {
+  return `/api/banking/transactions/${encodeURIComponent(
+    String(transactionID),
+  )}/receipt` as "/api/banking/transactions/{id}/receipt";
 }

@@ -249,6 +249,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/banking/transactions/{id}/receipt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Download a transaction receipt */
+        get: operations["bankingGetReceipt"];
+        /**
+         * Attach or replace a transaction receipt
+         * @description Accepts a multipart PDF, PNG, or JPEG receipt upload capped at 2 MB and stores it as an immutable asset linked from the banking receipt record.
+         */
+        put: operations["bankingPutReceipt"];
+        post?: never;
+        /** Delete a transaction receipt link */
+        delete: operations["bankingDeleteReceipt"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/banking/transactions/{id}/recode": {
         parameters: {
             query?: never;
@@ -1453,6 +1475,16 @@ export interface components {
         BankingReasonRequest: {
             reason: string;
         };
+        BankingReceipt: {
+            /** @enum {string} */
+            content_type: "application/pdf" | "image/png" | "image/jpeg";
+            filename: string;
+            /** Format: int64 */
+            size: number;
+            /** Format: date-time */
+            uploaded_at: string;
+            url: string;
+        };
         BankingRecentResponse: {
             transactions: components["schemas"]["BankingRecentTransaction"][];
         };
@@ -1519,6 +1551,7 @@ export interface components {
             provider_meta: {
                 [key: string]: string;
             };
+            receipt: components["schemas"]["BankingReceipt"] | null;
             reference: string;
             /** @enum {string} */
             state: "unreconciled" | "suggested" | "reconciled" | "excluded";
@@ -2047,6 +2080,7 @@ export interface components {
             totals: components["schemas"]["InvoicingInvoiceTotals"];
             /** Format: date-time */
             updated_at: string;
+            vat_registered: boolean;
             /** @enum {string} */
             vat_treatment: "domestic" | "reverse-charge-eu-b2b";
         };
@@ -2118,6 +2152,7 @@ export interface components {
             locked_rate?: components["schemas"]["InvoicingLockedRate"] | null;
             reverse_charge_note?: string | null;
             vat_rate: string;
+            vat_registered: boolean;
             vat_tax_year: string;
         };
         InvoicingInvoiceStatusCount: {
@@ -3266,6 +3301,172 @@ export interface operations {
             };
             /** @description Command validation failed */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    bankingGetReceipt: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Bank transaction ID. */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Receipt bytes */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/pdf": string;
+                    "image/jpeg": string;
+                    "image/png": string;
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Transaction receipt was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    bankingPutReceipt: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Bank transaction ID. */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    /** Format: binary */
+                    receipt: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Receipt metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BankingReceipt"];
+                };
+            };
+            /** @description Malformed multipart upload */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Transaction was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Receipt upload is too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unsupported receipt media type */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Receipt validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    bankingDeleteReceipt: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Bank transaction ID. */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Receipt deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Transaction receipt was not found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

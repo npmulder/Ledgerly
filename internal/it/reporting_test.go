@@ -176,7 +176,7 @@ func TestReportingSuite(t *testing.T) {
 	t.Run("quarter boundaries", func(t *testing.T) {
 		ctx := context.Background()
 		h := harness.New(t, harness.Options{ClockStart: reportingDay(2025, time.June, 30).Add(9 * time.Hour)})
-		fixtures.Company(t, h, fixtures.CompanyYearEnd(time.March, 31))
+		fixtures.Company(t, h, fixtures.CompanyYearEnd(time.March, 31), fixtures.CompanyVATRegistered(true))
 		invoices := newReportingInvoiceService(t, h)
 		reportService := newReportingReportsService(t, h, invoices, newReportingArchiveStore())
 		fabrikam := fixtures.Fabrikam(t, h)

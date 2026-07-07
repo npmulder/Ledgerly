@@ -53,6 +53,7 @@ type InvoiceForm = {
   dueDate: string;
   issueDate: string;
   lines: LineForm[];
+  vatRegistered: boolean;
   vatTreatment: VATTreatment;
 };
 
@@ -233,6 +234,7 @@ function LoadedInvoiceEditor({
       currency: nextCurrency,
       dueDate: addDays(form.issueDate, client.terms_days),
       lines: form.lines.map((line) => ({ ...line })),
+      vatRegistered: form.vatRegistered,
       vatTreatment: client.vat_treatment,
     };
     applyForm(next);
@@ -912,6 +914,7 @@ function invoiceToForm(invoice: InvoicingInvoice): InvoiceForm {
       qty: line.qty,
       unitPrice: decimalInputValue(line.unit_price.amount),
     })),
+    vatRegistered: invoice.vat_registered,
     vatTreatment: invoice.vat_treatment,
   };
 }
@@ -972,7 +975,9 @@ function calculateTotals(form: InvoiceForm): LocalTotals {
     0,
   );
   const vat =
-    form.vatTreatment === "domestic" ? Math.round(subtotal * domesticVATRate) : 0;
+    form.vatTreatment === "domestic" && form.vatRegistered
+      ? Math.round(subtotal * domesticVATRate)
+      : 0;
   return { subtotal, total: subtotal + vat, vat };
 }
 
