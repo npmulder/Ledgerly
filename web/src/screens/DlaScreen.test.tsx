@@ -228,6 +228,40 @@ describe("DlaScreen", () => {
       });
     });
   });
+
+  it("defaults expense-owed entries to Software explicitly", async () => {
+    const user = userEvent.setup();
+    const fetchImpl = vi.fn(dlaFetchHandler());
+    vi.stubGlobal("fetch", fetchImpl);
+
+    renderDlaScreen();
+
+    await user.selectOptions(
+      await screen.findByLabelText("Entry kind"),
+      "expense-owed",
+    );
+    await screen.findByRole("option", { name: "Software" });
+    await user.type(screen.getByLabelText("Amount"), "42.00");
+    await user.type(screen.getByLabelText("Description"), "Software renewal");
+    await user.click(
+      screen.getAllByRole("button", { name: "Record entry" })[1],
+    );
+
+    await waitFor(() => {
+      const postCall = fetchImpl.mock.calls.find(
+        ([input, init]) =>
+          pathFromRequest(input) === "/api/dla/entries" &&
+          init?.method === "POST",
+      );
+      expect(postCall).toBeDefined();
+      expect(JSON.parse(String(postCall?.[1]?.body))).toMatchObject({
+        amount: { amount_minor: 4200, currency: "GBP" },
+        description: "Software renewal",
+        expense_category: "5010-software",
+        kind: "expense-owed",
+      });
+    });
+  });
 });
 
 function renderDlaScreen() {

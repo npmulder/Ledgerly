@@ -30,7 +30,10 @@ import {
   formatMinorUnits,
 } from "@/components";
 import { formatConfidence } from "@/screens/bankingFormat";
-import { ExpenseCategoryPicker } from "@/screens/ExpenseCategoryPicker";
+import {
+  ExpenseCategoryPicker,
+  defaultExpenseAccountCode,
+} from "@/screens/ExpenseCategoryPicker";
 
 const recentLimit = 8;
 
@@ -642,7 +645,7 @@ function ReviewCardActions({
 
 function RecodePicker({
   busy,
-  defaultAccountCode = "",
+  defaultAccountCode = defaultExpenseAccountCode,
   label,
   onRecode,
 }: {

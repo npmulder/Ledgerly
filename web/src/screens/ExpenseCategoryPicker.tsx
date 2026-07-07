@@ -1,4 +1,4 @@
-import { type KeyboardEvent, useEffect, useMemo, useState } from "react";
+import { type KeyboardEvent, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { isApiError } from "@/api/client";
@@ -10,6 +10,8 @@ import {
 } from "@/api/ledger";
 import { queryKeys } from "@/api/queryKeys";
 import { Button, Field, Input, Select } from "@/components";
+
+export const defaultExpenseAccountCode = "5010-software";
 
 type ExpenseCategoryPickerProps = {
   readonly disabled?: boolean;
@@ -42,12 +44,6 @@ export function ExpenseCategoryPicker({
     [accountsQuery.data?.accounts],
   );
 
-  useEffect(() => {
-    if (!value && accounts.length > 0) {
-      onChange(accounts[0].code);
-    }
-  }, [accounts, onChange, value]);
-
   const createMutation = useMutation({
     mutationFn: createExpenseAccount,
     onSuccess: (account) => {
@@ -75,7 +71,7 @@ export function ExpenseCategoryPicker({
     createMutation.mutate({ code, name: accountName });
   }
 
-  function handleCreateKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+  function handleCreateKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     if (event.key === "Enter") {
       event.preventDefault();
       handleCreate();
@@ -129,14 +125,12 @@ export function ExpenseCategoryPicker({
       ) : null}
 
       {isCreating ? (
-        <div
-          className="expense-category-picker__form"
-          onKeyDown={handleCreateKeyDown}
-        >
+        <div className="expense-category-picker__form">
           <div className="expense-category-picker__fields">
             <Field label="Code">
               <Input
                 autoComplete="off"
+                onKeyDown={handleCreateKeyDown}
                 onChange={(event) => setNewCode(event.target.value)}
                 pattern="[0-9]{4}-[a-z0-9]+(-[a-z0-9]+)*"
                 placeholder="5040-training"
@@ -146,6 +140,7 @@ export function ExpenseCategoryPicker({
             <Field label="Name">
               <Input
                 autoComplete="off"
+                onKeyDown={handleCreateKeyDown}
                 onChange={(event) => setNewName(event.target.value)}
                 value={newName}
               />

@@ -266,6 +266,88 @@ describe("BankingScreen", () => {
       });
     });
   });
+
+  it("does not create a category when Enter activates Cancel", async () => {
+    const user = userEvent.setup();
+    const api = bankingApi({
+      accounts: accountsFixture(),
+      queue: reviewQueueFixture(),
+      recent: recentFixture(),
+    });
+    vi.stubGlobal("fetch", api.fetch);
+
+    renderBanking();
+
+    const card = (await screen.findByText("DLA suggestion")).closest("article");
+    expect(card).not.toBeNull();
+    await user.click(within(card as HTMLElement).getByText("Recode ▾"));
+    await user.click(
+      await within(card as HTMLElement).findByRole("button", {
+        name: "New category",
+      }),
+    );
+    await user.type(
+      within(card as HTMLElement).getByLabelText("Code"),
+      "5040-training",
+    );
+    await user.type(
+      within(card as HTMLElement).getByLabelText("Name"),
+      "Training",
+    );
+
+    const cancel = within(card as HTMLElement).getByRole("button", {
+      name: "Cancel",
+    });
+    cancel.focus();
+    await user.keyboard("{Enter}");
+
+    expect(
+      within(card as HTMLElement).queryByLabelText("Code"),
+    ).not.toBeInTheDocument();
+    expect(
+      api.fetch.mock.calls.some(
+        ([input, init]) =>
+          urlFromRequest(input).pathname === "/api/ledger/accounts" &&
+          init?.method === "POST",
+      ),
+    ).toBe(false);
+  });
+
+  it("defaults suggestion recodes to Software explicitly", async () => {
+    const user = userEvent.setup();
+    const api = bankingApi({
+      accounts: accountsFixture(),
+      queue: reviewQueueFixture(),
+      recent: recentFixture(),
+    });
+    vi.stubGlobal("fetch", api.fetch);
+
+    renderBanking();
+
+    const card = (await screen.findByText("DLA suggestion")).closest("article");
+    expect(card).not.toBeNull();
+    await user.click(within(card as HTMLElement).getByText("Recode ▾"));
+    await within(card as HTMLElement).findByRole("option", {
+      name: "Software",
+    });
+    await user.click(
+      within(card as HTMLElement).getByRole("button", {
+        name: "Recode selected",
+      }),
+    );
+
+    await waitFor(() => {
+      const recodeCall = api.fetch.mock.calls.find(
+        ([input, init]) =>
+          urlFromRequest(input).pathname ===
+            "/api/banking/transactions/102/recode" && init?.method === "POST",
+      );
+      expect(recodeCall).toBeDefined();
+      expect(JSON.parse(String(recodeCall?.[1]?.body))).toMatchObject({
+        account_code: "5010-software",
+      });
+    });
+  });
 });
 
 function renderBanking() {

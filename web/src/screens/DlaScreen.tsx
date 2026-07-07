@@ -40,7 +40,10 @@ import {
   TableRow,
   formatMinorUnits,
 } from "@/components";
-import { ExpenseCategoryPicker } from "@/screens/ExpenseCategoryPicker";
+import {
+  ExpenseCategoryPicker,
+  defaultExpenseAccountCode,
+} from "@/screens/ExpenseCategoryPicker";
 
 const repaymentCashAccount = "1000-cash-gbp";
 
@@ -63,7 +66,7 @@ type CreateEntryContext = {
 
 const initialFormState = (): EntryFormState => ({
   amount: "",
-  category: "",
+  category: defaultExpenseAccountCode,
   date: new Date().toISOString().slice(0, 10),
   description: "",
   kind: "repayment",

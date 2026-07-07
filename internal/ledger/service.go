@@ -2,7 +2,6 @@ package ledger
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -257,16 +256,7 @@ func (s *Service) CreateExpenseAccount(ctx context.Context, spec AccountSpec) (_
 		}
 	}()
 
-	if _, err = loadAccount(ctx, tx, normalized.Code); err == nil {
-		return Account{}, fmt.Errorf("ledger: account %s already exists: %w", normalized.Code, ErrAccountAlreadyExists)
-	} else if !errors.Is(err, ErrAccountNotFound) {
-		return Account{}, err
-	}
-
-	if _, err = s.store.EnsureAccount(ctx, tx, normalized); err != nil {
-		return Account{}, err
-	}
-	account, err := loadAccount(ctx, tx, normalized.Code)
+	account, err := s.store.CreateAccount(ctx, tx, normalized)
 	if err != nil {
 		return Account{}, err
 	}
