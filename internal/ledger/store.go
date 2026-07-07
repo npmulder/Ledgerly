@@ -214,7 +214,10 @@ SELECT ledger.has_reversal($1)`, int64(id)).Scan(&exists); err != nil {
 func (Store) CheckEntryInvariant(ctx context.Context, tx db.Tx, id EntryID) error {
 	if _, err := tx.Exec(ctx, `
 SELECT ledger.check_entry_invariant($1)`, int64(id)); err != nil {
-		return fmt.Errorf("ledger: check entry invariant for entry %d: %v: %w", id, err, ErrInvariantViolation)
+		if isCheckViolation(err) {
+			return fmt.Errorf("ledger: check entry invariant for entry %d: %w", id, errors.Join(err, ErrInvariantViolation))
+		}
+		return fmt.Errorf("ledger: check entry invariant for entry %d: %w", id, err)
 	}
 	return nil
 }
@@ -663,4 +666,9 @@ func isReversalUniqueViolation(err error) bool {
 	return errors.As(err, &pgErr) &&
 		pgErr.Code == "23505" &&
 		pgErr.ConstraintName == "journal_entries_reversal_of_unique_idx"
+}
+
+func isCheckViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23514"
 }

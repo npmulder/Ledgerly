@@ -116,6 +116,9 @@ AS $ledgerly$
 DECLARE
 	new_entry_id bigint;
 	posting_count integer;
+	gbp_total bigint;
+	native_currency text;
+	native_total bigint;
 	i integer;
 BEGIN
 	posting_count := COALESCE(array_length(p_account_codes, 1), 0);
@@ -124,6 +127,29 @@ BEGIN
 		OR posting_count <> COALESCE(array_length(p_amount_gbps, 1), 0) THEN
 		RAISE EXCEPTION 'ledger posting arrays have mismatched lengths'
 			USING ERRCODE = '22023';
+	END IF;
+	IF posting_count < 2 THEN
+		RAISE EXCEPTION 'ledger entry has % postings before insert', posting_count
+			USING ERRCODE = '23514';
+	END IF;
+
+	SELECT COALESCE(sum(amount_gbp), 0)::bigint
+	INTO gbp_total
+	FROM unnest(p_amount_gbps) AS amounts(amount_gbp);
+	IF gbp_total <> 0 THEN
+		RAISE EXCEPTION 'ledger entry would store GBP total %', gbp_total
+			USING ERRCODE = '23514';
+	END IF;
+
+	SELECT posting.currency, sum(posting.amount)::bigint
+	INTO native_currency, native_total
+	FROM unnest(p_amounts, p_currencies) AS posting(amount, currency)
+	GROUP BY posting.currency
+	HAVING sum(posting.amount) <> 0
+	LIMIT 1;
+	IF FOUND THEN
+		RAISE EXCEPTION 'ledger entry would store % total %', native_currency, native_total
+			USING ERRCODE = '23514';
 	END IF;
 
 	INSERT INTO ledger.journal_entries (date, description, source_module, source_ref, reversal_of)
