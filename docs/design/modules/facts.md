@@ -33,7 +33,10 @@ of Man pack fact queries that pre-date collection expansion.
 | `clearance_amount_minor_units` | `int64` | dla compatibility binding from `dla.suggestedClearance` | `dla_overdrawn_bik` |
 | `authority` | `string` | reports compatibility binding from `filings[].authority` | `filing_deadline_window` |
 | `due_date` | `date` | reports compatibility binding from `filings[].dueDate` | `filing_deadline_window` |
+| `days_until` | `int` | reports compatibility binding from `filings[].daysUntil` | `filing_deadline_window` |
 | `filing_name` | `string` | reports compatibility binding from `filings[].label` | `filing_deadline_window` |
+| `filing_status` | `string` (`upcoming`, `due-soon`, `overdue`) | reports compatibility binding from `filings[].status` | `filing_deadline_window` |
+| `warn_window_days` | `int` | reports compatibility binding from `filings[].warnWindow` | `filing_deadline_window` |
 | `dividend_headroom` | `money.Money` | dividends compatibility binding from `dividends.headroom` | `dividend_set_aside` |
 | `headroom_minor_units` | `int64` | dividends compatibility binding from `dividends.headroom` | `dividend_set_aside` |
 | `dividends_ytd` | `money.Money` | dividends compatibility binding from declared dividends YTD | `dividend_set_aside` |

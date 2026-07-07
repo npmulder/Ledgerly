@@ -100,7 +100,7 @@ advisor_rules:
   - id: filing_deadline_window
     severity: amber
     surfaces: [dashboard, reports]
-    fact_query: [authority, due_date, filing_name]
+    fact_query: [authority, due_date, days_until, filing_name, filing_status, warn_window_days]
     condition: due_date - today <= 30
     text_template: '{{ filing_name }} due {{ due_date }} - file with {{ authority }}.'
     cta:
