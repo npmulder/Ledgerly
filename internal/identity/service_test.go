@@ -243,6 +243,60 @@ func TestUpdateProfilePartialRoundTrip(t *testing.T) {
 	}
 }
 
+func TestUpdateProfileInfersVATRegistrationForVATNumberOnlyPatch(t *testing.T) {
+	ctx, tx := migratedIdentityTx(t)
+	service := New(tx, discardBus())
+
+	vatNumber := " IM1234567 "
+	if err := service.UpdateProfile(ctx, UpdateProfilePatch{VATNumber: &vatNumber}); err != nil {
+		t.Fatalf("UpdateProfile() VAT number error = %v", err)
+	}
+	got, err := service.Profile(ctx)
+	if err != nil {
+		t.Fatalf("Profile() error = %v", err)
+	}
+	if got.VATNumber == nil || *got.VATNumber != "IM1234567" {
+		t.Fatalf("VATNumber = %v, want trimmed IM1234567", got.VATNumber)
+	}
+	if !got.IsVATRegistered {
+		t.Fatal("IsVATRegistered = false, want true for VAT-number-only patch")
+	}
+
+	emptyVATNumber := " "
+	if err := service.UpdateProfile(ctx, UpdateProfilePatch{VATNumber: &emptyVATNumber}); err != nil {
+		t.Fatalf("UpdateProfile() clear VAT number error = %v", err)
+	}
+	got, err = service.Profile(ctx)
+	if err != nil {
+		t.Fatalf("Profile() after clear error = %v", err)
+	}
+	if got.VATNumber != nil {
+		t.Fatalf("VATNumber = %v, want nil after clear", *got.VATNumber)
+	}
+	if got.IsVATRegistered {
+		t.Fatal("IsVATRegistered = true, want false after VAT-number-only clear")
+	}
+
+	explicitFalse := false
+	vatNumber = "IM7654321"
+	if err := service.UpdateProfile(ctx, UpdateProfilePatch{
+		IsVATRegistered: &explicitFalse,
+		VATNumber:       &vatNumber,
+	}); err != nil {
+		t.Fatalf("UpdateProfile() explicit VAT flag error = %v", err)
+	}
+	got, err = service.Profile(ctx)
+	if err != nil {
+		t.Fatalf("Profile() after explicit flag error = %v", err)
+	}
+	if got.VATNumber == nil || *got.VATNumber != vatNumber {
+		t.Fatalf("VATNumber = %v, want %q", got.VATNumber, vatNumber)
+	}
+	if got.IsVATRegistered {
+		t.Fatal("IsVATRegistered = true, want explicit false to be respected")
+	}
+}
+
 func TestUpdateProfileClearsShareholders(t *testing.T) {
 	ctx, tx := migratedIdentityTx(t)
 	service := New(tx, discardBus())

@@ -664,6 +664,9 @@ func (patch UpdateProfilePatch) apply(profile CompanyProfile) (CompanyProfile, e
 		} else {
 			profile.VATNumber = &vatNumber
 		}
+		if patch.IsVATRegistered == nil {
+			profile.IsVATRegistered = profile.VATNumber != nil
+		}
 	}
 	if patch.BankDetails != nil {
 		profile.BankDetails = *patch.BankDetails
