@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/npmulder/ledgerly/internal/platform/clock"
@@ -79,6 +80,7 @@ func (s *Service) FileDrawing(ctx context.Context, tx db.Tx, src TxnRef) error {
 		Kind:            EntryKindDrawing,
 		Description:     description,
 		Amount:          src.Amount,
+		CashAmount:      src.CashAmount,
 		Source:          src.Ref,
 		CashAccountCode: src.CashAccountCode,
 	}, true)
@@ -307,8 +309,7 @@ func balanceAfterEntry(balance money.Money, entry NewEntry) (money.Money, error)
 }
 
 func journalEntryFor(entry NewEntry) ledgerapi.NewJournalEntry {
-	negativeAmount := money.Money{Amount: -entry.Amount.Amount, Currency: entry.Amount.Currency}
-	postingAmount := entry.Amount
+	postingAmountGBP := entry.Amount
 
 	journal := ledgerapi.NewJournalEntry{
 		Date:         entry.Date,
@@ -319,18 +320,26 @@ func journalEntryFor(entry NewEntry) ledgerapi.NewJournalEntry {
 
 	switch entry.Kind {
 	case EntryKindDrawing:
+		cashAmount := entry.CashAmount
+		if cashAmount.IsZero() {
+			cashAmount = postingAmountGBP
+		}
+		negativeCashAmount := money.Money{Amount: -cashAmount.Amount, Currency: cashAmount.Currency}
+		negativeAmountGBP := money.Money{Amount: -postingAmountGBP.Amount, Currency: postingAmountGBP.Currency}
 		journal.Postings = []ledgerapi.NewPosting{
-			{AccountCode: DLAAccountCode, Amount: postingAmount, AmountGBP: postingAmount},
-			{AccountCode: entry.CashAccountCode, Amount: negativeAmount, AmountGBP: negativeAmount},
+			{AccountCode: DLAAccountCode, Amount: cashAmount, AmountGBP: postingAmountGBP},
+			{AccountCode: entry.CashAccountCode, Amount: negativeCashAmount, AmountGBP: negativeAmountGBP},
 		}
 	case EntryKindRepayment:
+		negativeAmount := money.Money{Amount: -entry.Amount.Amount, Currency: entry.Amount.Currency}
 		journal.Postings = []ledgerapi.NewPosting{
-			{AccountCode: entry.CashAccountCode, Amount: postingAmount, AmountGBP: postingAmount},
+			{AccountCode: entry.CashAccountCode, Amount: entry.Amount, AmountGBP: entry.Amount},
 			{AccountCode: DLAAccountCode, Amount: negativeAmount, AmountGBP: negativeAmount},
 		}
 	case EntryKindExpenseOwed:
+		negativeAmount := money.Money{Amount: -entry.Amount.Amount, Currency: entry.Amount.Currency}
 		journal.Postings = []ledgerapi.NewPosting{
-			{AccountCode: entry.ExpenseAccountCode, Amount: postingAmount, AmountGBP: postingAmount},
+			{AccountCode: entry.ExpenseAccountCode, Amount: entry.Amount, AmountGBP: entry.Amount},
 			{AccountCode: DLAAccountCode, Amount: negativeAmount, AmountGBP: negativeAmount},
 		}
 	}
@@ -371,7 +380,18 @@ func normalizeNewEntry(entry NewEntry, allowDrawing bool) (NewEntry, error) {
 		Source:      source,
 	}
 	switch kind {
-	case EntryKindDrawing, EntryKindRepayment:
+	case EntryKindDrawing:
+		code := normalizeAccountCode(entry.CashAccountCode)
+		if code == "" {
+			return NewEntry{}, fmt.Errorf("dla: cash account code is required: %w", ErrInvalidEntry)
+		}
+		normalized.CashAccountCode = code
+		cashAmount, err := normalizeDrawingCashAmount(entry.CashAmount, amount)
+		if err != nil {
+			return NewEntry{}, err
+		}
+		normalized.CashAmount = cashAmount
+	case EntryKindRepayment:
 		code := normalizeAccountCode(entry.CashAccountCode)
 		if code == "" {
 			return NewEntry{}, fmt.Errorf("dla: cash account code is required: %w", ErrInvalidEntry)
@@ -492,6 +512,25 @@ func normalizeAmount(amount money.Money) (money.Money, error) {
 		return money.Money{}, fmt.Errorf("dla: amount must be positive: %w", ErrInvalidEntry)
 	}
 	return money.Money{Amount: amount.Amount, Currency: "GBP"}, nil
+}
+
+func normalizeDrawingCashAmount(amount money.Money, fallback money.Money) (money.Money, error) {
+	if amount.IsZero() && strings.TrimSpace(amount.Currency) == "" {
+		return fallback, nil
+	}
+	currency := strings.ToUpper(strings.TrimSpace(amount.Currency))
+	if len(currency) != 3 {
+		return money.Money{}, fmt.Errorf("dla: cash amount currency %q is invalid: %w", amount.Currency, ErrInvalidEntry)
+	}
+	for _, char := range currency {
+		if !unicode.IsUpper(char) || !unicode.IsLetter(char) {
+			return money.Money{}, fmt.Errorf("dla: cash amount currency %q is invalid: %w", amount.Currency, ErrInvalidEntry)
+		}
+	}
+	if amount.Amount <= 0 {
+		return money.Money{}, fmt.Errorf("dla: cash amount must be positive: %w", ErrInvalidEntry)
+	}
+	return money.Money{Amount: amount.Amount, Currency: currency}, nil
 }
 
 func normalizeAccountCode(code ledgerapi.AccountCode) ledgerapi.AccountCode {

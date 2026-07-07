@@ -207,6 +207,40 @@ func TestBankingFileToDLAFilesDrawingAndRejectsDuplicate(t *testing.T) {
 	it.AssertLedgerBalanced(t, h)
 }
 
+func TestBankingFileToDLASupportsEURCashAccountWithGBPAmount(t *testing.T) {
+	ctx := context.Background()
+	h := harness.New(t, harness.Options{ClockStart: time.Date(2025, 6, 1, 9, 0, 0, 0, time.UTC)})
+	fixtures.Rates(t, h, fixtures.RatesStep(map[time.Time]string{
+		time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC): "0.8500",
+	}))
+	invoiceService := newInvoiceService(t, h)
+	bankingService := newBankingCommandService(t, h, invoiceService)
+	account := mustCreateBankingAccount(t, ctx, bankingService, "Revolut EUR", "EUR")
+	txnID := importDashboardBankTxn(t, ctx, h, bankingService, account.ID, dashboardBankTxn{
+		ID:        "file-to-dla-eur-repro",
+		Date:      time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC),
+		Payee:     "N Meyer personal card",
+		Reference: "director drawing eur",
+		Amount:    money.Money{Amount: -10_000, Currency: "EUR"},
+	})
+	mustRecordDashboardSuggestion(t, ctx, bankingService, txnID, banking.SuggestionKindDLA, 0.88, "director-loan", "director drawing")
+
+	result, err := bankingService.FileToDLA(ctx, txnID)
+	if err != nil {
+		t.Fatalf("FileToDLA(EUR) error = %v", err)
+	}
+	if result.AmountGBP != (money.Money{Amount: 8_500, Currency: "GBP"}) {
+		t.Fatalf("FileToDLA(EUR) amount GBP = %#v, want 8500 GBP", result.AmountGBP)
+	}
+	assertBankingTxnState(t, h, txnID, banking.TransactionStateReconciled)
+	assertDLAEntry(t, h, bankingTxnRef(txnID), 8_500)
+	assertModuleLedgerPostings(t, h, dla.ModuleName, bankingTxnRef(txnID), []wantInvoicePosting{
+		{account: string(dla.DLAAccountCode), amount: 10_000, currency: "EUR", amountGBP: 8_500},
+		{account: string(account.LedgerAccountCode), amount: -10_000, currency: "EUR", amountGBP: -8_500},
+	})
+	it.AssertLedgerBalanced(t, h)
+}
+
 func TestBankingRecodePostsLearnsRuleAndNextImportOnlySuggests(t *testing.T) {
 	ctx := context.Background()
 	h := harness.New(t, harness.Options{ClockStart: time.Date(2025, 7, 1, 9, 0, 0, 0, time.UTC)})
