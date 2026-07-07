@@ -409,6 +409,7 @@ func identityComponents() map[string]any {
 					"registered_office",
 					"incorporation_date",
 					"year_end",
+					"is_vat_registered",
 					"vat_number",
 					"bank_details",
 					"shareholders",
@@ -477,6 +478,7 @@ func identityProfileProperties(patch bool) map[string]any {
 		"registered_office":  map[string]any{"$ref": "#/components/schemas/RegisteredOffice"},
 		"incorporation_date": map[string]any{"type": "string", "format": "date"},
 		"year_end":           map[string]any{"$ref": "#/components/schemas/YearEnd"},
+		"is_vat_registered":  map[string]any{"type": "boolean"},
 		"vat_number":         map[string]any{"type": "string", "nullable": true},
 		"bank_details":       map[string]any{"$ref": "#/components/schemas/BankDetails"},
 		"shareholders": map[string]any{

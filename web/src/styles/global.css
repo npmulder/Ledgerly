@@ -2049,6 +2049,43 @@
   grid-column: 1 / -1;
 }
 
+.vat-registration-group {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.85fr) minmax(0, 1.15fr);
+  gap: 14px;
+  align-items: start;
+  padding: 12px;
+  border: 1px solid var(--color-border-hairline);
+  border-radius: var(--radius-input);
+  background: var(--color-panel);
+}
+
+.vat-registration-toggle {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  min-width: 0;
+  padding-top: 2px;
+}
+
+.vat-registration-toggle input {
+  width: 16px;
+  height: 16px;
+  margin: 1px 0 0;
+  accent-color: var(--color-success);
+}
+
+.vat-registration-toggle__body {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.vat-registration-warning {
+  color: var(--color-warning);
+}
+
 .registered-office-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -3179,6 +3216,7 @@ article.ui-stat-card.dashboard-stat-card--unavailable {
   .jurisdiction-rule-row,
   .pat-field-grid,
   .registered-office-grid,
+  .vat-registration-group,
   .year-end-fields {
     grid-template-columns: 1fr;
   }

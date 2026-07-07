@@ -1803,6 +1803,7 @@ export interface components {
             company_number: string;
             /** Format: date */
             incorporation_date: string;
+            is_vat_registered: boolean;
             legal_name: string;
             /** Format: uuid */
             logo_asset_id: string | null;
@@ -1819,6 +1820,7 @@ export interface components {
             company_number?: string;
             /** Format: date */
             incorporation_date?: string;
+            is_vat_registered?: boolean;
             legal_name?: string;
             /** Format: uuid */
             logo_asset_id?: string | null;

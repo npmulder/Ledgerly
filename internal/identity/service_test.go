@@ -94,6 +94,38 @@ func TestSeedMigrationCreatesNPMFixture(t *testing.T) {
 	}
 }
 
+func TestVATRegistrationMigrationBackfillsExistingVATNumbers(t *testing.T) {
+	ctx, pool := temporaryDatabaseNamed(t, fmt.Sprintf("ledgerly_vat_backfill_%d", time.Now().UnixNano()))
+
+	migratePoolFromDir(t, ctx, pool, identityMigrationSubsetDir(t,
+		"001_bootstrap.sql",
+		"003_company_profile.sql",
+	))
+	if _, err := pool.Exec(ctx, `
+UPDATE identity.company_profile
+SET vat_number = 'IM1234567'
+WHERE id = 1`); err != nil {
+		t.Fatalf("seed legacy VAT number: %v", err)
+	}
+
+	migratePoolFromDir(t, ctx, pool, identityMigrationSubsetDir(t,
+		"001_bootstrap.sql",
+		"003_company_profile.sql",
+		"007_is_vat_registered.sql",
+	))
+
+	var registered bool
+	if err := pool.QueryRow(ctx, `
+SELECT is_vat_registered
+FROM identity.company_profile
+WHERE id = 1`).Scan(&registered); err != nil {
+		t.Fatalf("read backfilled VAT registration flag: %v", err)
+	}
+	if !registered {
+		t.Fatal("is_vat_registered = false, want true for legacy profile with VAT number")
+	}
+}
+
 func TestSingleRowCompanyProfileEnforced(t *testing.T) {
 	ctx, tx := migratedIdentityTx(t)
 
@@ -152,6 +184,7 @@ func TestUpdateProfilePartialRoundTrip(t *testing.T) {
 
 	tradingName := "NPM Trading"
 	vatNumber := "IM123456"
+	isVATRegistered := true
 	bankDetails := BankDetails{
 		IBAN:     "GB82WEST12345698765432",
 		BIC:      "REVOGB21",
@@ -163,10 +196,11 @@ func TestUpdateProfilePartialRoundTrip(t *testing.T) {
 	}
 
 	if err := service.UpdateProfile(ctx, UpdateProfilePatch{
-		TradingName:  &tradingName,
-		VATNumber:    &vatNumber,
-		BankDetails:  &bankDetails,
-		Shareholders: &shareholders,
+		TradingName:     &tradingName,
+		IsVATRegistered: &isVATRegistered,
+		VATNumber:       &vatNumber,
+		BankDetails:     &bankDetails,
+		Shareholders:    &shareholders,
 	}); err != nil {
 		t.Fatalf("UpdateProfile() error = %v", err)
 	}
@@ -187,6 +221,16 @@ func TestUpdateProfilePartialRoundTrip(t *testing.T) {
 	if got.VATNumber == nil || *got.VATNumber != vatNumber {
 		t.Fatalf("VATNumber = %v, want %q", got.VATNumber, vatNumber)
 	}
+	if !got.IsVATRegistered {
+		t.Fatal("IsVATRegistered = false, want true")
+	}
+	registered, err := service.IsVATRegistered(ctx)
+	if err != nil {
+		t.Fatalf("IsVATRegistered() error = %v", err)
+	}
+	if !registered {
+		t.Fatal("IsVATRegistered() = false, want true")
+	}
 	if got.BankDetails != bankDetails {
 		t.Fatalf("BankDetails = %#v, want %#v", got.BankDetails, bankDetails)
 	}
@@ -196,6 +240,60 @@ func TestUpdateProfilePartialRoundTrip(t *testing.T) {
 	assertDate(t, got.IncorporationDate, 2020, time.July, 14)
 	if got.YearEnd.Month != time.March || got.YearEnd.Day != 31 {
 		t.Fatalf("YearEnd = %#v, want 31 March", got.YearEnd)
+	}
+}
+
+func TestUpdateProfileInfersVATRegistrationForVATNumberOnlyPatch(t *testing.T) {
+	ctx, tx := migratedIdentityTx(t)
+	service := New(tx, discardBus())
+
+	vatNumber := " IM1234567 "
+	if err := service.UpdateProfile(ctx, UpdateProfilePatch{VATNumber: &vatNumber}); err != nil {
+		t.Fatalf("UpdateProfile() VAT number error = %v", err)
+	}
+	got, err := service.Profile(ctx)
+	if err != nil {
+		t.Fatalf("Profile() error = %v", err)
+	}
+	if got.VATNumber == nil || *got.VATNumber != "IM1234567" {
+		t.Fatalf("VATNumber = %v, want trimmed IM1234567", got.VATNumber)
+	}
+	if !got.IsVATRegistered {
+		t.Fatal("IsVATRegistered = false, want true for VAT-number-only patch")
+	}
+
+	emptyVATNumber := " "
+	if err := service.UpdateProfile(ctx, UpdateProfilePatch{VATNumber: &emptyVATNumber}); err != nil {
+		t.Fatalf("UpdateProfile() clear VAT number error = %v", err)
+	}
+	got, err = service.Profile(ctx)
+	if err != nil {
+		t.Fatalf("Profile() after clear error = %v", err)
+	}
+	if got.VATNumber != nil {
+		t.Fatalf("VATNumber = %v, want nil after clear", *got.VATNumber)
+	}
+	if got.IsVATRegistered {
+		t.Fatal("IsVATRegistered = true, want false after VAT-number-only clear")
+	}
+
+	explicitFalse := false
+	vatNumber = "IM7654321"
+	if err := service.UpdateProfile(ctx, UpdateProfilePatch{
+		IsVATRegistered: &explicitFalse,
+		VATNumber:       &vatNumber,
+	}); err != nil {
+		t.Fatalf("UpdateProfile() explicit VAT flag error = %v", err)
+	}
+	got, err = service.Profile(ctx)
+	if err != nil {
+		t.Fatalf("Profile() after explicit flag error = %v", err)
+	}
+	if got.VATNumber == nil || *got.VATNumber != vatNumber {
+		t.Fatalf("VATNumber = %v, want %q", got.VATNumber, vatNumber)
+	}
+	if got.IsVATRegistered {
+		t.Fatal("IsVATRegistered = true, want explicit false to be respected")
 	}
 }
 
@@ -221,7 +319,7 @@ func TestUpdateProfilePublishesEventInSameTransaction(t *testing.T) {
 	ctx, tx := migratedIdentityTx(t)
 	eventBus := discardBus()
 	service := New(tx, eventBus)
-	tradingName := "NPM Evented"
+	isVATRegistered := true
 	handlerRan := false
 
 	eventBus.Subscribe(ProfileUpdatedEventName, func(ctx context.Context, gotTx db.Tx, evt bus.Event) error {
@@ -237,13 +335,13 @@ func TestUpdateProfilePublishesEventInSameTransaction(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if got.TradingName != tradingName {
-			return fmt.Errorf("handler saw TradingName %q, want %q", got.TradingName, tradingName)
+		if !got.IsVATRegistered {
+			return fmt.Errorf("handler saw IsVATRegistered false, want true")
 		}
 		return nil
 	})
 
-	if err := service.UpdateProfile(ctx, UpdateProfilePatch{TradingName: &tradingName}); err != nil {
+	if err := service.UpdateProfile(ctx, UpdateProfilePatch{IsVATRegistered: &isVATRegistered}); err != nil {
 		t.Fatalf("UpdateProfile() error = %v", err)
 	}
 	if !handlerRan {
@@ -466,7 +564,13 @@ func TestUpdateProfileInitializesMissingProductionProfile(t *testing.T) {
 
 func TestCompanyFactsReturnsIncorporationDateAndYearEnd(t *testing.T) {
 	ctx, tx := migratedIdentityTx(t)
-	facts, err := New(tx, discardBus()).CompanyFacts(ctx)
+	service := New(tx, discardBus())
+	isVATRegistered := true
+	if err := service.UpdateProfile(ctx, UpdateProfilePatch{IsVATRegistered: &isVATRegistered}); err != nil {
+		t.Fatalf("UpdateProfile() VAT registered error = %v", err)
+	}
+
+	facts, err := service.CompanyFacts(ctx)
 	if err != nil {
 		t.Fatalf("CompanyFacts() error = %v", err)
 	}
@@ -474,6 +578,9 @@ func TestCompanyFactsReturnsIncorporationDateAndYearEnd(t *testing.T) {
 	assertDate(t, facts.IncorporationDate, 2020, time.July, 14)
 	if facts.YearEnd.Month != time.March || facts.YearEnd.Day != 31 {
 		t.Fatalf("YearEnd = %#v, want 31 March", facts.YearEnd)
+	}
+	if !facts.IsVATRegistered {
+		t.Fatal("IsVATRegistered = false, want true")
 	}
 }
 
@@ -500,6 +607,14 @@ func temporaryMigratedDatabase(t *testing.T) (context.Context, *pgxpool.Pool) {
 }
 
 func temporaryMigratedDatabaseNamed(t *testing.T, dbName string) (context.Context, *pgxpool.Pool) {
+	t.Helper()
+
+	ctx, pool := temporaryDatabaseNamed(t, dbName)
+	migratePool(t, ctx, pool)
+	return ctx, pool
+}
+
+func temporaryDatabaseNamed(t *testing.T, dbName string) (context.Context, *pgxpool.Pool) {
 	t.Helper()
 
 	databaseURL := testDatabaseURL(t)
@@ -532,8 +647,6 @@ func temporaryMigratedDatabaseNamed(t *testing.T, dbName string) (context.Contex
 	if err := pool.Ping(ctx); err != nil {
 		t.Fatalf("Ping() temp DB error = %v", err)
 	}
-
-	migratePool(t, ctx, pool)
 	return ctx, pool
 }
 
@@ -555,9 +668,49 @@ func migratedPool(t *testing.T, databaseURL string) (context.Context, *pgxpool.P
 func migratePool(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
 
-	if _, err := db.MigrateDir(ctx, pool, filepath.Join(findRepoRoot(t), "db", "migrations")); err != nil {
+	migratePoolFromDir(t, ctx, pool, filepath.Join(findRepoRoot(t), "db", "migrations"))
+}
+
+func migratePoolFromDir(t *testing.T, ctx context.Context, pool *pgxpool.Pool, dir string) {
+	t.Helper()
+
+	if _, err := db.MigrateDir(ctx, pool, dir); err != nil {
 		t.Fatalf("MigrateDir() error = %v", err)
 	}
+}
+
+func identityMigrationSubsetDir(t *testing.T, files ...string) string {
+	t.Helper()
+
+	dir := t.TempDir()
+	for _, module := range []string{
+		"advisor",
+		"banking",
+		"dividends",
+		"dla",
+		"identity",
+		"invoicing",
+		"jurisdiction",
+		"ledger",
+		"moneyfx",
+		"reports",
+	} {
+		if err := os.MkdirAll(filepath.Join(dir, module), 0o755); err != nil {
+			t.Fatalf("create migration module dir %s: %v", module, err)
+		}
+	}
+
+	sourceDir := filepath.Join(findRepoRoot(t), "db", "migrations", "identity")
+	for _, file := range files {
+		source, err := os.ReadFile(filepath.Join(sourceDir, file))
+		if err != nil {
+			t.Fatalf("read identity migration %s: %v", file, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "identity", file), source, 0o644); err != nil {
+			t.Fatalf("write identity migration %s: %v", file, err)
+		}
+	}
+	return dir
 }
 
 func resetCompanyProfile(t *testing.T, ctx context.Context, tx pgx.Tx) {
@@ -618,6 +771,9 @@ func assertNPMProfile(t *testing.T, profile CompanyProfile) {
 	assertDate(t, profile.IncorporationDate, 2020, time.July, 14)
 	if profile.YearEnd.Month != time.March || profile.YearEnd.Day != 31 {
 		t.Fatalf("YearEnd = %#v, want 31 March", profile.YearEnd)
+	}
+	if profile.IsVATRegistered {
+		t.Fatal("IsVATRegistered = true, want false")
 	}
 	if len(profile.Shareholders) != 1 {
 		t.Fatalf("Shareholders = %#v, want one shareholder", profile.Shareholders)

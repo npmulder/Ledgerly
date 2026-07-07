@@ -312,13 +312,17 @@ func TestProfileGetPatchRoundTrip(t *testing.T) {
 	if initialProfile.TradingName != "NPM Limited" {
 		t.Fatalf("initial trading_name = %q, want NPM Limited", initialProfile.TradingName)
 	}
+	if initialProfile.IsVATRegistered {
+		t.Fatal("initial is_vat_registered = true, want false")
+	}
 	if initialProfile.LogoAssetURL == nil || *initialProfile.LogoAssetURL != assetURL(testSeedLogoAssetID) {
 		t.Fatalf("initial logo_asset_url = %v, want %s", initialProfile.LogoAssetURL, assetURL(testSeedLogoAssetID))
 	}
 
 	patch := performJSON(router, nethttp.MethodPatch, "/api/identity/profile", map[string]any{
-		"trading_name": "NPM Trading",
-		"vat_number":   "IM1234567",
+		"trading_name":      "NPM Trading",
+		"is_vat_registered": true,
+		"vat_number":        "IM1234567",
 		"year_end": map[string]int{
 			"month": 12,
 			"day":   31,
@@ -334,6 +338,9 @@ func TestProfileGetPatchRoundTrip(t *testing.T) {
 	if patchedProfile.VATNumber == nil || *patchedProfile.VATNumber != "IM1234567" {
 		t.Fatalf("patched vat_number = %v, want IM1234567", patchedProfile.VATNumber)
 	}
+	if !patchedProfile.IsVATRegistered {
+		t.Fatal("patched is_vat_registered = false, want true")
+	}
 	if patchedProfile.YearEnd.Month != 12 || patchedProfile.YearEnd.Day != 31 {
 		t.Fatalf("patched year_end = %+v, want month=12 day=31", patchedProfile.YearEnd)
 	}
@@ -345,6 +352,9 @@ func TestProfileGetPatchRoundTrip(t *testing.T) {
 	roundTripProfile := decodeProfileResponse(t, roundTrip)
 	if roundTripProfile.TradingName != "NPM Trading" {
 		t.Fatalf("round-trip trading_name = %q, want NPM Trading", roundTripProfile.TradingName)
+	}
+	if !roundTripProfile.IsVATRegistered {
+		t.Fatal("round-trip is_vat_registered = false, want true")
 	}
 }
 
@@ -929,7 +939,15 @@ func (s *memoryIdentity) CompanyFacts(context.Context) (CompanyFacts, error) {
 	return CompanyFacts{
 		IncorporationDate: s.profile.IncorporationDate,
 		YearEnd:           s.profile.YearEnd,
+		IsVATRegistered:   s.profile.IsVATRegistered,
 	}, nil
+}
+
+func (s *memoryIdentity) IsVATRegistered(context.Context) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.profile.IsVATRegistered, nil
 }
 
 func cloneCompanyProfile(profile CompanyProfile) CompanyProfile {

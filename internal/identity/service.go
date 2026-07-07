@@ -247,6 +247,10 @@ func (s *TransactionalProfileService) CompanyFacts(ctx context.Context) (Company
 	return NewProfileService(s.pool, s.bus, s.opts...).CompanyFacts(ctx)
 }
 
+func (s *TransactionalProfileService) IsVATRegistered(ctx context.Context) (bool, error) {
+	return NewProfileService(s.pool, s.bus, s.opts...).IsVATRegistered(ctx)
+}
+
 func (s *TransactionalProfileService) withTransaction(ctx context.Context, fn func(*ProfileService) error) (err error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -382,7 +386,17 @@ func (s *ProfileService) CompanyFacts(ctx context.Context) (CompanyFacts, error)
 	return CompanyFacts{
 		IncorporationDate: profile.IncorporationDate,
 		YearEnd:           profile.YearEnd,
+		IsVATRegistered:   profile.IsVATRegistered,
 	}, nil
+}
+
+// IsVATRegistered returns whether the company is registered for VAT.
+func (s *ProfileService) IsVATRegistered(ctx context.Context) (bool, error) {
+	facts, err := s.CompanyFacts(ctx)
+	if err != nil {
+		return false, err
+	}
+	return facts.IsVATRegistered, nil
 }
 
 func (s *ProfileService) publishProfileUpdated(ctx context.Context) error {
@@ -640,12 +654,18 @@ func (patch UpdateProfilePatch) apply(profile CompanyProfile) (CompanyProfile, e
 		}
 		profile.YearEnd = *patch.YearEnd
 	}
+	if patch.IsVATRegistered != nil {
+		profile.IsVATRegistered = *patch.IsVATRegistered
+	}
 	if patch.VATNumber != nil {
 		vatNumber := strings.TrimSpace(*patch.VATNumber)
 		if vatNumber == "" {
 			profile.VATNumber = nil
 		} else {
 			profile.VATNumber = &vatNumber
+		}
+		if patch.IsVATRegistered == nil {
+			profile.IsVATRegistered = profile.VATNumber != nil
 		}
 	}
 	if patch.BankDetails != nil {

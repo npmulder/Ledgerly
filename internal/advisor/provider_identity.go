@@ -27,6 +27,7 @@ func (p identityFactProvider) Keys() []FactKey {
 		FactCompanyYearEnd,
 		FactCompanyYearEndMonth,
 		FactCompanyYearEndDay,
+		FactCompanyVATRegistered,
 	}
 }
 
@@ -44,5 +45,6 @@ func (p identityFactProvider) Gather(ctx context.Context) (map[FactKey]FactValue
 		FactCompanyYearEnd:           yearEnd,
 		FactCompanyYearEndMonth:      yearEnd.Month,
 		FactCompanyYearEndDay:        yearEnd.Day,
+		FactCompanyVATRegistered:     facts.IsVATRegistered,
 	}, nil
 }

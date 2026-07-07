@@ -98,6 +98,7 @@ type CompanyFormState = {
   locality: string;
   postalCode: string;
   region: string;
+  isVATRegistered: boolean;
   tradingName: string;
   vatNumber: string;
   yearEndDay: string;
@@ -354,6 +355,8 @@ function CompanySettings() {
   const logoSrc = logoPreviewUrl ?? profile?.logo_asset_url ?? undefined;
   const companyInitial = initialFor(profile?.trading_name ?? form.tradingName);
   const yearEndSummary = useMemo(() => formatYearEnd(profile), [profile]);
+  const vatNumberWithoutRegistration =
+    !form.isVATRegistered && form.vatNumber.trim() !== "";
 
   function handleFieldChange(field: keyof CompanyFormState) {
     return (event: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
@@ -362,6 +365,13 @@ function CompanySettings() {
         [field]: event.target.value,
       }));
     };
+  }
+
+  function handleVATRegisteredChange(event: ChangeEvent<HTMLInputElement>) {
+    setFormDraft((current) => ({
+      ...(current ?? profileToForm(profile)),
+      isVATRegistered: event.target.checked,
+    }));
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -501,14 +511,54 @@ function CompanySettings() {
                 value={form.companyNumber}
               />
             </Field>
-            <Field label="VAT number">
-              <Input
-                name="vat_number"
-                onChange={handleFieldChange("vatNumber")}
-                placeholder="Not registered"
-                value={form.vatNumber}
-              />
-            </Field>
+            <div className="vat-registration-group company-field-grid__wide">
+              <div className="vat-registration-toggle">
+                <input
+                  aria-describedby="company-vat-registration-helper"
+                  checked={form.isVATRegistered}
+                  id="company-vat-registered"
+                  name="is_vat_registered"
+                  onChange={handleVATRegisteredChange}
+                  type="checkbox"
+                />
+                <div className="vat-registration-toggle__body">
+                  <label
+                    className="ui-field__label"
+                    htmlFor="company-vat-registered"
+                  >
+                    VAT registered
+                  </label>
+                  <span
+                    className="ui-field__helper"
+                    id="company-vat-registration-helper"
+                  >
+                    Use when the company is registered with Isle of Man Customs
+                    & Excise.
+                  </span>
+                </div>
+              </div>
+              <Field
+                helperText={
+                  vatNumberWithoutRegistration ? (
+                    <span className="vat-registration-warning">
+                      VAT number is present while VAT registered is off.
+                    </span>
+                  ) : (
+                    "Appears on VAT invoices and reports when registration is on."
+                  )
+                }
+                label="VAT number"
+              >
+                <Input
+                  aria-label="VAT number"
+                  invalid={vatNumberWithoutRegistration}
+                  name="vat_number"
+                  onChange={handleFieldChange("vatNumber")}
+                  placeholder="Not registered"
+                  value={form.vatNumber}
+                />
+              </Field>
+            </div>
             <div className="ui-field company-field-grid__wide">
               <span className="ui-field__label" id="registered-office-label">
                 Registered office
@@ -1177,6 +1227,7 @@ function profileToForm(profile: IdentityProfile | undefined): CompanyFormState {
     locality: profile?.registered_office.locality ?? "",
     postalCode: profile?.registered_office.postal_code ?? "",
     region: profile?.registered_office.region ?? "",
+    isVATRegistered: profile?.is_vat_registered ?? false,
     tradingName: profile?.trading_name ?? "",
     vatNumber: profile?.vat_number ?? "",
     yearEndDay: String(profile?.year_end.day ?? 31),
@@ -1197,6 +1248,7 @@ function formToPatch(form: CompanyFormState): IdentityProfilePatch {
       postal_code: form.postalCode.trim(),
       region: form.region.trim(),
     },
+    is_vat_registered: form.isVATRegistered,
     trading_name: form.tradingName.trim(),
     vat_number: form.vatNumber.trim() || null,
     year_end: {
@@ -1235,6 +1287,8 @@ function applyProfilePatch(
     bank_details: patch.bank_details ?? profile.bank_details,
     company_number: patch.company_number ?? profile.company_number,
     incorporation_date: patch.incorporation_date ?? profile.incorporation_date,
+    is_vat_registered:
+      patch.is_vat_registered ?? profile.is_vat_registered,
     legal_name: patch.legal_name ?? profile.legal_name,
     logo_asset_id:
       patch.logo_asset_id === undefined

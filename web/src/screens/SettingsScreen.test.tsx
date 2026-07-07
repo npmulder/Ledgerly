@@ -47,6 +47,8 @@ describe("Company settings", () => {
             company_number: patch.company_number ?? profile.company_number,
             incorporation_date:
               patch.incorporation_date ?? profile.incorporation_date,
+            is_vat_registered:
+              patch.is_vat_registered ?? profile.is_vat_registered,
             legal_name: patch.legal_name ?? profile.legal_name,
             registered_office:
               patch.registered_office ?? profile.registered_office,
@@ -87,6 +89,70 @@ describe("Company settings", () => {
       "/api/identity/profile",
       expect.objectContaining({ method: "PATCH" }),
     );
+  });
+
+  it("saves VAT registration status and warns when the VAT number is stranded", async () => {
+    const user = userEvent.setup();
+    let profile = identityProfile();
+    const fetchImpl = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = pathFromRequest(input);
+        if (path === "/api/identity/me") {
+          return jsonResponse({
+            created_at: "2026-07-05T12:00:00Z",
+            email: "owner@example.com",
+            id: 1,
+            name: "N. Meyer",
+          });
+        }
+        if (path === "/api/identity/profile" && init?.method === "PATCH") {
+          const patch = JSON.parse(String(init.body)) as IdentityProfilePatch;
+          profile = {
+            ...profile,
+            is_vat_registered:
+              patch.is_vat_registered ?? profile.is_vat_registered,
+            vat_number:
+              patch.vat_number === undefined
+                ? profile.vat_number
+                : patch.vat_number,
+          };
+          return jsonResponse(profile);
+        }
+        if (path === "/api/identity/profile") {
+          return jsonResponse(profile);
+        }
+        return jsonResponse(
+          { status: 404, title: "Not Found", type: "about:blank" },
+          404,
+          "application/problem+json",
+        );
+      },
+    );
+    vi.stubGlobal("fetch", fetchImpl);
+
+    renderAt("/settings/company");
+
+    const vatRegistered = await screen.findByLabelText("VAT registered");
+    const vatNumber = screen.getByLabelText("VAT number");
+    await user.type(vatNumber, "IM1234567");
+
+    expect(
+      screen.getByText("VAT number is present while VAT registered is off."),
+    ).toBeInTheDocument();
+
+    await user.click(vatRegistered);
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => {
+      expect(fetchImpl).toHaveBeenCalledWith(
+        "/api/identity/profile",
+        expect.objectContaining({
+          body: expect.stringContaining('"is_vat_registered":true'),
+          method: "PATCH",
+        }),
+      );
+    });
+    expect(screen.queryByText(/VAT number is present/)).not.toBeInTheDocument();
   });
 
   it("renders placeholder settings sections as coming soon stubs", async () => {
@@ -377,6 +443,7 @@ describe("Company settings", () => {
             ...identityProfile(),
             company_number: patch.company_number ?? "",
             incorporation_date: patch.incorporation_date ?? "",
+            is_vat_registered: patch.is_vat_registered ?? false,
             legal_name: patch.legal_name ?? "",
             registered_office: patch.registered_office ?? {
               country: "",
@@ -537,6 +604,7 @@ function identityProfile(): IdentityProfile {
     bank_details: { bank_name: "", bic: "", iban: "" },
     company_number: "137792C",
     incorporation_date: "2020-07-14",
+    is_vat_registered: false,
     legal_name: "NPM Limited",
     logo_asset_id: null,
     logo_asset_url: null,
