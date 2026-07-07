@@ -88,6 +88,8 @@ type CompanySnapshot struct {
 	CompanyNumber    string                    `json:"company_number"`
 	RegisteredOffice identity.RegisteredOffice `json:"registered_office"`
 	DirectorName     string                    `json:"director_name"`
+	LogoAssetID      *identity.AssetID         `json:"logo_asset_id,omitempty"`
+	LogoAssetURL     *string                   `json:"logo_asset_url,omitempty"`
 }
 
 // ShareholderSnapshot is the declaration-time shareholding resolved by Declare.

@@ -397,6 +397,8 @@ func dividendsComponents() map[string]any {
 					"company_number":    map[string]any{"type": "string"},
 					"registered_office": map[string]any{"$ref": "#/components/schemas/DividendsAddress"},
 					"director_name":     map[string]any{"type": "string"},
+					"logo_asset_id":     map[string]any{"type": "string", "nullable": true},
+					"logo_asset_url":    map[string]any{"type": "string", "nullable": true},
 				},
 				"additionalProperties": false,
 			},

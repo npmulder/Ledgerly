@@ -722,6 +722,14 @@ func declarationCompanySnapshot(profile identity.CompanyProfile, shareholder ide
 		RegisteredOffice: profile.RegisteredOffice,
 		DirectorName:     strings.TrimSpace(shareholder.Name),
 	}
+	if profile.LogoAssetID != nil {
+		logoID := identity.AssetID(strings.TrimSpace(string(*profile.LogoAssetID)))
+		if logoID != "" {
+			logoURL := "/api/identity/assets/" + string(logoID)
+			snapshot.LogoAssetID = &logoID
+			snapshot.LogoAssetURL = &logoURL
+		}
+	}
 	normalized, err := normalizeCompanySnapshot(&snapshot)
 	if err != nil {
 		return CompanySnapshot{}, err

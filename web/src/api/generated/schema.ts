@@ -1640,6 +1640,8 @@ export interface components {
             company_number: string;
             director_name: string;
             legal_name: string;
+            logo_asset_id?: string | null;
+            logo_asset_url?: string | null;
             registered_office: components["schemas"]["DividendsAddress"];
             trading_name: string;
         };

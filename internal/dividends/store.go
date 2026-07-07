@@ -495,6 +495,22 @@ func normalizeCompanySnapshot(snapshot *CompanySnapshot) (*CompanySnapshot, erro
 	normalized.RegisteredOffice.Region = strings.TrimSpace(normalized.RegisteredOffice.Region)
 	normalized.RegisteredOffice.PostalCode = strings.TrimSpace(normalized.RegisteredOffice.PostalCode)
 	normalized.RegisteredOffice.Country = strings.TrimSpace(normalized.RegisteredOffice.Country)
+	if normalized.LogoAssetID != nil {
+		logoID := identity.AssetID(strings.TrimSpace(string(*normalized.LogoAssetID)))
+		if logoID == "" {
+			normalized.LogoAssetID = nil
+		} else {
+			normalized.LogoAssetID = &logoID
+		}
+	}
+	if normalized.LogoAssetURL != nil {
+		logoURL := strings.TrimSpace(*normalized.LogoAssetURL)
+		if logoURL == "" {
+			normalized.LogoAssetURL = nil
+		} else {
+			normalized.LogoAssetURL = &logoURL
+		}
+	}
 	if normalized.LegalName == "" {
 		return nil, fmt.Errorf("dividends: company snapshot legal name is required: %w", ErrInvalidDeclaration)
 	}

@@ -75,6 +75,9 @@ type PrintPayload =
   | InvoicingInvoicePrintPayload
   | DividendsDocumentPayload
   | ReportsPLPrintPayload;
+type DividendCompanySnapshot = NonNullable<
+  DividendsDocumentPayload["declaration"]["company_snapshot"]
+>;
 
 function PrintDocument({
   payload,
@@ -240,15 +243,7 @@ function DividendVoucherDocument({
       className="dividend-print dividend-print--voucher"
       data-ledgerly-print-ready="true"
     >
-      <header className="dividend-print__header">
-        <p className="dividend-print__eyebrow">Dividend voucher</p>
-        <h1>{company.legal_name}</h1>
-        <p>Company no. {company.company_number}</p>
-        <p>
-          Registered office:{" "}
-          {addressLines(company.registered_office).join(", ")}
-        </p>
-      </header>
+      <DividendDocumentHeader kind="Dividend voucher" company={company} />
 
       <dl className="dividend-print__grid" aria-label="Dividend details">
         <DocumentFact
@@ -304,11 +299,7 @@ function BoardMinutesDocument({
       className="dividend-print dividend-print--minutes"
       data-ledgerly-print-ready="true"
     >
-      <header className="dividend-print__header">
-        <p className="dividend-print__eyebrow">Board minutes</p>
-        <h1>{company.legal_name}</h1>
-        <p>Company no. {company.company_number}</p>
-      </header>
+      <DividendDocumentHeader kind="Board minutes" company={company} />
 
       <dl className="dividend-print__grid" aria-label="Meeting details">
         <DocumentFact
@@ -437,6 +428,42 @@ function ReportsPLDocument({ payload }: { payload: ReportsPLPrintPayload }) {
         {payload.app_version ? <span>{payload.app_version}</span> : null}
       </footer>
     </article>
+  );
+}
+
+function DividendDocumentHeader({
+  kind,
+  company,
+}: {
+  kind: string;
+  company: DividendCompanySnapshot;
+}) {
+  const logoSrc = company.logo_asset_url ?? null;
+
+  return (
+    <header className="dividend-print__header">
+      <div className="dividend-print__brand">
+        {logoSrc ? (
+          <img alt={company.trading_name} src={logoSrc} />
+        ) : (
+          <div className="dividend-print__brand-mark">
+            {initials(company.trading_name)}
+          </div>
+        )}
+        <div>
+          <p className="dividend-print__eyebrow">{kind}</p>
+          <h1>{company.legal_name}</h1>
+          {company.trading_name !== company.legal_name ? (
+            <p>Trading as {company.trading_name}</p>
+          ) : null}
+          <p>Company no. {company.company_number}</p>
+          <p>
+            Registered office:{" "}
+            {addressLines(company.registered_office).join(", ")}
+          </p>
+        </div>
+      </div>
+    </header>
   );
 }
 
