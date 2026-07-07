@@ -1,0 +1,450 @@
+import {
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import type {
+  BankingAccount,
+  BankingCommandResponse,
+  BankingMoney,
+  BankingRecentTransaction,
+  BankingReviewCard,
+  BankingReviewQueue,
+} from "@/api/banking";
+import { BankingScreen } from "@/screens/BankingScreen";
+import { formatConfidence } from "@/screens/bankingFormat";
+
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
+
+describe("BankingScreen", () => {
+  it("renders account badges and three review card variants from fixtures", async () => {
+    vi.stubGlobal(
+      "fetch",
+      bankingApi({
+        accounts: accountsFixture(),
+        queue: reviewQueueFixture(),
+        recent: recentFixture(),
+      }).fetch,
+    );
+
+    renderBanking();
+
+    const accountList = await screen.findByLabelText("Bank accounts");
+    const gbpCard = within(accountList)
+      .getByText("Revolut GBP")
+      .closest("button");
+    expect(gbpCard).not.toBeNull();
+    expect(gbpCard).toHaveAttribute("aria-pressed", "true");
+    expect(within(gbpCard as HTMLElement).getByText("2")).toBeInTheDocument();
+
+    const eurCard = within(accountList)
+      .getByText("Revolut EUR")
+      .closest("button");
+    expect(eurCard).not.toBeNull();
+    expect(eurCard).toHaveAttribute("aria-pressed", "false");
+    expect(within(eurCard as HTMLElement).getByText("1")).toBeInTheDocument();
+
+    expect(screen.getByText("Invoice match")).toBeInTheDocument();
+    expect(screen.getByText("98% match")).toBeInTheDocument();
+    expect(screen.getAllByText("INV-2026-07").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Contoso GmbH/).length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Confirm" })).toBeEnabled();
+
+    expect(screen.getByText("DLA suggestion")).toBeInTheDocument();
+    expect(screen.getByText("TRANSFER TO N MEYER")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "File to DLA" })).toBeEnabled();
+
+    await userEvent.click(eurCard as HTMLElement);
+    expect(await screen.findByText("Payee rule")).toBeInTheDocument();
+    expect(screen.getAllByText("HETZNER ONLINE").length).toBeGreaterThan(0);
+    expect(screen.getByText(/Applied 11 times/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Apply" })).toBeEnabled();
+  });
+
+  it("formats confidence values as whole-percent match labels", () => {
+    expect(formatConfidence(0.982)).toBe("98% match");
+    expect(formatConfidence(91)).toBe("91% match");
+  });
+
+  it("shows caught-up empty state when the selected account queue is empty", async () => {
+    vi.stubGlobal(
+      "fetch",
+      bankingApi({
+        accounts: accountsFixture(),
+        queue: { matches: [], rules: [], suggestions: [] },
+        recent: [],
+      }).fetch,
+    );
+
+    renderBanking();
+
+    expect(await screen.findAllByText("All caught up…")).toHaveLength(2);
+    expect(
+      await screen.findByText("No reconciliations yet."),
+    ).toBeInTheDocument();
+  });
+
+  it("does not show caught-up state for unsuggested imports", async () => {
+    const accounts = accountsFixture().map((account) =>
+      account.id === 1 ? { ...account, unreconciled_count: 1 } : account,
+    );
+    vi.stubGlobal(
+      "fetch",
+      bankingApi({
+        accounts,
+        queue: { matches: [], rules: [], suggestions: [] },
+        recent: [],
+      }).fetch,
+    );
+
+    renderBanking();
+
+    expect(await screen.findByText("Review pending")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Imported transactions are waiting for suggested matches.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("All caught up…")).not.toBeInTheDocument();
+  });
+
+  it("requests recently reconciled rows for the selected account", async () => {
+    const api = bankingApi({
+      accounts: accountsFixture(),
+      queue: reviewQueueFixture(),
+      recent: [
+        ...recentFixture(),
+        {
+          actor: "reconciliation-command",
+          reconciled_at: "2026-07-06T11:00:00Z",
+          transaction: transactionFixture({
+            account_id: 2,
+            id: 202,
+            payee: "EUR Client",
+            reference: "EUR invoice",
+          }),
+        },
+      ],
+    });
+    const user = userEvent.setup();
+    vi.stubGlobal("fetch", api.fetch);
+
+    renderBanking();
+
+    const accountList = await screen.findByLabelText("Bank accounts");
+    await waitFor(() => {
+      expect(recentRequestAccounts(api.fetch)).toContain("1");
+    });
+
+    await user.click(within(accountList).getByText("Revolut EUR"));
+
+    await waitFor(() => {
+      expect(recentRequestAccounts(api.fetch)).toContain("2");
+    });
+    expect(await screen.findByText("EUR Client")).toBeInTheDocument();
+    expect(screen.queryByText("Fabrikam Ltd")).not.toBeInTheDocument();
+  });
+
+  it("hides zero-value realised FX notices when confirming matches", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal(
+      "fetch",
+      bankingApi({
+        accounts: accountsFixture(),
+        confirmResponse: {
+          kind: "match",
+          realised_fx_amount: money(0, "GBP"),
+          transaction: transactionFixture({ state: "reconciled" }),
+        },
+        queue: reviewQueueFixture(),
+        recent: recentFixture(),
+      }).fetch,
+    );
+
+    renderBanking();
+
+    await user.click(await screen.findByRole("button", { name: "Confirm" }));
+
+    expect(await screen.findByText("Confirmed match")).toBeInTheDocument();
+    expect(screen.queryByText(/auto-posted FX/)).not.toBeInTheDocument();
+  });
+
+  it("rolls back optimistic exclude when the API returns a 409", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal(
+      "prompt",
+      vi.fn(() => "duplicate import"),
+    );
+    vi.stubGlobal(
+      "fetch",
+      bankingApi({
+        accounts: accountsFixture(),
+        excludeStatus: 409,
+        queue: reviewQueueFixture(),
+        recent: [],
+      }).fetch,
+    );
+
+    renderBanking();
+
+    const card = (await screen.findByText("Invoice match")).closest("article");
+    expect(card).not.toBeNull();
+    await user.click(
+      within(card as HTMLElement).getByLabelText(
+        "Options for CONTOSO GMBH SEPA",
+      ),
+    );
+    await user.click(within(card as HTMLElement).getByRole("menuitem"));
+
+    expect(
+      await screen.findByText("Exclude conflict; restored the card."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Invoice match")).toBeInTheDocument();
+  });
+});
+
+function renderBanking() {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      mutations: { retry: false },
+      queries: { retry: false },
+    },
+  });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <BankingScreen />
+    </QueryClientProvider>,
+  );
+}
+
+function bankingApi({
+  accounts,
+  confirmResponse,
+  excludeStatus = 200,
+  queue,
+  recent,
+}: {
+  accounts: BankingAccount[];
+  confirmResponse?: BankingCommandResponse;
+  excludeStatus?: number;
+  queue: BankingReviewQueue;
+  recent: BankingRecentTransaction[];
+}) {
+  return {
+    fetch: vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = urlFromRequest(input);
+      const path = url.pathname;
+      const method = init?.method ?? "GET";
+
+      if (path === "/api/banking/accounts") {
+        return jsonResponse({ accounts });
+      }
+      if (path === "/api/banking/review") {
+        return jsonResponse(queue);
+      }
+      if (path === "/api/banking/recent") {
+        const accountID = url.searchParams.get("account");
+        return jsonResponse({
+          transactions: accountID
+            ? recent.filter(
+                (item) => item.transaction.account_id === Number(accountID),
+              )
+            : recent,
+        });
+      }
+      if (
+        path === "/api/banking/transactions/101/confirm" &&
+        method === "POST"
+      ) {
+        return jsonResponse(
+          confirmResponse ?? {
+            kind: "match",
+            realised_fx_amount: money(321, "GBP"),
+            transaction: transactionFixture({ state: "reconciled" }),
+          },
+        );
+      }
+      if (
+        path === "/api/banking/transactions/101/exclude" &&
+        method === "POST"
+      ) {
+        if (excludeStatus === 409) {
+          return jsonResponse(
+            {
+              detail: "banking: transaction 101 is already reconciled",
+              status: 409,
+              title: "Conflict",
+              type: "about:blank",
+            },
+            409,
+            "application/problem+json",
+          );
+        }
+        return jsonResponse({ state_change: { transaction_id: 101 } });
+      }
+      return jsonResponse(
+        { status: 404, title: "Not Found", type: "about:blank" },
+        404,
+        "application/problem+json",
+      );
+    }),
+  };
+}
+
+function accountsFixture(): BankingAccount[] {
+  return [
+    {
+      created_at: "2026-07-01T09:00:00Z",
+      currency: "GBP",
+      id: 1,
+      ledger_account_code: "1000-cash-gbp",
+      name: "Revolut GBP",
+      provider: "revolut",
+      unreconciled_count: 0,
+    },
+    {
+      created_at: "2026-07-01T09:00:00Z",
+      currency: "EUR",
+      id: 2,
+      ledger_account_code: "1001-cash-eur",
+      name: "Revolut EUR",
+      provider: "revolut",
+      unreconciled_count: 0,
+    },
+  ];
+}
+
+function reviewQueueFixture(): BankingReviewQueue {
+  return {
+    matches: [
+      reviewCard({
+        confidence: 0.982,
+        explanation: "Amount, client name, and invoice reference align.",
+        kind: "match",
+        suggestion_id: 9001,
+        target: {
+          client: "Contoso GmbH",
+          id: "inv_2026_07",
+          invoice_number: "INV-2026-07",
+          type: "invoice",
+        },
+        transaction: transactionFixture({
+          amount: money(450000, "EUR"),
+          payee: "CONTOSO GMBH SEPA",
+          reference: "INV-2026-07",
+        }),
+      }),
+    ],
+    rules: [
+      reviewCard({
+        confidence: 0.91,
+        explanation: "Recurring payee matched the software rule.",
+        kind: "rule",
+        suggestion_id: 9003,
+        target: {
+          account_code: "5010-software",
+          times_applied: 11,
+          type: "account",
+        },
+        transaction: transactionFixture({
+          account_id: 2,
+          amount: money(-890, "EUR"),
+          id: 103,
+          payee: "HETZNER ONLINE",
+          reference: "cloud hosting",
+        }),
+      }),
+    ],
+    suggestions: [
+      reviewCard({
+        confidence: 0.88,
+        explanation: "Payee matches known director drawing pattern.",
+        kind: "suggestion",
+        suggestion_id: 9002,
+        target: { id: "director-loan", type: "dla" },
+        transaction: transactionFixture({
+          amount: money(-240000, "GBP"),
+          id: 102,
+          payee: "TRANSFER TO N MEYER",
+          reference: "director drawing",
+        }),
+      }),
+    ],
+  };
+}
+
+function recentFixture(): BankingRecentTransaction[] {
+  return [
+    {
+      actor: "reconciliation-command",
+      reconciled_at: "2026-07-06T10:00:00Z",
+      transaction: transactionFixture({
+        id: 201,
+        payee: "Fabrikam Ltd",
+        reference: "INV-2026-06",
+      }),
+    },
+  ];
+}
+
+function reviewCard(card: BankingReviewCard): BankingReviewCard {
+  return card;
+}
+
+function transactionFixture(
+  overrides: Partial<BankingReviewCard["transaction"]> = {},
+): BankingReviewCard["transaction"] {
+  return {
+    account_id: 1,
+    amount: money(450000, "EUR"),
+    created_at: "2026-07-06T09:00:00Z",
+    date: "2026-07-06",
+    id: 101,
+    import_batch_id: 77,
+    payee: "CONTOSO GMBH SEPA",
+    provider_meta: {},
+    reference: "INV-2026-07",
+    state: "suggested",
+    ...overrides,
+  };
+}
+
+function money(amountMinor: number, currency: string): BankingMoney {
+  return { amount_minor: amountMinor, currency };
+}
+
+function recentRequestAccounts(fetchMock: ReturnType<typeof vi.fn>) {
+  return fetchMock.mock.calls
+    .map(([input]) => urlFromRequest(input).searchParams.get("account"))
+    .filter((accountID): accountID is string => accountID !== null);
+}
+
+function urlFromRequest(input: RequestInfo | URL) {
+  const url =
+    typeof input === "string"
+      ? input
+      : input instanceof URL
+        ? input.toString()
+        : input.url;
+  return new URL(url, "http://ledgerly.test");
+}
+
+function jsonResponse(
+  body: unknown,
+  status = 200,
+  contentType = "application/json",
+) {
+  return new Response(JSON.stringify(body), {
+    headers: { "Content-Type": contentType },
+    status,
+  });
+}

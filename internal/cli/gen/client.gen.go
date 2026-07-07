@@ -1574,6 +1574,9 @@ type BankingGetFeedParamsState string
 
 // BankingGetRecentParams defines parameters for BankingGetRecent.
 type BankingGetRecentParams struct {
+	// Account Filter by bank account ID.
+	Account *int64 `form:"account,omitempty" json:"account,omitempty"`
+
 	// Limit Maximum recently reconciled rows.
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
@@ -3938,6 +3941,22 @@ func NewBankingGetRecentRequest(server string, params *BankingGetRecentParams) (
 
 	if params != nil {
 		queryValues := queryURL.Query()
+
+		if params.Account != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "account", runtime.ParamLocationQuery, *params.Account); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
 
 		if params.Limit != nil {
 

@@ -341,12 +341,22 @@ func (h bankingHandler) getRecent(w nethttp.ResponseWriter, r *nethttp.Request) 
 		httpserver.WriteError(w, r, errors.New("banking: service is required"))
 		return
 	}
-	limit, err := parseOptionalPositiveInt(r.URL.Query().Get("limit"), "limit")
+	query := r.URL.Query()
+	limit, err := parseOptionalPositiveInt(query.Get("limit"), "limit")
 	if err != nil {
 		writeBankingBadRequest(w, r, err)
 		return
 	}
-	recent, err := h.service.RecentlyReconciled(r.Context(), limit)
+	var accountID AccountID
+	if value := strings.TrimSpace(query.Get("account")); value != "" {
+		parsed, err := parsePositiveInt64(value, "account")
+		if err != nil {
+			writeBankingBadRequest(w, r, err)
+			return
+		}
+		accountID = AccountID(parsed)
+	}
+	recent, err := h.service.RecentlyReconciled(r.Context(), accountID, limit)
 	if err != nil {
 		writeBankingError(w, r, err)
 		return
