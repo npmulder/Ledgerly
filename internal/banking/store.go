@@ -547,7 +547,15 @@ func (Store) UpdatePayeeRule(ctx context.Context, tx db.Tx, id PayeeRuleID, inpu
 UPDATE payee_rules
 SET matcher = $2,
 	match_mode = $3,
-	account_code = $4
+	account_code = $4,
+	times_applied = CASE
+		WHEN matcher <> $2 OR match_mode <> $3 THEN 0
+		ELSE times_applied
+	END,
+	last_applied_at = CASE
+		WHEN matcher <> $2 OR match_mode <> $3 THEN NULL
+		ELSE last_applied_at
+	END
 WHERE id = $1
 RETURNING id, matcher, match_mode, account_code, times_applied, last_applied_at, created_from, created_at`,
 		int64(id),
@@ -562,6 +570,102 @@ RETURNING id, matcher, match_mode, account_code, times_applied, last_applied_at,
 		return PayeeRule{}, payeeRuleWriteError("update", id, err)
 	}
 	return rule, nil
+}
+
+type payeeRuleSuggestionTransaction struct {
+	ID    TransactionID
+	Payee string
+}
+
+func (Store) ActivePayeeRuleSuggestionTransactions(ctx context.Context, tx db.Tx, accountCode ledger.AccountCode) ([]payeeRuleSuggestionTransaction, error) {
+	rows, err := tx.Query(ctx, `
+SELECT t.id, t.payee
+FROM transactions t
+JOIN suggestions s ON s.txn_id = t.id
+	AND s.superseded_at IS NULL
+WHERE t.state = 'suggested'
+	AND s.kind = 'payee-rule'
+	AND s.target = $1
+ORDER BY t.id
+FOR UPDATE OF t, s`,
+		string(accountCode),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("banking: list active payee-rule suggestions for account %q: %w", accountCode, err)
+	}
+	defer rows.Close()
+	var txns []payeeRuleSuggestionTransaction
+	for rows.Next() {
+		var (
+			txn   payeeRuleSuggestionTransaction
+			txnID int64
+		)
+		if err := rows.Scan(&txnID, &txn.Payee); err != nil {
+			return nil, fmt.Errorf("banking: scan active payee-rule suggestion transaction: %w", err)
+		}
+		txn.ID = TransactionID(txnID)
+		txns = append(txns, txn)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("banking: collect active payee-rule suggestion transactions: %w", err)
+	}
+	return txns, nil
+}
+
+func (s Store) ClearActivePayeeRuleSuggestion(ctx context.Context, tx db.Tx, txnID TransactionID, actor string) error {
+	actor = strings.TrimSpace(actor)
+	if txnID <= 0 {
+		return fmt.Errorf("banking: suggestion transaction id is required: %w", ErrInvalidSuggestion)
+	}
+	if actor == "" {
+		return fmt.Errorf("banking: suggestion clear actor is required: %w", ErrInvalidSuggestion)
+	}
+	txn, err := s.TransactionForUpdate(ctx, tx, txnID)
+	if err != nil {
+		return err
+	}
+	active, err := s.ActiveSuggestion(ctx, tx, txnID)
+	if err != nil {
+		if errors.Is(err, ErrSuggestionNotFound) {
+			return nil
+		}
+		return err
+	}
+	if active.Kind != SuggestionKindPayeeRule {
+		return nil
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE suggestions
+SET superseded_at = now()
+WHERE id = $1`,
+		int64(active.ID),
+	); err != nil {
+		return fmt.Errorf("banking: clear active payee-rule suggestion for transaction %d: %w", txnID, err)
+	}
+	if txn.State != TransactionStateSuggested {
+		return nil
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE transactions
+SET state = $2
+WHERE id = $1`,
+		int64(txn.ID),
+		string(TransactionStateUnreconciled),
+	); err != nil {
+		return fmt.Errorf("banking: return transaction %d to unreconciled: %w", txn.ID, err)
+	}
+	if _, err := scanStateChangeRow(tx.QueryRow(ctx, `
+INSERT INTO transaction_state_changes (txn_id, from_state, to_state, actor)
+VALUES ($1, $2, $3, $4)
+RETURNING id, txn_id, from_state, to_state, changed_at, actor`,
+		int64(txn.ID),
+		string(TransactionStateSuggested),
+		string(TransactionStateUnreconciled),
+		actor,
+	)); err != nil {
+		return fmt.Errorf("banking: record clear payee-rule suggestion state change for transaction %d: %w", txn.ID, err)
+	}
+	return nil
 }
 
 func (Store) DeletePayeeRule(ctx context.Context, tx db.Tx, id PayeeRuleID) error {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/npmulder/ledgerly/internal/ledger"
 	"github.com/npmulder/ledgerly/internal/moneyfx/money"
 	"github.com/npmulder/ledgerly/internal/platform/bus"
+	"github.com/npmulder/ledgerly/internal/platform/db"
 )
 
 type Service struct {
@@ -32,6 +34,8 @@ type Service struct {
 	dlaPersonalPatterns        []string
 	reconciliationHooks        ReconciliationCommandHooks
 }
+
+const payeeRuleManagementCreatedBy = matchEngineCreatedByPrefix + "payee-rule-management"
 
 type ServiceOption func(*Service)
 
@@ -355,7 +359,30 @@ func (s *Service) UpdatePayeeRule(ctx context.Context, id PayeeRuleID, input Pay
 	if err := s.validatePayeeRuleAccount(ctx, normalized.AccountCode); err != nil {
 		return PayeeRule{}, err
 	}
-	return s.store.UpdatePayeeRule(ctx, s.pool, id, normalized)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return PayeeRule{}, fmt.Errorf("banking: begin payee rule update transaction: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+	before, err := s.store.PayeeRule(ctx, tx, id)
+	if err != nil {
+		return PayeeRule{}, err
+	}
+	rule, err := s.store.UpdatePayeeRule(ctx, tx, id, normalized)
+	if err != nil {
+		return PayeeRule{}, err
+	}
+	if err = s.refreshActivePayeeRuleSuggestions(ctx, tx, before, &rule); err != nil {
+		return PayeeRule{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return PayeeRule{}, fmt.Errorf("banking: commit payee rule update transaction: %w", err)
+	}
+	return rule, nil
 }
 
 func (s *Service) DeletePayeeRule(ctx context.Context, id PayeeRuleID) error {
@@ -365,7 +392,29 @@ func (s *Service) DeletePayeeRule(ctx context.Context, id PayeeRuleID) error {
 	if id <= 0 {
 		return fmt.Errorf("banking: payee rule id is required: %w", ErrInvalidPayeeRule)
 	}
-	return s.store.DeletePayeeRule(ctx, s.pool, id)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("banking: begin payee rule delete transaction: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+	rule, err := s.store.PayeeRule(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	if err = s.store.DeletePayeeRule(ctx, tx, id); err != nil {
+		return err
+	}
+	if err = s.refreshActivePayeeRuleSuggestions(ctx, tx, rule, nil); err != nil {
+		return err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return fmt.Errorf("banking: commit payee rule delete transaction: %w", err)
+	}
+	return nil
 }
 
 func (s *Service) RecordPayeeRuleApplied(ctx context.Context, id PayeeRuleID) (PayeeRule, error) {
@@ -429,7 +478,59 @@ func (s *Service) validatePayeeRuleAccount(ctx context.Context, accountCode ledg
 			return nil
 		}
 	}
+	return fmt.Errorf("banking: payee rule account code %q was not found: %w", accountCode, ErrInvalidPayeeRule)
+}
+
+func (s *Service) refreshActivePayeeRuleSuggestions(ctx context.Context, tx db.Tx, before PayeeRule, after *PayeeRule) error {
+	txns, err := s.store.ActivePayeeRuleSuggestionTransactions(ctx, tx, before.AccountCode)
+	if err != nil {
+		return err
+	}
+	for _, txn := range txns {
+		if !payeeRuleMatchesPayee(before, txn.Payee) {
+			continue
+		}
+		if after == nil || !payeeRuleMatchesPayee(*after, txn.Payee) {
+			if err := s.store.ClearActivePayeeRuleSuggestion(ctx, tx, txn.ID, payeeRuleManagementCreatedBy); err != nil {
+				return err
+			}
+			continue
+		}
+		input := payeeRuleSuggestionInput(txn.ID, *after, s.payeeRuleAutoPostThreshold)
+		if active, err := s.store.ActiveSuggestion(ctx, tx, txn.ID); err == nil && sameSuggestionPayload(active, input) {
+			continue
+		} else if err != nil && !errors.Is(err, ErrSuggestionNotFound) {
+			return err
+		}
+		input.CreatedBy = payeeRuleManagementCreatedBy
+		if _, err := s.store.InsertSuggestion(ctx, tx, input); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+func sameSuggestionPayload(active Suggestion, input SuggestionInput) bool {
+	return active.Kind == input.Kind &&
+		active.Confidence == input.Confidence &&
+		active.Target == input.Target &&
+		active.Explanation == input.Explanation &&
+		active.AutoPostable == input.AutoPostable
+}
+
+func payeeRuleMatchesPayee(rule PayeeRule, payee string) bool {
+	normalized := NormalizePayee(payee)
+	if normalized == "" {
+		return false
+	}
+	switch rule.MatchMode {
+	case PayeeRuleMatchExact:
+		return normalized == rule.Matcher
+	case PayeeRuleMatchContains:
+		return strings.Contains(normalized, rule.Matcher)
+	default:
+		return false
+	}
 }
 
 func (s *Service) Feed(ctx context.Context, filter FeedFilter) ([]Transaction, error) {
