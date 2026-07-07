@@ -31,6 +31,7 @@ export const queryKeys = {
       "recent",
       { accountId, limit },
     ],
+    payeeRules: (): ApiQueryKey => ["banking", "payeeRules", {}],
     review: (): ApiQueryKey => ["banking", "review", {}],
   },
   dashboard: {

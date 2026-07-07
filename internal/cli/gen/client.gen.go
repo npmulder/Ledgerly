@@ -70,8 +70,14 @@ const (
 
 // Defines values for BankingPayeeRuleMatchMode.
 const (
-	Contains BankingPayeeRuleMatchMode = "contains"
-	Exact    BankingPayeeRuleMatchMode = "exact"
+	BankingPayeeRuleMatchModeContains BankingPayeeRuleMatchMode = "contains"
+	BankingPayeeRuleMatchModeExact    BankingPayeeRuleMatchMode = "exact"
+)
+
+// Defines values for BankingPayeeRuleRequestMatchMode.
+const (
+	BankingPayeeRuleRequestMatchModeContains BankingPayeeRuleRequestMatchMode = "contains"
+	BankingPayeeRuleRequestMatchModeExact    BankingPayeeRuleRequestMatchMode = "exact"
 )
 
 // Defines values for BankingReviewCardKind.
@@ -510,6 +516,21 @@ type BankingPayeeRuleCreatedFrom string
 
 // BankingPayeeRuleMatchMode defines model for BankingPayeeRule.MatchMode.
 type BankingPayeeRuleMatchMode string
+
+// BankingPayeeRuleRequest defines model for BankingPayeeRuleRequest.
+type BankingPayeeRuleRequest struct {
+	AccountCode string                           `json:"account_code"`
+	MatchMode   BankingPayeeRuleRequestMatchMode `json:"match_mode"`
+	Matcher     string                           `json:"matcher"`
+}
+
+// BankingPayeeRuleRequestMatchMode defines model for BankingPayeeRuleRequest.MatchMode.
+type BankingPayeeRuleRequestMatchMode string
+
+// BankingPayeeRulesResponse defines model for BankingPayeeRulesResponse.
+type BankingPayeeRulesResponse struct {
+	Rules []BankingPayeeRule `json:"rules"`
+}
 
 // BankingReasonRequest defines model for BankingReasonRequest.
 type BankingReasonRequest struct {
@@ -1842,6 +1863,12 @@ type BankingCreateAccountJSONRequestBody = BankingCreateAccountRequest
 // BankingImportAccountCSVMultipartRequestBody defines body for BankingImportAccountCSV for multipart/form-data ContentType.
 type BankingImportAccountCSVMultipartRequestBody BankingImportAccountCSVMultipartBody
 
+// BankingCreatePayeeRuleJSONRequestBody defines body for BankingCreatePayeeRule for application/json ContentType.
+type BankingCreatePayeeRuleJSONRequestBody = BankingPayeeRuleRequest
+
+// BankingUpdatePayeeRuleJSONRequestBody defines body for BankingUpdatePayeeRule for application/json ContentType.
+type BankingUpdatePayeeRuleJSONRequestBody = BankingPayeeRuleRequest
+
 // BankingExcludeTransactionJSONRequestBody defines body for BankingExcludeTransaction for application/json ContentType.
 type BankingExcludeTransactionJSONRequestBody = BankingReasonRequest
 
@@ -2686,6 +2713,22 @@ type ClientInterface interface {
 	// BankingGetFeed request
 	BankingGetFeed(ctx context.Context, params *BankingGetFeedParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// BankingListPayeeRules request
+	BankingListPayeeRules(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// BankingCreatePayeeRuleWithBody request with any body
+	BankingCreatePayeeRuleWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	BankingCreatePayeeRule(ctx context.Context, body BankingCreatePayeeRuleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// BankingDeletePayeeRule request
+	BankingDeletePayeeRule(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// BankingUpdatePayeeRuleWithBody request with any body
+	BankingUpdatePayeeRuleWithBody(ctx context.Context, id int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	BankingUpdatePayeeRule(ctx context.Context, id int64, body BankingUpdatePayeeRuleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// BankingGetRecent request
 	BankingGetRecent(ctx context.Context, params *BankingGetRecentParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -3002,6 +3045,78 @@ func (c *Client) BankingImportAccountCSVWithBody(ctx context.Context, id int64, 
 
 func (c *Client) BankingGetFeed(ctx context.Context, params *BankingGetFeedParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewBankingGetFeedRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) BankingListPayeeRules(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBankingListPayeeRulesRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) BankingCreatePayeeRuleWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBankingCreatePayeeRuleRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) BankingCreatePayeeRule(ctx context.Context, body BankingCreatePayeeRuleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBankingCreatePayeeRuleRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) BankingDeletePayeeRule(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBankingDeletePayeeRuleRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) BankingUpdatePayeeRuleWithBody(ctx context.Context, id int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBankingUpdatePayeeRuleRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) BankingUpdatePayeeRule(ctx context.Context, id int64, body BankingUpdatePayeeRuleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBankingUpdatePayeeRuleRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
 	}
@@ -4286,6 +4401,154 @@ func NewBankingGetFeedRequest(server string, params *BankingGetFeedParams) (*htt
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewBankingListPayeeRulesRequest generates requests for BankingListPayeeRules
+func NewBankingListPayeeRulesRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/banking/payee-rules")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewBankingCreatePayeeRuleRequest calls the generic BankingCreatePayeeRule builder with application/json body
+func NewBankingCreatePayeeRuleRequest(server string, body BankingCreatePayeeRuleJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewBankingCreatePayeeRuleRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewBankingCreatePayeeRuleRequestWithBody generates requests for BankingCreatePayeeRule with any type of body
+func NewBankingCreatePayeeRuleRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/banking/payee-rules")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewBankingDeletePayeeRuleRequest generates requests for BankingDeletePayeeRule
+func NewBankingDeletePayeeRuleRequest(server string, id int64) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/banking/payee-rules/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewBankingUpdatePayeeRuleRequest calls the generic BankingUpdatePayeeRule builder with application/json body
+func NewBankingUpdatePayeeRuleRequest(server string, id int64, body BankingUpdatePayeeRuleJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewBankingUpdatePayeeRuleRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewBankingUpdatePayeeRuleRequestWithBody generates requests for BankingUpdatePayeeRule with any type of body
+func NewBankingUpdatePayeeRuleRequestWithBody(server string, id int64, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/banking/payee-rules/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PUT", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -6991,6 +7254,22 @@ type ClientWithResponsesInterface interface {
 	// BankingGetFeedWithResponse request
 	BankingGetFeedWithResponse(ctx context.Context, params *BankingGetFeedParams, reqEditors ...RequestEditorFn) (*BankingGetFeedResponse, error)
 
+	// BankingListPayeeRulesWithResponse request
+	BankingListPayeeRulesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*BankingListPayeeRulesResponse, error)
+
+	// BankingCreatePayeeRuleWithBodyWithResponse request with any body
+	BankingCreatePayeeRuleWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*BankingCreatePayeeRuleResponse, error)
+
+	BankingCreatePayeeRuleWithResponse(ctx context.Context, body BankingCreatePayeeRuleJSONRequestBody, reqEditors ...RequestEditorFn) (*BankingCreatePayeeRuleResponse, error)
+
+	// BankingDeletePayeeRuleWithResponse request
+	BankingDeletePayeeRuleWithResponse(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*BankingDeletePayeeRuleResponse, error)
+
+	// BankingUpdatePayeeRuleWithBodyWithResponse request with any body
+	BankingUpdatePayeeRuleWithBodyWithResponse(ctx context.Context, id int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*BankingUpdatePayeeRuleResponse, error)
+
+	BankingUpdatePayeeRuleWithResponse(ctx context.Context, id int64, body BankingUpdatePayeeRuleJSONRequestBody, reqEditors ...RequestEditorFn) (*BankingUpdatePayeeRuleResponse, error)
+
 	// BankingGetRecentWithResponse request
 	BankingGetRecentWithResponse(ctx context.Context, params *BankingGetRecentParams, reqEditors ...RequestEditorFn) (*BankingGetRecentResponse, error)
 
@@ -7387,6 +7666,106 @@ func (r BankingGetFeedResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r BankingGetFeedResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type BankingListPayeeRulesResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON200                   *BankingPayeeRulesResponse
+	ApplicationproblemJSON401 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r BankingListPayeeRulesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r BankingListPayeeRulesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type BankingCreatePayeeRuleResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON201                   *BankingPayeeRule
+	ApplicationproblemJSON400 *Problem
+	ApplicationproblemJSON401 *Problem
+	ApplicationproblemJSON413 *Problem
+	ApplicationproblemJSON422 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r BankingCreatePayeeRuleResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r BankingCreatePayeeRuleResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type BankingDeletePayeeRuleResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	ApplicationproblemJSON400 *Problem
+	ApplicationproblemJSON401 *Problem
+	ApplicationproblemJSON404 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r BankingDeletePayeeRuleResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r BankingDeletePayeeRuleResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type BankingUpdatePayeeRuleResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON200                   *BankingPayeeRule
+	ApplicationproblemJSON400 *Problem
+	ApplicationproblemJSON401 *Problem
+	ApplicationproblemJSON404 *Problem
+	ApplicationproblemJSON413 *Problem
+	ApplicationproblemJSON422 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r BankingUpdatePayeeRuleResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r BankingUpdatePayeeRuleResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -9070,6 +9449,58 @@ func (c *ClientWithResponses) BankingGetFeedWithResponse(ctx context.Context, pa
 	return ParseBankingGetFeedResponse(rsp)
 }
 
+// BankingListPayeeRulesWithResponse request returning *BankingListPayeeRulesResponse
+func (c *ClientWithResponses) BankingListPayeeRulesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*BankingListPayeeRulesResponse, error) {
+	rsp, err := c.BankingListPayeeRules(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseBankingListPayeeRulesResponse(rsp)
+}
+
+// BankingCreatePayeeRuleWithBodyWithResponse request with arbitrary body returning *BankingCreatePayeeRuleResponse
+func (c *ClientWithResponses) BankingCreatePayeeRuleWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*BankingCreatePayeeRuleResponse, error) {
+	rsp, err := c.BankingCreatePayeeRuleWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseBankingCreatePayeeRuleResponse(rsp)
+}
+
+func (c *ClientWithResponses) BankingCreatePayeeRuleWithResponse(ctx context.Context, body BankingCreatePayeeRuleJSONRequestBody, reqEditors ...RequestEditorFn) (*BankingCreatePayeeRuleResponse, error) {
+	rsp, err := c.BankingCreatePayeeRule(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseBankingCreatePayeeRuleResponse(rsp)
+}
+
+// BankingDeletePayeeRuleWithResponse request returning *BankingDeletePayeeRuleResponse
+func (c *ClientWithResponses) BankingDeletePayeeRuleWithResponse(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*BankingDeletePayeeRuleResponse, error) {
+	rsp, err := c.BankingDeletePayeeRule(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseBankingDeletePayeeRuleResponse(rsp)
+}
+
+// BankingUpdatePayeeRuleWithBodyWithResponse request with arbitrary body returning *BankingUpdatePayeeRuleResponse
+func (c *ClientWithResponses) BankingUpdatePayeeRuleWithBodyWithResponse(ctx context.Context, id int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*BankingUpdatePayeeRuleResponse, error) {
+	rsp, err := c.BankingUpdatePayeeRuleWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseBankingUpdatePayeeRuleResponse(rsp)
+}
+
+func (c *ClientWithResponses) BankingUpdatePayeeRuleWithResponse(ctx context.Context, id int64, body BankingUpdatePayeeRuleJSONRequestBody, reqEditors ...RequestEditorFn) (*BankingUpdatePayeeRuleResponse, error) {
+	rsp, err := c.BankingUpdatePayeeRule(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseBankingUpdatePayeeRuleResponse(rsp)
+}
+
 // BankingGetRecentWithResponse request returning *BankingGetRecentResponse
 func (c *ClientWithResponses) BankingGetRecentWithResponse(ctx context.Context, params *BankingGetRecentParams, reqEditors ...RequestEditorFn) (*BankingGetRecentResponse, error) {
 	rsp, err := c.BankingGetRecent(ctx, params, reqEditors...)
@@ -10093,6 +10524,194 @@ func ParseBankingGetFeedResponse(rsp *http.Response) (*BankingGetFeedResponse, e
 			return nil, err
 		}
 		response.ApplicationproblemJSON401 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseBankingListPayeeRulesResponse parses an HTTP response from a BankingListPayeeRulesWithResponse call
+func ParseBankingListPayeeRulesResponse(rsp *http.Response) (*BankingListPayeeRulesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &BankingListPayeeRulesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest BankingPayeeRulesResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseBankingCreatePayeeRuleResponse parses an HTTP response from a BankingCreatePayeeRuleWithResponse call
+func ParseBankingCreatePayeeRuleResponse(rsp *http.Response) (*BankingCreatePayeeRuleResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &BankingCreatePayeeRuleResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest BankingPayeeRule
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseBankingDeletePayeeRuleResponse parses an HTTP response from a BankingDeletePayeeRuleWithResponse call
+func ParseBankingDeletePayeeRuleResponse(rsp *http.Response) (*BankingDeletePayeeRuleResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &BankingDeletePayeeRuleResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseBankingUpdatePayeeRuleResponse parses an HTTP response from a BankingUpdatePayeeRuleWithResponse call
+func ParseBankingUpdatePayeeRuleResponse(rsp *http.Response) (*BankingUpdatePayeeRuleResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &BankingUpdatePayeeRuleResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest BankingPayeeRule
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
 
 	}
 

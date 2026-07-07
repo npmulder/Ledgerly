@@ -1,5 +1,6 @@
 import { type ChangeEvent, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 
 import {
   confirmBankingMatch,
@@ -30,6 +31,7 @@ import {
   formatMinorUnits,
 } from "@/components";
 import { formatConfidence } from "@/screens/bankingFormat";
+import { formatAccountCode } from "@/screens/bankingCategories";
 import {
   ExpenseCategoryPicker,
   defaultExpenseAccountCode,
@@ -280,6 +282,12 @@ export function BankingScreen() {
           </p>
         </div>
         <div className="banking-screen__actions">
+          <Link
+            className="ui-button ui-button--secondary ui-button--medium"
+            to="/banking/payee-rules"
+          >
+            Payee rules
+          </Link>
           <input
             accept=".csv,text/csv"
             aria-label="CSV statement file"
@@ -905,10 +913,6 @@ function formatProvider(provider: BankingAccount["provider"]) {
     case "revolut":
       return "Revolut Business";
   }
-}
-
-function formatAccountCode(accountCode: string) {
-  return accountCode;
 }
 
 function formatCount(count: number, noun: string) {

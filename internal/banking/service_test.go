@@ -816,7 +816,7 @@ func TestPayeeNormalizationAndRules(t *testing.T) {
 	exact, err := service.CreatePayeeRule(ctx, PayeeRuleInput{
 		Matcher:     "REVOLUT*Contoso GMBH  ",
 		MatchMode:   PayeeRuleMatchExact,
-		AccountCode: "6200-software",
+		AccountCode: "5010-software",
 		CreatedFrom: PayeeRuleCreatedFromManual,
 	})
 	if err != nil {
@@ -828,7 +828,7 @@ func TestPayeeNormalizationAndRules(t *testing.T) {
 	contains, err := service.CreatePayeeRule(ctx, PayeeRuleInput{
 		Matcher:     "contoso",
 		MatchMode:   PayeeRuleMatchContains,
-		AccountCode: "6200-software",
+		AccountCode: "5010-software",
 		CreatedFrom: PayeeRuleCreatedFromRecode,
 	})
 	if err != nil {
@@ -851,6 +851,142 @@ func TestPayeeNormalizationAndRules(t *testing.T) {
 	}
 	if matches[0].ID != contains.ID || matches[1].ID != exact.ID {
 		t.Fatalf("MatchingPayeeRules() order IDs = %d, %d; want applied contains before exact", matches[0].ID, matches[1].ID)
+	}
+
+	if _, err := service.CreatePayeeRule(ctx, PayeeRuleInput{
+		Matcher:     "Unknown Expense",
+		MatchMode:   PayeeRuleMatchExact,
+		AccountCode: "9999-missing",
+		CreatedFrom: PayeeRuleCreatedFromManual,
+	}); !errors.Is(err, ErrInvalidPayeeRule) {
+		t.Fatalf("CreatePayeeRule() unknown account error = %v, want ErrInvalidPayeeRule", err)
+	}
+	if _, err := service.CreatePayeeRule(ctx, PayeeRuleInput{
+		Matcher:     "Sales Account",
+		MatchMode:   PayeeRuleMatchExact,
+		AccountCode: "4000-sales",
+		CreatedFrom: PayeeRuleCreatedFromManual,
+	}); !errors.Is(err, ErrInvalidPayeeRule) {
+		t.Fatalf("CreatePayeeRule() income account error = %v, want ErrInvalidPayeeRule", err)
+	}
+	if _, err := service.UpdatePayeeRule(ctx, exact.ID, PayeeRuleUpdateInput{
+		Matcher:     exact.Matcher,
+		MatchMode:   exact.MatchMode,
+		AccountCode: "9999-missing",
+	}); !errors.Is(err, ErrInvalidPayeeRule) {
+		t.Fatalf("UpdatePayeeRule() unknown account error = %v, want ErrInvalidPayeeRule", err)
+	}
+}
+
+func TestPayeeRuleUpdateRepairsActiveSuggestions(t *testing.T) {
+	pool, ledgerPool := temporaryMigratedBankingDatabase(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	service := NewService(pool, ledger.New(ledgerPool), WithPayeeRuleAutoPostThreshold(2))
+	account, err := service.CreateAccount(ctx, AccountInput{
+		Name:     "Revolut GBP",
+		Provider: ProviderRevolut,
+		Currency: "GBP",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount() error = %v", err)
+	}
+	txnID := importSingleBankingTxn(t, ctx, pool, service, account.ID, revolutTestTxn{
+		Date:      time.Date(2026, 7, 6, 9, 0, 0, 0, time.UTC),
+		ID:        "payee-rule-repair",
+		Payee:     "ACME SaaS Ltd",
+		Reference: "subscription",
+		Amount:    money.Money{Amount: -4200, Currency: "GBP"},
+	})
+	rule, err := service.CreatePayeeRule(ctx, PayeeRuleInput{
+		Matcher:     "ACME SaaS Ltd",
+		MatchMode:   PayeeRuleMatchExact,
+		AccountCode: "5000-fees",
+		CreatedFrom: PayeeRuleCreatedFromManual,
+	})
+	if err != nil {
+		t.Fatalf("CreatePayeeRule() error = %v", err)
+	}
+	for i := 0; i < 2; i++ {
+		rule, err = service.RecordPayeeRuleApplied(ctx, rule.ID)
+		if err != nil {
+			t.Fatalf("RecordPayeeRuleApplied(%d) error = %v", i, err)
+		}
+	}
+	if _, err := service.RecordSuggestion(ctx, SuggestionInput{
+		TransactionID: txnID,
+		Kind:          SuggestionKindPayeeRule,
+		Confidence:    PayeeRuleSuggestionConfidence,
+		Target:        "5000-fees",
+		Explanation:   "stale learned rule",
+		AutoPostable:  true,
+		CreatedBy:     matchEngineCreatedBy(1),
+	}); err != nil {
+		t.Fatalf("RecordSuggestion() stale rule error = %v", err)
+	}
+
+	updated, err := service.UpdatePayeeRule(ctx, rule.ID, PayeeRuleUpdateInput{
+		Matcher:     "ACME SaaS Ltd",
+		MatchMode:   PayeeRuleMatchExact,
+		AccountCode: "5010-software",
+	})
+	if err != nil {
+		t.Fatalf("UpdatePayeeRule() error = %v", err)
+	}
+	if updated.AccountCode != "5010-software" || updated.TimesApplied != 2 || updated.LastAppliedAt == nil {
+		t.Fatalf("updated rule = %#v, want corrected account preserving same-matcher counters", updated)
+	}
+	active := activeSuggestion(t, mustSuggestions(t, ctx, service, txnID))
+	if active.Target != "5010-software" || !active.AutoPostable || active.CreatedBy != payeeRuleManagementCreatedBy {
+		t.Fatalf("active suggestion after update = %#v, want rebuilt software payee-rule suggestion", active)
+	}
+	history := mustSuggestions(t, ctx, service, txnID)
+	if len(history) != 2 {
+		t.Fatalf("suggestion history after update length = %d, want stale and rebuilt rows", len(history))
+	}
+	assertStoredTransactionState(t, ctx, pool, txnID, TransactionStateSuggested)
+
+	if err := service.DeletePayeeRule(ctx, rule.ID); err != nil {
+		t.Fatalf("DeletePayeeRule() error = %v", err)
+	}
+	for _, suggestion := range mustSuggestions(t, ctx, service, txnID) {
+		if suggestion.SupersededAt == nil {
+			t.Fatalf("suggestion after delete = %#v, want no active suggestion", suggestion)
+		}
+	}
+	assertStoredTransactionState(t, ctx, pool, txnID, TransactionStateUnreconciled)
+}
+
+func TestPayeeRuleUpdateResetsCountersWhenMatcherChanges(t *testing.T) {
+	pool, ledgerPool := temporaryMigratedBankingDatabase(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	service := NewService(pool, ledger.New(ledgerPool))
+	rule, err := service.CreatePayeeRule(ctx, PayeeRuleInput{
+		Matcher:     "ACME SaaS Ltd",
+		MatchMode:   PayeeRuleMatchExact,
+		AccountCode: "5010-software",
+		CreatedFrom: PayeeRuleCreatedFromManual,
+	})
+	if err != nil {
+		t.Fatalf("CreatePayeeRule() error = %v", err)
+	}
+	if _, err := service.RecordPayeeRuleApplied(ctx, rule.ID); err != nil {
+		t.Fatalf("RecordPayeeRuleApplied() error = %v", err)
+	}
+
+	renamed, err := service.UpdatePayeeRule(ctx, rule.ID, PayeeRuleUpdateInput{
+		Matcher:     "Different Vendor",
+		MatchMode:   PayeeRuleMatchContains,
+		AccountCode: "5010-software",
+	})
+	if err != nil {
+		t.Fatalf("UpdatePayeeRule() error = %v", err)
+	}
+	if renamed.TimesApplied != 0 || renamed.LastAppliedAt != nil {
+		t.Fatalf("renamed rule = %#v, want counters reset after matcher/mode change", renamed)
 	}
 }
 
