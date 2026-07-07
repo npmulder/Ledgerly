@@ -1215,6 +1215,10 @@
   line-height: 1.2;
 }
 
+.banking-review-card {
+  overflow: visible;
+}
+
 .banking-review-card .ui-card__body {
   display: grid;
   gap: 14px;
@@ -1334,15 +1338,51 @@
   position: absolute;
   z-index: 5;
   top: calc(100% + 6px);
-  right: 0;
   display: grid;
-  min-width: 220px;
   gap: 10px;
   padding: 12px;
   border: var(--border-card);
   border-radius: var(--radius-card);
   background: var(--color-card);
   box-shadow: var(--shadow-screen);
+}
+
+.banking-recode__panel {
+  left: 0;
+  min-width: 260px;
+  max-width: min(320px, calc(100vw - 48px));
+}
+
+.banking-card-menu__panel {
+  right: 0;
+  min-width: 140px;
+}
+
+.expense-category-picker {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.expense-category-picker__form {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--color-border-input);
+  border-radius: var(--radius-input);
+  background: var(--color-panel);
+}
+
+.expense-category-picker__fields,
+.expense-category-picker__actions {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.expense-category-picker__actions {
+  grid-template-columns: repeat(2, max-content);
 }
 
 .banking-card-menu {
@@ -2088,6 +2128,43 @@
 
 .company-field-grid__wide {
   grid-column: 1 / -1;
+}
+
+.vat-registration-group {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.85fr) minmax(0, 1.15fr);
+  gap: 14px;
+  align-items: start;
+  padding: 12px;
+  border: 1px solid var(--color-border-hairline);
+  border-radius: var(--radius-input);
+  background: var(--color-panel);
+}
+
+.vat-registration-toggle {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  min-width: 0;
+  padding-top: 2px;
+}
+
+.vat-registration-toggle input {
+  width: 16px;
+  height: 16px;
+  margin: 1px 0 0;
+  accent-color: var(--color-success);
+}
+
+.vat-registration-toggle__body {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.vat-registration-warning {
+  color: var(--color-warning);
 }
 
 .registered-office-grid {
@@ -3230,6 +3307,7 @@ article.ui-stat-card.dashboard-stat-card--unavailable {
   .jurisdiction-rule-row,
   .pat-field-grid,
   .registered-office-grid,
+  .vat-registration-group,
   .year-end-fields {
     grid-template-columns: 1fr;
   }

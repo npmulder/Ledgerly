@@ -18,6 +18,7 @@ import type {
   BankingReviewCard,
   BankingReviewQueue,
 } from "@/api/banking";
+import type { LedgerAccount } from "@/api/ledger";
 import { BankingScreen } from "@/screens/BankingScreen";
 import { formatConfidence } from "@/screens/bankingFormat";
 
@@ -216,6 +217,143 @@ describe("BankingScreen", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("Invoice match")).toBeInTheDocument();
   });
+
+  it("creates an expense category from the recode picker and uses it", async () => {
+    const user = userEvent.setup();
+    const api = bankingApi({
+      accounts: accountsFixture(),
+      queue: reviewQueueFixture(),
+      recent: recentFixture(),
+    });
+    vi.stubGlobal("fetch", api.fetch);
+
+    renderBanking();
+
+    const card = (await screen.findByText("DLA suggestion")).closest("article");
+    expect(card).not.toBeNull();
+    await user.click(within(card as HTMLElement).getByText("Recode ▾"));
+    await user.click(
+      await within(card as HTMLElement).findByRole("button", {
+        name: "New category",
+      }),
+    );
+    await user.type(
+      within(card as HTMLElement).getByLabelText("Code"),
+      "5040-training",
+    );
+    await user.type(
+      within(card as HTMLElement).getByLabelText("Name"),
+      "Training",
+    );
+    await user.click(
+      within(card as HTMLElement).getByRole("button", { name: "Create" }),
+    );
+
+    expect(
+      await within(card as HTMLElement).findByRole("option", {
+        name: "Training",
+      }),
+    ).toBeInTheDocument();
+    await user.click(
+      within(card as HTMLElement).getByRole("button", {
+        name: "Recode selected",
+      }),
+    );
+
+    await waitFor(() => {
+      const recodeCall = api.fetch.mock.calls.find(
+        ([input, init]) =>
+          urlFromRequest(input).pathname ===
+            "/api/banking/transactions/102/recode" && init?.method === "POST",
+      );
+      expect(recodeCall).toBeDefined();
+      expect(JSON.parse(String(recodeCall?.[1]?.body))).toMatchObject({
+        account_code: "5040-training",
+      });
+    });
+  });
+
+  it("does not create a category when Enter activates Cancel", async () => {
+    const user = userEvent.setup();
+    const api = bankingApi({
+      accounts: accountsFixture(),
+      queue: reviewQueueFixture(),
+      recent: recentFixture(),
+    });
+    vi.stubGlobal("fetch", api.fetch);
+
+    renderBanking();
+
+    const card = (await screen.findByText("DLA suggestion")).closest("article");
+    expect(card).not.toBeNull();
+    await user.click(within(card as HTMLElement).getByText("Recode ▾"));
+    await user.click(
+      await within(card as HTMLElement).findByRole("button", {
+        name: "New category",
+      }),
+    );
+    await user.type(
+      within(card as HTMLElement).getByLabelText("Code"),
+      "5040-training",
+    );
+    await user.type(
+      within(card as HTMLElement).getByLabelText("Name"),
+      "Training",
+    );
+
+    const cancel = within(card as HTMLElement).getByRole("button", {
+      name: "Cancel",
+    });
+    cancel.focus();
+    await user.keyboard("{Enter}");
+
+    expect(
+      within(card as HTMLElement).queryByLabelText("Code"),
+    ).not.toBeInTheDocument();
+    expect(
+      api.fetch.mock.calls.some(
+        ([input, init]) =>
+          urlFromRequest(input).pathname === "/api/ledger/accounts" &&
+          init?.method === "POST",
+      ),
+    ).toBe(false);
+  });
+
+  it("defaults suggestion recodes to Software explicitly", async () => {
+    const user = userEvent.setup();
+    const api = bankingApi({
+      accounts: accountsFixture(),
+      queue: reviewQueueFixture(),
+      recent: recentFixture(),
+    });
+    vi.stubGlobal("fetch", api.fetch);
+
+    renderBanking();
+
+    const card = (await screen.findByText("DLA suggestion")).closest("article");
+    expect(card).not.toBeNull();
+    await user.click(within(card as HTMLElement).getByText("Recode ▾"));
+    await within(card as HTMLElement).findByRole("option", {
+      name: "Software",
+    });
+    await user.click(
+      within(card as HTMLElement).getByRole("button", {
+        name: "Recode selected",
+      }),
+    );
+
+    await waitFor(() => {
+      const recodeCall = api.fetch.mock.calls.find(
+        ([input, init]) =>
+          urlFromRequest(input).pathname ===
+            "/api/banking/transactions/102/recode" && init?.method === "POST",
+      );
+      expect(recodeCall).toBeDefined();
+      expect(JSON.parse(String(recodeCall?.[1]?.body))).toMatchObject({
+        account_code: "5010-software",
+      });
+    });
+  });
 });
 
 function renderBanking() {
@@ -247,12 +385,25 @@ function bankingApi({
   queue: BankingReviewQueue;
   recent: BankingRecentTransaction[];
 }) {
+  let expenseAccounts = expenseAccountsFixture();
   return {
     fetch: vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = urlFromRequest(input);
       const path = url.pathname;
       const method = init?.method ?? "GET";
 
+      if (path === "/api/ledger/accounts" && method === "GET") {
+        return jsonResponse({ accounts: expenseAccounts });
+      }
+      if (path === "/api/ledger/accounts" && method === "POST") {
+        const body = JSON.parse(String(init?.body));
+        const account = ledgerAccount({
+          code: body.code,
+          name: body.name,
+        });
+        expenseAccounts = [...expenseAccounts, account];
+        return jsonResponse(account, 201);
+      }
       if (path === "/api/banking/accounts") {
         return jsonResponse({ accounts });
       }
@@ -299,12 +450,55 @@ function bankingApi({
         }
         return jsonResponse({ state_change: { transaction_id: 101 } });
       }
+      if (path.endsWith("/recode") && method === "POST") {
+        const parts = path.split("/");
+        const transactionID = Number(parts[parts.length - 2]);
+        const body = JSON.parse(String(init?.body));
+        return jsonResponse({
+          kind: "rule",
+          rule: {
+            account_code: body.account_code,
+            created_at: "2026-07-06T10:00:00Z",
+            created_from: "recode",
+            id: 77,
+            last_applied_at: "2026-07-06T10:00:00Z",
+            match_mode: "exact",
+            matcher: "TRANSFER TO N MEYER",
+            times_applied: 1,
+          },
+          transaction: transactionFixture({
+            id: transactionID,
+            state: "reconciled",
+          }),
+        });
+      }
       return jsonResponse(
         { status: 404, title: "Not Found", type: "about:blank" },
         404,
         "application/problem+json",
       );
     }),
+  };
+}
+
+function expenseAccountsFixture(): LedgerAccount[] {
+  return [
+    ledgerAccount({ code: "5000-fees", name: "Fees" }),
+    ledgerAccount({ code: "5010-software", name: "Software" }),
+    ledgerAccount({ code: "5020-travel", name: "Travel" }),
+    ledgerAccount({ code: "5030-office", name: "Office" }),
+  ];
+}
+
+function ledgerAccount(overrides: Partial<LedgerAccount>): LedgerAccount {
+  return {
+    code: "5010-software",
+    created_at: "2026-07-06T10:00:00Z",
+    currency: null,
+    id: 5010,
+    name: "Software",
+    type: "expense",
+    ...overrides,
   };
 }
 

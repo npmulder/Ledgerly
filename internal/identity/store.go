@@ -31,6 +31,14 @@ func (s *PostgresStore) UsersExist(ctx context.Context) (bool, error) {
 	return exists, nil
 }
 
+func (s *PostgresStore) ProfileExists(ctx context.Context) (bool, error) {
+	var exists bool
+	if err := s.pool.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM identity.company_profile)").Scan(&exists); err != nil {
+		return false, fmt.Errorf("check company profile exists: %w", err)
+	}
+	return exists, nil
+}
+
 func (s *PostgresStore) CreateFirstUser(ctx context.Context, email, passwordHash, name string) (user User, err error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -70,6 +78,70 @@ func (s *PostgresStore) CreateFirstUser(ctx context.Context, email, passwordHash
 	return user, nil
 }
 
+func (s *PostgresStore) CreateFirstUserWithProfile(
+	ctx context.Context,
+	email string,
+	passwordHash string,
+	name string,
+	profile CompanyProfile,
+	tokenHash []byte,
+	expiresAt time.Time,
+	publish profileUpdatedPublisher,
+) (user User, err error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return User{}, fmt.Errorf("begin first-run registration: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+
+	if _, err := tx.Exec(ctx, "LOCK TABLE identity.users, identity.company_profile IN EXCLUSIVE MODE"); err != nil {
+		return User{}, fmt.Errorf("lock first-run registration tables: %w", err)
+	}
+
+	var userCount int
+	if err := tx.QueryRow(ctx, "SELECT count(*) FROM identity.users").Scan(&userCount); err != nil {
+		return User{}, fmt.Errorf("count users: %w", err)
+	}
+	var profileCount int
+	if err := tx.QueryRow(ctx, "SELECT count(*) FROM identity.company_profile").Scan(&profileCount); err != nil {
+		return User{}, fmt.Errorf("count company profile: %w", err)
+	}
+	if userCount > 0 || profileCount > 0 {
+		return User{}, ErrRegistrationClosed
+	}
+
+	if err := tx.QueryRow(
+		ctx,
+		`INSERT INTO identity.users (email, password_hash, name)
+		 VALUES ($1, $2, $3)
+		 RETURNING id, email, name, created_at`,
+		email,
+		passwordHash,
+		name,
+	).Scan(&user.ID, &user.Email, &user.Name, &user.CreatedAt); err != nil {
+		return User{}, fmt.Errorf("insert first user: %w", err)
+	}
+
+	if err := (profileStore{}).createProfile(ctx, tx, profile); err != nil {
+		return User{}, err
+	}
+	if err := createSession(ctx, tx, user.ID, tokenHash, expiresAt); err != nil {
+		return User{}, err
+	}
+	if publish != nil {
+		if err := publish(ctx, tx); err != nil {
+			return User{}, err
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return User{}, fmt.Errorf("commit first-run registration: %w", err)
+	}
+	return user, nil
+}
+
 func (s *PostgresStore) FindUserByEmail(ctx context.Context, email string) (storedUser, error) {
 	var user storedUser
 	err := s.pool.QueryRow(
@@ -89,7 +161,11 @@ func (s *PostgresStore) FindUserByEmail(ctx context.Context, email string) (stor
 }
 
 func (s *PostgresStore) CreateSession(ctx context.Context, userID int64, tokenHash []byte, expiresAt time.Time) error {
-	_, err := s.pool.Exec(
+	return createSession(ctx, s.pool, userID, tokenHash, expiresAt)
+}
+
+func createSession(ctx context.Context, tx db.Tx, userID int64, tokenHash []byte, expiresAt time.Time) error {
+	_, err := tx.Exec(
 		ctx,
 		`INSERT INTO identity.sessions (token_sha256, user_id, expires_at)
 		 VALUES ($1, $2, $3)`,
@@ -325,6 +401,7 @@ INSERT INTO identity.company_profile (
 	incorporation_date,
 	year_end_month,
 	year_end_day,
+	is_vat_registered,
 	vat_number,
 	bank_details,
 	shareholders,
@@ -339,9 +416,10 @@ INSERT INTO identity.company_profile (
 	$6,
 	$7,
 	$8,
-	$9::jsonb,
+	$9,
 	$10::jsonb,
-	$11
+	$11::jsonb,
+	$12
 )`,
 		profile.TradingName,
 		profile.LegalName,
@@ -350,6 +428,7 @@ INSERT INTO identity.company_profile (
 		profile.IncorporationDate,
 		int(profile.YearEnd.Month),
 		profile.YearEnd.Day,
+		profile.IsVATRegistered,
 		values.vatNumber,
 		string(values.bankDetails),
 		string(values.shareholders),
@@ -376,10 +455,11 @@ SET trading_name = $1,
 	incorporation_date = $5,
 	year_end_month = $6,
 	year_end_day = $7,
-	vat_number = $8,
-	bank_details = $9::jsonb,
-	shareholders = $10::jsonb,
-	logo_asset_id = $11,
+	is_vat_registered = $8,
+	vat_number = $9,
+	bank_details = $10::jsonb,
+	shareholders = $11::jsonb,
+	logo_asset_id = $12,
 	updated_at = now()
 WHERE id = 1`,
 		profile.TradingName,
@@ -389,6 +469,7 @@ WHERE id = 1`,
 		profile.IncorporationDate,
 		int(profile.YearEnd.Month),
 		profile.YearEnd.Day,
+		profile.IsVATRegistered,
 		values.vatNumber,
 		string(values.bankDetails),
 		string(values.shareholders),
@@ -569,6 +650,7 @@ SELECT trading_name,
 	incorporation_date,
 	year_end_month,
 	year_end_day,
+	is_vat_registered,
 	vat_number,
 	bank_details,
 	shareholders,
@@ -583,6 +665,7 @@ WHERE id = 1`+lockClause).
 			&incorporationDay,
 			&yearEndMonth,
 			&profile.YearEnd.Day,
+			&profile.IsVATRegistered,
 			&vatNumber,
 			&bankDetails,
 			&shareholders,

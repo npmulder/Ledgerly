@@ -74,6 +74,7 @@ func HTTPModule(handler *HTTPHandler) httpserver.Module {
 
 func (h *HTTPHandler) RegisterRoutes(r chi.Router) {
 	r.Post("/register", h.register)
+	r.Post("/register-with-profile", h.registerWithProfile)
 	r.Post("/login", h.login)
 	r.Post("/logout", h.logout)
 	r.Get("/me", h.me)
@@ -90,6 +91,19 @@ type registerRequest struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
 	Name     string `json:"name"`
+}
+
+type registerWithProfileRequest struct {
+	Email             string           `json:"email"`
+	Password          string           `json:"password"`
+	Name              string           `json:"name"`
+	TradingName       string           `json:"trading_name"`
+	LegalName         string           `json:"legal_name"`
+	CompanyNumber     string           `json:"company_number"`
+	RegisteredOffice  RegisteredOffice `json:"registered_office"`
+	IncorporationDate string           `json:"incorporation_date"`
+	YearEndMonth      int              `json:"year_end_month"`
+	YearEndDay        int              `json:"year_end_day"`
 }
 
 type loginRequest struct {
@@ -113,11 +127,17 @@ type profileResponse struct {
 	RegisteredOffice  RegisteredOffice `json:"registered_office"`
 	IncorporationDate string           `json:"incorporation_date"`
 	YearEnd           yearEndResponse  `json:"year_end"`
+	IsVATRegistered   bool             `json:"is_vat_registered"`
 	VATNumber         *string          `json:"vat_number"`
 	BankDetails       BankDetails      `json:"bank_details"`
 	Shareholders      []Shareholder    `json:"shareholders"`
 	LogoAssetID       *AssetID         `json:"logo_asset_id"`
 	LogoAssetURL      *string          `json:"logo_asset_url"`
+}
+
+type registerWithProfileResponse struct {
+	User    userResponse    `json:"user"`
+	Profile profileResponse `json:"profile"`
 }
 
 type yearEndResponse struct {
@@ -173,12 +193,7 @@ func (h *HTTPHandler) register(w nethttp.ResponseWriter, r *nethttp.Request) {
 	user, err := h.service.Register(r.Context(), RegisterInput(request))
 	if err != nil {
 		if errors.Is(err, ErrRegistrationClosed) {
-			httpserver.WriteProblem(w, r, httpserver.Problem{
-				Type:   problemTypeRegistrationClosed,
-				Title:  nethttp.StatusText(nethttp.StatusForbidden),
-				Status: nethttp.StatusForbidden,
-				Detail: "registration is closed",
-			})
+			writeRegistrationClosed(w, r)
 			return
 		}
 		if isValidationError(err) {
@@ -190,6 +205,47 @@ func (h *HTTPHandler) register(w nethttp.ResponseWriter, r *nethttp.Request) {
 	}
 
 	writeJSON(w, nethttp.StatusCreated, userToResponse(user))
+}
+
+func (h *HTTPHandler) registerWithProfile(w nethttp.ResponseWriter, r *nethttp.Request) {
+	request, fieldErrors, err := decodeRegisterWithProfileRequest(w, r)
+	if err != nil {
+		if errors.Is(err, errRequestBodyTooLarge) {
+			writePayloadTooLarge(w, r)
+			return
+		}
+		writeBadRequest(w, r, err)
+		return
+	}
+	if len(fieldErrors) > 0 {
+		writeBadRequestValidationProblem(w, r, "registration profile validation failed", fieldErrors)
+		return
+	}
+
+	profile, err := request.companyProfile()
+	if err != nil {
+		writeBadRequestValidationProblem(w, r, "registration profile validation failed", registerWithProfileFieldErrorsFromError(err))
+		return
+	}
+	result, err := h.service.RegisterWithProfile(r.Context(), request.Email, request.Password, request.Name, profile)
+	if err != nil {
+		if errors.Is(err, ErrRegistrationClosed) {
+			writeRegistrationClosed(w, r)
+			return
+		}
+		if fieldErrors := registerWithProfileFieldErrorsFromError(err); len(fieldErrors) > 0 {
+			writeBadRequestValidationProblem(w, r, "registration profile validation failed", fieldErrors)
+			return
+		}
+		httpserver.WriteError(w, r, err)
+		return
+	}
+
+	nethttp.SetCookie(w, SessionCookie(result.Token, result.ExpiresAt))
+	writeJSON(w, nethttp.StatusCreated, registerWithProfileResponse{
+		User:    userToResponse(result.User),
+		Profile: profileToResponse(result.Profile),
+	})
 }
 
 func (h *HTTPHandler) login(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -499,6 +555,196 @@ func decodeJSON(w nethttp.ResponseWriter, r *nethttp.Request, dst any) error {
 	return nil
 }
 
+func decodeRegisterWithProfileRequest(w nethttp.ResponseWriter, r *nethttp.Request) (registerWithProfileRequest, []fieldError, error) {
+	var raw map[string]json.RawMessage
+	if err := decodeJSON(w, r, &raw); err != nil {
+		return registerWithProfileRequest{}, nil, err
+	}
+
+	for field := range raw {
+		if !registerWithProfileFieldAllowed(field) {
+			return registerWithProfileRequest{}, nil, fmt.Errorf("unknown field %q", field)
+		}
+	}
+
+	var (
+		request   registerWithProfileRequest
+		fieldErrs []fieldError
+	)
+	request.Email = requiredString(raw, "email", &fieldErrs)
+	request.Password = requiredString(raw, "password", &fieldErrs)
+	request.Name = requiredString(raw, "name", &fieldErrs)
+	request.TradingName = requiredString(raw, "trading_name", &fieldErrs)
+	request.LegalName = requiredString(raw, "legal_name", &fieldErrs)
+	request.CompanyNumber = requiredString(raw, "company_number", &fieldErrs)
+	request.IncorporationDate = requiredString(raw, "incorporation_date", &fieldErrs)
+	request.YearEndMonth = requiredInt(raw, "year_end_month", &fieldErrs)
+	request.YearEndDay = requiredInt(raw, "year_end_day", &fieldErrs)
+	request.RegisteredOffice = requiredRegisteredOffice(raw, &fieldErrs)
+	if len(fieldErrs) > 0 {
+		return request, fieldErrs, nil
+	}
+	fieldErrs = append(fieldErrs, validateRegisterWithProfileRequest(request)...)
+	return request, fieldErrs, nil
+}
+
+func registerWithProfileFieldAllowed(field string) bool {
+	switch field {
+	case "email",
+		"password",
+		"name",
+		"trading_name",
+		"legal_name",
+		"company_number",
+		"registered_office",
+		"incorporation_date",
+		"year_end_month",
+		"year_end_day":
+		return true
+	default:
+		return false
+	}
+}
+
+func requiredString(raw map[string]json.RawMessage, field string, fieldErrs *[]fieldError) string {
+	pointer := "/" + field
+	value, ok := raw[field]
+	if !ok {
+		*fieldErrs = append(*fieldErrs, fieldError{Pointer: pointer, Detail: "is required"})
+		return ""
+	}
+	var decoded string
+	if err := decodeStrict(value, &decoded); err != nil {
+		*fieldErrs = append(*fieldErrs, fieldError{Pointer: pointer, Detail: "must be a string"})
+		return ""
+	}
+	return decoded
+}
+
+func requiredInt(raw map[string]json.RawMessage, field string, fieldErrs *[]fieldError) int {
+	pointer := "/" + field
+	value, ok := raw[field]
+	if !ok {
+		*fieldErrs = append(*fieldErrs, fieldError{Pointer: pointer, Detail: "is required"})
+		return 0
+	}
+	var decoded int
+	if err := decodeStrict(value, &decoded); err != nil {
+		*fieldErrs = append(*fieldErrs, fieldError{Pointer: pointer, Detail: "must be an integer"})
+		return 0
+	}
+	return decoded
+}
+
+func requiredRegisteredOffice(raw map[string]json.RawMessage, fieldErrs *[]fieldError) RegisteredOffice {
+	const pointer = "/registered_office"
+	value, ok := raw["registered_office"]
+	if !ok {
+		*fieldErrs = append(*fieldErrs, fieldError{Pointer: pointer, Detail: "is required"})
+		return RegisteredOffice{}
+	}
+	if rejectJSONNull(value, pointer, "must be an object with address fields", fieldErrs) {
+		return RegisteredOffice{}
+	}
+	var fields map[string]json.RawMessage
+	if err := decodeStrict(value, &fields); err != nil {
+		*fieldErrs = append(*fieldErrs, fieldError{Pointer: pointer, Detail: "must be an object with address fields"})
+		return RegisteredOffice{}
+	}
+	office := RegisteredOffice{
+		Line1:      requiredRegisteredOfficeString(fields, "line1", fieldErrs),
+		Line2:      requiredRegisteredOfficeString(fields, "line2", fieldErrs),
+		Locality:   requiredRegisteredOfficeString(fields, "locality", fieldErrs),
+		Region:     requiredRegisteredOfficeString(fields, "region", fieldErrs),
+		PostalCode: requiredRegisteredOfficeString(fields, "postal_code", fieldErrs),
+		Country:    requiredRegisteredOfficeString(fields, "country", fieldErrs),
+	}
+	for field := range fields {
+		if !registeredOfficeFieldAllowed(field) {
+			*fieldErrs = append(*fieldErrs, fieldError{Pointer: pointer + "/" + field, Detail: "is not allowed"})
+		}
+	}
+	return office
+}
+
+func requiredRegisteredOfficeString(raw map[string]json.RawMessage, field string, fieldErrs *[]fieldError) string {
+	pointer := "/registered_office/" + field
+	value, ok := raw[field]
+	if !ok {
+		*fieldErrs = append(*fieldErrs, fieldError{Pointer: pointer, Detail: "is required"})
+		return ""
+	}
+	var decoded string
+	if err := decodeStrict(value, &decoded); err != nil {
+		*fieldErrs = append(*fieldErrs, fieldError{Pointer: pointer, Detail: "must be a string"})
+		return ""
+	}
+	return decoded
+}
+
+func registeredOfficeFieldAllowed(field string) bool {
+	switch field {
+	case "line1", "line2", "locality", "region", "postal_code", "country":
+		return true
+	default:
+		return false
+	}
+}
+
+func validateRegisterWithProfileRequest(request registerWithProfileRequest) []fieldError {
+	var fieldErrs []fieldError
+	if _, err := normalizeEmail(request.Email); err != nil {
+		fieldErrs = append(fieldErrs, fieldError{Pointer: "/email", Detail: err.Error()})
+	}
+	if strings.TrimSpace(request.Password) == "" {
+		fieldErrs = append(fieldErrs, fieldError{Pointer: "/password", Detail: "password is required"})
+	}
+	if strings.TrimSpace(request.Name) == "" {
+		fieldErrs = append(fieldErrs, fieldError{Pointer: "/name", Detail: "name is required"})
+	}
+	if strings.TrimSpace(request.TradingName) == "" {
+		fieldErrs = append(fieldErrs, fieldError{Pointer: "/trading_name", Detail: "identity: trading name is required"})
+	}
+	if strings.TrimSpace(request.LegalName) == "" {
+		fieldErrs = append(fieldErrs, fieldError{Pointer: "/legal_name", Detail: "identity: legal name is required"})
+	}
+	if strings.TrimSpace(request.CompanyNumber) == "" {
+		fieldErrs = append(fieldErrs, fieldError{Pointer: "/company_number", Detail: "identity: company number is required"})
+	}
+	if _, err := parseDate(request.IncorporationDate); err != nil {
+		fieldErrs = append(fieldErrs, fieldError{Pointer: "/incorporation_date", Detail: err.Error()})
+	}
+	if request.YearEndMonth < 1 || request.YearEndMonth > 12 {
+		fieldErrs = append(fieldErrs, fieldError{Pointer: "/year_end_month", Detail: fmt.Sprintf("identity: year-end month %d out of range", request.YearEndMonth)})
+	}
+	if request.YearEndDay < 1 {
+		fieldErrs = append(fieldErrs, fieldError{Pointer: "/year_end_day", Detail: fmt.Sprintf("identity: year-end day %d out of range", request.YearEndDay)})
+	} else if request.YearEndMonth >= 1 && request.YearEndMonth <= 12 && request.YearEndDay > daysInMonth(time.Month(request.YearEndMonth)) {
+		fieldErrs = append(fieldErrs, fieldError{Pointer: "/year_end_day", Detail: fmt.Sprintf("identity: year-end day %d out of range for month %d", request.YearEndDay, request.YearEndMonth)})
+	}
+	return fieldErrs
+}
+
+func (request registerWithProfileRequest) companyProfile() (CompanyProfile, error) {
+	incorporationDate, err := parseDate(request.IncorporationDate)
+	if err != nil {
+		return CompanyProfile{}, err
+	}
+	return CompanyProfile{
+		TradingName:       request.TradingName,
+		LegalName:         request.LegalName,
+		CompanyNumber:     request.CompanyNumber,
+		RegisteredOffice:  request.RegisteredOffice,
+		IncorporationDate: incorporationDate,
+		YearEnd: YearEnd{
+			Month: time.Month(request.YearEndMonth),
+			Day:   request.YearEndDay,
+		},
+		BankDetails:  BankDetails{},
+		Shareholders: []Shareholder{},
+	}, nil
+}
+
 func decodeProfilePatch(w nethttp.ResponseWriter, r *nethttp.Request) (UpdateProfilePatch, []fieldError, error) {
 	var raw map[string]json.RawMessage
 	if err := decodeJSON(w, r, &raw); err != nil {
@@ -540,6 +786,16 @@ func decodeProfilePatch(w nethttp.ResponseWriter, r *nethttp.Request) (UpdatePro
 				continue
 			}
 			patch.YearEnd = &YearEnd{Month: time.Month(yearEnd.Month), Day: yearEnd.Day}
+		case "is_vat_registered":
+			if rejectJSONNull(value, "/is_vat_registered", "must be a boolean", &fieldErrors) {
+				continue
+			}
+			var isVATRegistered bool
+			if err := decodeStrict(value, &isVATRegistered); err != nil {
+				fieldErrors = append(fieldErrors, fieldError{Pointer: "/is_vat_registered", Detail: "must be a boolean"})
+				continue
+			}
+			patch.IsVATRegistered = &isVATRegistered
 		case "vat_number":
 			if isJSONNull(value) {
 				vatNumber := ""
@@ -695,12 +951,33 @@ func writeValidationProblem(w nethttp.ResponseWriter, r *nethttp.Request, fieldE
 	})
 }
 
+func writeBadRequestValidationProblem(w nethttp.ResponseWriter, r *nethttp.Request, detail string, fieldErrors []fieldError) {
+	httpserver.WriteProblem(w, r, httpserver.Problem{
+		Type:   problemTypeValidation,
+		Title:  nethttp.StatusText(nethttp.StatusBadRequest),
+		Status: nethttp.StatusBadRequest,
+		Detail: detail,
+		Extensions: map[string]any{
+			"errors": fieldErrors,
+		},
+	})
+}
+
 func writeBadRequest(w nethttp.ResponseWriter, r *nethttp.Request, err error) {
 	httpserver.WriteProblem(w, r, httpserver.Problem{
 		Type:   problemTypeBadRequest,
 		Title:  nethttp.StatusText(nethttp.StatusBadRequest),
 		Status: nethttp.StatusBadRequest,
 		Detail: err.Error(),
+	})
+}
+
+func writeRegistrationClosed(w nethttp.ResponseWriter, r *nethttp.Request) {
+	httpserver.WriteProblem(w, r, httpserver.Problem{
+		Type:   problemTypeRegistrationClosed,
+		Title:  nethttp.StatusText(nethttp.StatusForbidden),
+		Status: nethttp.StatusForbidden,
+		Detail: "registration is closed",
 	})
 }
 
@@ -746,6 +1023,32 @@ func writeIdentityError(w nethttp.ResponseWriter, r *nethttp.Request, err error)
 func isValidationError(err error) bool {
 	detail := err.Error()
 	return strings.Contains(detail, "required") || strings.Contains(detail, "invalid") || strings.Contains(detail, "must be")
+}
+
+func registerWithProfileFieldErrorsFromError(err error) []fieldError {
+	detail := err.Error()
+	switch {
+	case strings.Contains(detail, "email"):
+		return []fieldError{{Pointer: "/email", Detail: detail}}
+	case strings.Contains(detail, "password"):
+		return []fieldError{{Pointer: "/password", Detail: detail}}
+	case strings.Contains(detail, "name is required"):
+		return []fieldError{{Pointer: "/name", Detail: detail}}
+	case strings.Contains(detail, "trading name"):
+		return []fieldError{{Pointer: "/trading_name", Detail: detail}}
+	case strings.Contains(detail, "legal name"):
+		return []fieldError{{Pointer: "/legal_name", Detail: detail}}
+	case strings.Contains(detail, "company number"):
+		return []fieldError{{Pointer: "/company_number", Detail: detail}}
+	case strings.Contains(detail, "incorporation date") || strings.Contains(detail, "parse date") || strings.Contains(detail, "date is required"):
+		return []fieldError{{Pointer: "/incorporation_date", Detail: detail}}
+	case strings.Contains(detail, "year-end month"):
+		return []fieldError{{Pointer: "/year_end_month", Detail: detail}}
+	case strings.Contains(detail, "year-end day"):
+		return []fieldError{{Pointer: "/year_end_day", Detail: detail}}
+	default:
+		return nil
+	}
 }
 
 func profileFieldErrorsFromError(err error) []fieldError {
@@ -835,9 +1138,10 @@ func profileToResponse(profile CompanyProfile) profileResponse {
 			Month: int(profile.YearEnd.Month),
 			Day:   profile.YearEnd.Day,
 		},
-		VATNumber:    cloneStringPointer(profile.VATNumber),
-		BankDetails:  profile.BankDetails,
-		Shareholders: append([]Shareholder{}, profile.Shareholders...),
+		IsVATRegistered: profile.IsVATRegistered,
+		VATNumber:       cloneStringPointer(profile.VATNumber),
+		BankDetails:     profile.BankDetails,
+		Shareholders:    append([]Shareholder{}, profile.Shareholders...),
 	}
 	if profile.LogoAssetID != nil {
 		id := *profile.LogoAssetID

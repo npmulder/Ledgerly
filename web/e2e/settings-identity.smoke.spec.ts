@@ -20,6 +20,7 @@ test("login, edit company trading name, and update header", async ({
   page,
 }) => {
   const tradingName = `NPM Smoke ${Date.now()}`;
+  const vatNumber = `IM${Date.now()}`;
 
   await page.goto("/settings/company");
   await expect(page.getByRole("heading", { name: "Login" })).toBeVisible();
@@ -30,6 +31,15 @@ test("login, edit company trading name, and update header", async ({
 
   await expect(page.getByRole("heading", { name: "Company" })).toBeVisible();
   await page.getByLabel("Trading name").fill(tradingName);
+  await page.getByLabel("VAT registered").uncheck();
+  await page.getByLabel("VAT number").fill(vatNumber);
+  await expect(
+    page.getByText("VAT number is present while VAT registered is off."),
+  ).toBeVisible();
+  await page.getByLabel("VAT registered").check();
+  await expect(
+    page.getByText("VAT number is present while VAT registered is off."),
+  ).toBeHidden();
   await page.getByRole("button", { name: "Save changes" }).click();
 
   await expect(page.getByRole("banner").getByText(tradingName)).toBeVisible();
@@ -38,4 +48,6 @@ test("login, edit company trading name, and update header", async ({
 
   await expect(page.getByRole("banner").getByText(tradingName)).toBeVisible();
   await expect(page.getByLabel("Trading name")).toHaveValue(tradingName);
+  await expect(page.getByLabel("VAT registered")).toBeChecked();
+  await expect(page.getByLabel("VAT number")).toHaveValue(vatNumber);
 });

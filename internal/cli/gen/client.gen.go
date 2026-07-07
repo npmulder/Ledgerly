@@ -297,11 +297,16 @@ const (
 
 // Defines values for LedgerAccountType.
 const (
-	Asset     LedgerAccountType = "asset"
-	Equity    LedgerAccountType = "equity"
-	Expense   LedgerAccountType = "expense"
-	Income    LedgerAccountType = "income"
-	Liability LedgerAccountType = "liability"
+	LedgerAccountTypeAsset     LedgerAccountType = "asset"
+	LedgerAccountTypeEquity    LedgerAccountType = "equity"
+	LedgerAccountTypeExpense   LedgerAccountType = "expense"
+	LedgerAccountTypeIncome    LedgerAccountType = "income"
+	LedgerAccountTypeLiability LedgerAccountType = "liability"
+)
+
+// Defines values for LedgerCreateExpenseAccountRequestType.
+const (
+	LedgerCreateExpenseAccountRequestTypeExpense LedgerCreateExpenseAccountRequestType = "expense"
 )
 
 // Defines values for LedgerTrialBalanceStatus.
@@ -353,6 +358,15 @@ const (
 	InvoicingListInvoicesParamsStatusOverdue InvoicingListInvoicesParamsStatus = "overdue"
 	InvoicingListInvoicesParamsStatusPaid    InvoicingListInvoicesParamsStatus = "paid"
 	InvoicingListInvoicesParamsStatusSent    InvoicingListInvoicesParamsStatus = "sent"
+)
+
+// Defines values for LedgerListAccountsParamsType.
+const (
+	Asset     LedgerListAccountsParamsType = "asset"
+	Equity    LedgerListAccountsParamsType = "equity"
+	Expense   LedgerListAccountsParamsType = "expense"
+	Income    LedgerListAccountsParamsType = "income"
+	Liability LedgerListAccountsParamsType = "liability"
 )
 
 // AdvisorCTA defines model for AdvisorCTA.
@@ -1036,6 +1050,7 @@ type IdentityProfile struct {
 	BankDetails       BankDetails         `json:"bank_details"`
 	CompanyNumber     string              `json:"company_number"`
 	IncorporationDate openapi_types.Date  `json:"incorporation_date"`
+	IsVatRegistered   bool                `json:"is_vat_registered"`
 	LegalName         string              `json:"legal_name"`
 	LogoAssetId       *openapi_types.UUID `json:"logo_asset_id"`
 	LogoAssetUrl      *string             `json:"logo_asset_url"`
@@ -1051,6 +1066,7 @@ type IdentityProfilePatch struct {
 	BankDetails       *BankDetails        `json:"bank_details,omitempty"`
 	CompanyNumber     *string             `json:"company_number,omitempty"`
 	IncorporationDate *openapi_types.Date `json:"incorporation_date,omitempty"`
+	IsVatRegistered   *bool               `json:"is_vat_registered,omitempty"`
 	LegalName         *string             `json:"legal_name,omitempty"`
 	LogoAssetId       *openapi_types.UUID `json:"logo_asset_id"`
 	RegisteredOffice  *RegisteredOffice   `json:"registered_office,omitempty"`
@@ -1065,6 +1081,26 @@ type IdentityRegisterRequest struct {
 	Email    openapi_types.Email `json:"email"`
 	Name     string              `json:"name"`
 	Password string              `json:"password"`
+}
+
+// IdentityRegisterWithProfileRequest defines model for IdentityRegisterWithProfileRequest.
+type IdentityRegisterWithProfileRequest struct {
+	CompanyNumber     string              `json:"company_number"`
+	Email             openapi_types.Email `json:"email"`
+	IncorporationDate openapi_types.Date  `json:"incorporation_date"`
+	LegalName         string              `json:"legal_name"`
+	Name              string              `json:"name"`
+	Password          string              `json:"password"`
+	RegisteredOffice  RegisteredOffice    `json:"registered_office"`
+	TradingName       string              `json:"trading_name"`
+	YearEndDay        int                 `json:"year_end_day"`
+	YearEndMonth      int                 `json:"year_end_month"`
+}
+
+// IdentityRegisterWithProfileResult defines model for IdentityRegisterWithProfileResult.
+type IdentityRegisterWithProfileResult struct {
+	Profile IdentityProfile `json:"profile"`
+	User    IdentityUser    `json:"user"`
 }
 
 // IdentityUser defines model for IdentityUser.
@@ -1442,6 +1478,19 @@ type LedgerAccountsResponse struct {
 	Accounts []LedgerAccount `json:"accounts"`
 }
 
+// LedgerCreateExpenseAccountRequest defines model for LedgerCreateExpenseAccountRequest.
+type LedgerCreateExpenseAccountRequest struct {
+	// Code Unique ledger account code in ####-slug form.
+	Code string `json:"code"`
+	Name string `json:"name"`
+
+	// Type Optional guard value; when present it must be expense.
+	Type *LedgerCreateExpenseAccountRequestType `json:"type,omitempty"`
+}
+
+// LedgerCreateExpenseAccountRequestType Optional guard value; when present it must be expense.
+type LedgerCreateExpenseAccountRequestType string
+
 // LedgerEntriesResponse defines model for LedgerEntriesResponse.
 type LedgerEntriesResponse struct {
 	Entries    []LedgerEntry `json:"entries"`
@@ -1737,6 +1786,15 @@ type InvoicingGetInvoicePrintPayloadParams struct {
 	Draft *bool `form:"draft,omitempty" json:"draft,omitempty"`
 }
 
+// LedgerListAccountsParams defines parameters for LedgerListAccounts.
+type LedgerListAccountsParams struct {
+	// Type Optionally filter accounts by ledger account type. Use type=expense for recode/category pickers.
+	Type *LedgerListAccountsParamsType `form:"type,omitempty" json:"type,omitempty"`
+}
+
+// LedgerListAccountsParamsType defines parameters for LedgerListAccounts.
+type LedgerListAccountsParamsType string
+
 // LedgerListEntriesParams defines parameters for LedgerListEntries.
 type LedgerListEntriesParams struct {
 	// From Inclusive entry date lower bound.
@@ -1844,6 +1902,9 @@ type IdentityPatchProfileJSONRequestBody = IdentityProfilePatch
 // IdentityRegisterJSONRequestBody defines body for IdentityRegister for application/json ContentType.
 type IdentityRegisterJSONRequestBody = IdentityRegisterRequest
 
+// IdentityRegisterWithProfileJSONRequestBody defines body for IdentityRegisterWithProfile for application/json ContentType.
+type IdentityRegisterWithProfileJSONRequestBody = IdentityRegisterWithProfileRequest
+
 // InvoicingCreateClientJSONRequestBody defines body for InvoicingCreateClient for application/json ContentType.
 type InvoicingCreateClientJSONRequestBody = InvoicingClientRequest
 
@@ -1855,6 +1916,9 @@ type InvoicingCreateDraftInvoiceJSONRequestBody = InvoicingCreateDraftInvoiceReq
 
 // InvoicingPatchInvoiceJSONRequestBody defines body for InvoicingPatchInvoice for application/json ContentType.
 type InvoicingPatchInvoiceJSONRequestBody = InvoicingInvoicePatch
+
+// LedgerCreateExpenseAccountJSONRequestBody defines body for LedgerCreateExpenseAccount for application/json ContentType.
+type LedgerCreateExpenseAccountJSONRequestBody = LedgerCreateExpenseAccountRequest
 
 // ReportsShareExportPackJSONRequestBody defines body for ReportsShareExportPack for application/json ContentType.
 type ReportsShareExportPackJSONRequestBody = ReportsShareRequest
@@ -2781,6 +2845,11 @@ type ClientInterface interface {
 
 	IdentityRegister(ctx context.Context, body IdentityRegisterJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// IdentityRegisterWithProfileWithBody request with any body
+	IdentityRegisterWithProfileWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	IdentityRegisterWithProfile(ctx context.Context, body IdentityRegisterWithProfileJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// InvoicingListClients request
 	InvoicingListClients(ctx context.Context, params *InvoicingListClientsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -2844,7 +2913,12 @@ type ClientInterface interface {
 	JurisdictionGetPack(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// LedgerListAccounts request
-	LedgerListAccounts(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+	LedgerListAccounts(ctx context.Context, params *LedgerListAccountsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// LedgerCreateExpenseAccountWithBody request with any body
+	LedgerCreateExpenseAccountWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	LedgerCreateExpenseAccount(ctx context.Context, body LedgerCreateExpenseAccountJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// LedgerListEntries request
 	LedgerListEntries(ctx context.Context, params *LedgerListEntriesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -3557,6 +3631,30 @@ func (c *Client) IdentityRegister(ctx context.Context, body IdentityRegisterJSON
 	return c.Client.Do(req)
 }
 
+func (c *Client) IdentityRegisterWithProfileWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIdentityRegisterWithProfileRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) IdentityRegisterWithProfile(ctx context.Context, body IdentityRegisterWithProfileJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIdentityRegisterWithProfileRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) InvoicingListClients(ctx context.Context, params *InvoicingListClientsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewInvoicingListClientsRequest(c.Server, params)
 	if err != nil {
@@ -3821,8 +3919,32 @@ func (c *Client) JurisdictionGetPack(ctx context.Context, reqEditors ...RequestE
 	return c.Client.Do(req)
 }
 
-func (c *Client) LedgerListAccounts(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewLedgerListAccountsRequest(c.Server)
+func (c *Client) LedgerListAccounts(ctx context.Context, params *LedgerListAccountsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewLedgerListAccountsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) LedgerCreateExpenseAccountWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewLedgerCreateExpenseAccountRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) LedgerCreateExpenseAccount(ctx context.Context, body LedgerCreateExpenseAccountJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewLedgerCreateExpenseAccountRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -5610,6 +5732,46 @@ func NewIdentityRegisterRequestWithBody(server string, contentType string, body 
 	return req, nil
 }
 
+// NewIdentityRegisterWithProfileRequest calls the generic IdentityRegisterWithProfile builder with application/json body
+func NewIdentityRegisterWithProfileRequest(server string, body IdentityRegisterWithProfileJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewIdentityRegisterWithProfileRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewIdentityRegisterWithProfileRequestWithBody generates requests for IdentityRegisterWithProfile with any type of body
+func NewIdentityRegisterWithProfileRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/identity/register-with-profile")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewInvoicingListClientsRequest generates requests for InvoicingListClients
 func NewInvoicingListClientsRequest(server string, params *InvoicingListClientsParams) (*http.Request, error) {
 	var err error
@@ -6347,7 +6509,7 @@ func NewJurisdictionGetPackRequest(server string) (*http.Request, error) {
 }
 
 // NewLedgerListAccountsRequest generates requests for LedgerListAccounts
-func NewLedgerListAccountsRequest(server string) (*http.Request, error) {
+func NewLedgerListAccountsRequest(server string, params *LedgerListAccountsParams) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -6365,10 +6527,72 @@ func NewLedgerListAccountsRequest(server string) (*http.Request, error) {
 		return nil, err
 	}
 
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Type != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "type", runtime.ParamLocationQuery, *params.Type); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
 	req, err := http.NewRequest("GET", queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewLedgerCreateExpenseAccountRequest calls the generic LedgerCreateExpenseAccount builder with application/json body
+func NewLedgerCreateExpenseAccountRequest(server string, body LedgerCreateExpenseAccountJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewLedgerCreateExpenseAccountRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewLedgerCreateExpenseAccountRequestWithBody generates requests for LedgerCreateExpenseAccount with any type of body
+func NewLedgerCreateExpenseAccountRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/ledger/accounts")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -7162,6 +7386,11 @@ type ClientWithResponsesInterface interface {
 
 	IdentityRegisterWithResponse(ctx context.Context, body IdentityRegisterJSONRequestBody, reqEditors ...RequestEditorFn) (*IdentityRegisterResponse, error)
 
+	// IdentityRegisterWithProfileWithBodyWithResponse request with any body
+	IdentityRegisterWithProfileWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IdentityRegisterWithProfileResponse, error)
+
+	IdentityRegisterWithProfileWithResponse(ctx context.Context, body IdentityRegisterWithProfileJSONRequestBody, reqEditors ...RequestEditorFn) (*IdentityRegisterWithProfileResponse, error)
+
 	// InvoicingListClientsWithResponse request
 	InvoicingListClientsWithResponse(ctx context.Context, params *InvoicingListClientsParams, reqEditors ...RequestEditorFn) (*InvoicingListClientsResponse, error)
 
@@ -7225,7 +7454,12 @@ type ClientWithResponsesInterface interface {
 	JurisdictionGetPackWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*JurisdictionGetPackResponse, error)
 
 	// LedgerListAccountsWithResponse request
-	LedgerListAccountsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*LedgerListAccountsResponse, error)
+	LedgerListAccountsWithResponse(ctx context.Context, params *LedgerListAccountsParams, reqEditors ...RequestEditorFn) (*LedgerListAccountsResponse, error)
+
+	// LedgerCreateExpenseAccountWithBodyWithResponse request with any body
+	LedgerCreateExpenseAccountWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*LedgerCreateExpenseAccountResponse, error)
+
+	LedgerCreateExpenseAccountWithResponse(ctx context.Context, body LedgerCreateExpenseAccountJSONRequestBody, reqEditors ...RequestEditorFn) (*LedgerCreateExpenseAccountResponse, error)
 
 	// LedgerListEntriesWithResponse request
 	LedgerListEntriesWithResponse(ctx context.Context, params *LedgerListEntriesParams, reqEditors ...RequestEditorFn) (*LedgerListEntriesResponse, error)
@@ -8332,6 +8566,31 @@ func (r IdentityRegisterResponse) StatusCode() int {
 	return 0
 }
 
+type IdentityRegisterWithProfileResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON201                   *IdentityRegisterWithProfileResult
+	ApplicationproblemJSON400 *ValidationProblem
+	ApplicationproblemJSON403 *Problem
+	ApplicationproblemJSON413 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r IdentityRegisterWithProfileResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r IdentityRegisterWithProfileResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type InvoicingListClientsResponse struct {
 	Body                      []byte
 	HTTPResponse              *http.Response
@@ -8782,6 +9041,7 @@ type LedgerListAccountsResponse struct {
 	Body                      []byte
 	HTTPResponse              *http.Response
 	JSON200                   *LedgerAccountsResponse
+	ApplicationproblemJSON400 *Problem
 	ApplicationproblemJSON401 *Problem
 }
 
@@ -8795,6 +9055,34 @@ func (r LedgerListAccountsResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r LedgerListAccountsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type LedgerCreateExpenseAccountResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON201                   *LedgerAccount
+	ApplicationproblemJSON400 *Problem
+	ApplicationproblemJSON401 *Problem
+	ApplicationproblemJSON409 *Problem
+	ApplicationproblemJSON413 *Problem
+	ApplicationproblemJSON415 *Problem
+	ApplicationproblemJSON422 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r LedgerCreateExpenseAccountResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r LedgerCreateExpenseAccountResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -9581,6 +9869,23 @@ func (c *ClientWithResponses) IdentityRegisterWithResponse(ctx context.Context, 
 	return ParseIdentityRegisterResponse(rsp)
 }
 
+// IdentityRegisterWithProfileWithBodyWithResponse request with arbitrary body returning *IdentityRegisterWithProfileResponse
+func (c *ClientWithResponses) IdentityRegisterWithProfileWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IdentityRegisterWithProfileResponse, error) {
+	rsp, err := c.IdentityRegisterWithProfileWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseIdentityRegisterWithProfileResponse(rsp)
+}
+
+func (c *ClientWithResponses) IdentityRegisterWithProfileWithResponse(ctx context.Context, body IdentityRegisterWithProfileJSONRequestBody, reqEditors ...RequestEditorFn) (*IdentityRegisterWithProfileResponse, error) {
+	rsp, err := c.IdentityRegisterWithProfile(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseIdentityRegisterWithProfileResponse(rsp)
+}
+
 // InvoicingListClientsWithResponse request returning *InvoicingListClientsResponse
 func (c *ClientWithResponses) InvoicingListClientsWithResponse(ctx context.Context, params *InvoicingListClientsParams, reqEditors ...RequestEditorFn) (*InvoicingListClientsResponse, error) {
 	rsp, err := c.InvoicingListClients(ctx, params, reqEditors...)
@@ -9776,12 +10081,29 @@ func (c *ClientWithResponses) JurisdictionGetPackWithResponse(ctx context.Contex
 }
 
 // LedgerListAccountsWithResponse request returning *LedgerListAccountsResponse
-func (c *ClientWithResponses) LedgerListAccountsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*LedgerListAccountsResponse, error) {
-	rsp, err := c.LedgerListAccounts(ctx, reqEditors...)
+func (c *ClientWithResponses) LedgerListAccountsWithResponse(ctx context.Context, params *LedgerListAccountsParams, reqEditors ...RequestEditorFn) (*LedgerListAccountsResponse, error) {
+	rsp, err := c.LedgerListAccounts(ctx, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseLedgerListAccountsResponse(rsp)
+}
+
+// LedgerCreateExpenseAccountWithBodyWithResponse request with arbitrary body returning *LedgerCreateExpenseAccountResponse
+func (c *ClientWithResponses) LedgerCreateExpenseAccountWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*LedgerCreateExpenseAccountResponse, error) {
+	rsp, err := c.LedgerCreateExpenseAccountWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseLedgerCreateExpenseAccountResponse(rsp)
+}
+
+func (c *ClientWithResponses) LedgerCreateExpenseAccountWithResponse(ctx context.Context, body LedgerCreateExpenseAccountJSONRequestBody, reqEditors ...RequestEditorFn) (*LedgerCreateExpenseAccountResponse, error) {
+	rsp, err := c.LedgerCreateExpenseAccount(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseLedgerCreateExpenseAccountResponse(rsp)
 }
 
 // LedgerListEntriesWithResponse request returning *LedgerListEntriesResponse
@@ -11858,6 +12180,53 @@ func ParseIdentityRegisterResponse(rsp *http.Response) (*IdentityRegisterRespons
 	return response, nil
 }
 
+// ParseIdentityRegisterWithProfileResponse parses an HTTP response from a IdentityRegisterWithProfileWithResponse call
+func ParseIdentityRegisterWithProfileResponse(rsp *http.Response) (*IdentityRegisterWithProfileResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &IdentityRegisterWithProfileResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest IdentityRegisterWithProfileResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ValidationProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON413 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseInvoicingListClientsResponse parses an HTTP response from a InvoicingListClientsWithResponse call
 func ParseInvoicingListClientsResponse(rsp *http.Response) (*InvoicingListClientsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -12697,12 +13066,87 @@ func ParseLedgerListAccountsResponse(rsp *http.Response) (*LedgerListAccountsRes
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Problem
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.ApplicationproblemJSON401 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseLedgerCreateExpenseAccountResponse parses an HTTP response from a LedgerCreateExpenseAccountWithResponse call
+func ParseLedgerCreateExpenseAccountResponse(rsp *http.Response) (*LedgerCreateExpenseAccountResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &LedgerCreateExpenseAccountResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest LedgerAccount
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON415 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
 
 	}
 
