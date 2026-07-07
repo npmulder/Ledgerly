@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"io"
+	"log/slog"
 	"os"
 	"strings"
 
@@ -19,11 +21,16 @@ func newMCPCommand(runtime *Runtime) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			auditWriter := runtime.stderr
+			if auditWriter == nil {
+				auditWriter = io.Discard
+			}
 			server, err := mcp.New(mcp.Config{
 				BaseURL:    cfg.URL,
 				Token:      cfg.Token,
 				Version:    runtime.version,
 				HTTPClient: runtime.httpClient,
+				Logger:     slog.New(slog.NewTextHandler(auditWriter, &slog.HandlerOptions{Level: slog.LevelInfo})),
 			})
 			if err != nil {
 				return err

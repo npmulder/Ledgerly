@@ -234,7 +234,7 @@ func newReadFixtureServer(t *testing.T, unauthenticated bool, opts ...readFixtur
 			_, _ = w.Write([]byte("%PDF-1.4\nfixture\n%%EOF\n"))
 			return
 		}
-		if got := r.Header.Get("Authorization"); got != "Bearer lgy_read" && got != "Bearer lgy_json" && got != "Bearer lgy_pdf" && got != "Bearer lgy_bad" && got != "Bearer lgy_empty" {
+		if got := r.Header.Get("Authorization"); got != "Bearer lgy_read" && got != "Bearer lgy_json" && got != "Bearer lgy_pdf" && got != "Bearer lgy_bad" && got != "Bearer lgy_empty" && got != "Bearer lgy_write" {
 			t.Fatalf("Authorization = %q, want bearer token", got)
 		}
 		if unauthenticated {
@@ -257,6 +257,8 @@ func writeEmptyReadFixture(t *testing.T, w http.ResponseWriter, r *http.Request)
 	t.Helper()
 
 	switch r.URL.Path {
+	case "/api/identity/me":
+		_, _ = w.Write([]byte(`{"id":1,"email":"owner@example.com","name":"Owner","created_at":"2026-07-05T12:00:00Z","token_name":"CLI read integration","token_scope":"read-only"}`))
 	case "/api/invoicing/invoices":
 		_, _ = w.Write([]byte(`{"invoices":[],"counts":[],"total_count":0,"limit":50,"offset":0,"totals":{"subtotals":[],"total_gbp":{"amount":0,"currency":"GBP"}}}`))
 	case "/api/invoicing/clients":
@@ -284,6 +286,8 @@ func writeReadFixture(t *testing.T, w http.ResponseWriter, r *http.Request) {
 	t.Helper()
 
 	switch r.URL.Path {
+	case "/api/identity/me":
+		_, _ = w.Write([]byte(`{"id":1,"email":"owner@example.com","name":"Owner","created_at":"2026-07-05T12:00:00Z","token_name":"CLI read integration","token_scope":"read-only"}`))
 	case "/api/invoicing/invoices":
 		if r.URL.Query().Get("status") == "sent" {
 			assertQuery(t, r, map[string]string{

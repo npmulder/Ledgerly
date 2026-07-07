@@ -124,6 +124,21 @@ func toolDefinitions() []toolDefinition {
 			Description: "List banking review cards that need attention, including kind, confidence, explanation, target, and transaction. Transaction amounts are integer minor units with currency codes; transaction dates are ISO YYYY-MM-DD and timestamps are ISO 8601 strings. Confidence is match confidence from deterministic rules, not a probability of cash availability. Prefer list_invoices or dla_ledger when you need the underlying invoice or DLA context.",
 			InputSchema: objectSchema(nil, nil),
 		},
+		{
+			Name:        "create_draft_invoice",
+			Description: "Create a draft invoice for an active client and populate draft lines. Line prices are integer minor units with explicit currency codes; quantities are decimal strings or numbers; response timestamps are ISO 8601 strings. This tool does not send the invoice, settle it, confirm payment, or declare dividends. Prefer the CLI or web UI for human review and any money movement after the draft is prepared.",
+			InputSchema: createDraftInvoiceSchema(),
+		},
+		{
+			Name:        "send_invoice_reminder",
+			Description: "Record and send one overdue invoice reminder for an existing sent invoice. Monetary fields in the response are integer minor units with currency codes and reminder timestamps are ISO 8601 strings. This tool does not send the invoice, settle it, confirm payment, or declare dividends. Prefer get_invoice first when you need to check invoice status, due date, PDF availability, or reminder history.",
+			InputSchema: objectSchema(map[string]any{
+				"invoiceId": map[string]any{
+					"type":        "string",
+					"description": "Invoice id to remind. The invoice must already be sent, overdue, have a stored PDF, and have a client email.",
+				},
+			}, []string{"invoiceId"}),
+		},
 	}
 }
 
@@ -138,6 +153,53 @@ func objectSchema(properties map[string]any, required []string) map[string]any {
 	schema["properties"] = properties
 	if len(required) > 0 {
 		schema["required"] = required
+	}
+	return schema
+}
+
+func createDraftInvoiceSchema() map[string]any {
+	lineSchema := objectSchema(map[string]any{
+		"description": map[string]any{
+			"type":        "string",
+			"description": "Line description shown on the draft invoice.",
+		},
+		"qty": map[string]any{
+			"description": "Positive decimal quantity, as a JSON number or decimal string.",
+			"oneOf": []map[string]any{
+				{"type": "number", "exclusiveMinimum": 0},
+				{"type": "string", "pattern": "^[0-9]+(\\.[0-9]+)?$"},
+			},
+		},
+		"unitPriceMinor": map[string]any{
+			"type":        "integer",
+			"minimum":     1,
+			"description": "Unit price in integer minor units.",
+		},
+		"currency": map[string]any{
+			"type":        "string",
+			"enum":        []string{"EUR", "GBP"},
+			"description": "Line currency. All lines must use the same currency.",
+		},
+	}, []string{"description", "qty", "unitPriceMinor", "currency"})
+	schema := objectSchema(map[string]any{
+		"clientId": map[string]any{
+			"type":        "string",
+			"description": "Existing active client id. Provide either clientId or clientName, not both.",
+		},
+		"clientName": map[string]any{
+			"type":        "string",
+			"description": "Exact active client name, case-insensitive. Provide either clientId or clientName, not both.",
+		},
+		"lines": map[string]any{
+			"type":        "array",
+			"minItems":    1,
+			"description": "Draft invoice lines to create.",
+			"items":       lineSchema,
+		},
+	}, []string{"lines"})
+	schema["oneOf"] = []map[string]any{
+		{"required": []string{"clientId"}},
+		{"required": []string{"clientName"}},
 	}
 	return schema
 }

@@ -41,10 +41,16 @@ func TestMCPServerStdioReadTools(t *testing.T) {
 			Name    string `json:"name"`
 			Version string `json:"version"`
 		} `json:"serverInfo"`
+		Instructions string `json:"instructions"`
 	}
 	decodeResult(t, initialize, &initResult)
 	if initResult.ServerInfo.Name != "ledgerly" || initResult.ServerInfo.Version != "test-sha" {
 		t.Fatalf("serverInfo = %+v, want ledgerly/test-sha", initResult.ServerInfo)
+	}
+	for _, want := range []string{"integer minor units", "prepare with tools", "human confirms money movement", "advisor_insights", "deterministic rule outputs"} {
+		if !strings.Contains(initResult.Instructions, want) {
+			t.Fatalf("instructions missing %q: %s", want, initResult.Instructions)
+		}
 	}
 
 	var toolsResult struct {
@@ -83,6 +89,8 @@ func TestMCPServerStdioReadTools(t *testing.T) {
 		"vat_position",
 		"filing_calendar",
 		"bank_review_queue",
+		"create_draft_invoice",
+		"send_invoice_reminder",
 	}
 	if !reflect.DeepEqual(gotNames, wantNames) {
 		t.Fatalf("tool names = %#v, want %#v", gotNames, wantNames)
@@ -201,6 +209,40 @@ func TestMCPUsesLedgerlyTokenEnv(t *testing.T) {
 	}, "\n")
 	responses := runMCPForTest(t, configPath, input, "dev")
 	assertMCPStructuredContent(t, responses["1"], reportCalendarFixture)
+}
+
+func TestMCPAuditLogsToolCallsToStderr(t *testing.T) {
+	server := newReadFixtureServer(t, false)
+	defer server.Close()
+	configPath := writeTestConfig(t, server.URL, "lgy_read", configFileMode)
+
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"filing_calendar","arguments":{}}}`,
+		"",
+	}, "\n")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	err := Execute(
+		context.Background(),
+		[]string{"--config", configPath, "mcp"},
+		&stdout,
+		&stderr,
+		WithStdin(strings.NewReader(input)),
+		WithVersion("dev"),
+	)
+	if err != nil {
+		t.Fatalf("Execute(mcp) error = %v", err)
+	}
+	if !json.Valid(bytes.TrimSpace(stdout.Bytes())) {
+		t.Fatalf("stdout is not a single JSON-RPC response: %s", stdout.String())
+	}
+	audit := stderr.String()
+	for _, want := range []string{`msg="mcp tool call"`, "tool=filing_calendar", `pat_name="CLI read integration"`, "duration_ms="} {
+		if !strings.Contains(audit, want) {
+			t.Fatalf("audit log missing %q: %s", want, audit)
+		}
+	}
 }
 
 func runMCPForTest(t *testing.T, configPath string, input string, version string) map[string]mcpTestResponse {
