@@ -18,11 +18,11 @@ func (s Store) InvoiceMatchCandidates(ctx context.Context, tx db.Tx, currency st
 SELECT i.id, c.name, c.terms_days
 FROM invoicing.invoices i
 JOIN invoicing.clients c ON c.id = i.client_id
-WHERE i.status = 'sent'
+WHERE i.status IN ('draft', 'sent')
 	AND i.currency = $1
 	AND i.settled_date IS NULL
 	AND i.settled_amount_minor IS NULL
-ORDER BY i.issue_date, i.number, i.id`, currency)
+ORDER BY i.issue_date, i.number NULLS LAST, i.id`, currency)
 	if err != nil {
 		return nil, fmt.Errorf("invoicing: list match candidates: %w", err)
 	}

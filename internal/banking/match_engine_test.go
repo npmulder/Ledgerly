@@ -98,6 +98,28 @@ func TestInvoiceScorerTable(t *testing.T) {
 		t.Fatal("bestInvoiceMatch() settled = true, want excluded")
 	}
 
+	paid := base
+	paid.InvoiceID = "paid"
+	paid.Status = "paid"
+	if _, ok := bestInvoiceMatch(txn, []InvoiceMatchCandidate{paid}); ok {
+		t.Fatal("bestInvoiceMatch() paid = true, want excluded")
+	}
+
+	draft := base
+	draft.InvoiceID = "draft"
+	draft.Number = ""
+	draft.Status = "draft"
+	draftMatch, ok := bestInvoiceMatch(txn, []InvoiceMatchCandidate{draft})
+	if !ok {
+		t.Fatal("bestInvoiceMatch() draft = false, want draft candidate")
+	}
+	draftExplanation := invoiceMatchExplanation(draftMatch)
+	for _, want := range []string{"draft invoice match", "will send the invoice before allocating payment"} {
+		if !strings.Contains(draftExplanation, want) {
+			t.Fatalf("draft explanation %q missing %q", draftExplanation, want)
+		}
+	}
+
 	weaker := base
 	weaker.InvoiceID = "weaker"
 	weaker.Number = "INV-2026-9"
@@ -644,7 +666,7 @@ func TestMatchEngineInvoiceSentManualRefreshPriorityAndDeterminism(t *testing.T)
 	}
 }
 
-func TestDefaultInvoiceCandidatesUseSentUnsettledInvoicingRecords(t *testing.T) {
+func TestDefaultInvoiceCandidatesUseOpenSentAndDraftInvoicingRecords(t *testing.T) {
 	pool, ledgerPool := temporaryMigratedBankingDatabase(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -659,6 +681,15 @@ func TestDefaultInvoiceCandidatesUseSentUnsettledInvoicingRecords(t *testing.T) 
 		IssueDate:  time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC),
 		DueDate:    time.Date(2026, 7, 31, 0, 0, 0, 0, time.UTC),
 		Amount:     money.Money{Amount: 310000, Currency: "GBP"},
+	})
+	seedSentInvoiceCandidate(t, ctx, invoicingPool, sentInvoiceSeed{
+		InvoiceID:  "default-source-draft",
+		ClientID:   "default-source-draft-client",
+		ClientName: "Draft Source Ltd",
+		IssueDate:  time.Date(2026, 7, 2, 0, 0, 0, 0, time.UTC),
+		DueDate:    time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC),
+		Amount:     money.Money{Amount: 320000, Currency: "GBP"},
+		Status:     "draft",
 	})
 
 	service := NewService(pool, ledger.New(ledgerPool))
@@ -685,6 +716,26 @@ func TestDefaultInvoiceCandidatesUseSentUnsettledInvoicingRecords(t *testing.T) 
 	active := activeSuggestion(t, history)
 	if active.Kind != SuggestionKindInvoiceMatch || active.Target != "default-source-invoice" {
 		t.Fatalf("active suggestion = %#v, want default-source invoice match", active)
+	}
+
+	draftTxnID := importSingleBankingTxn(t, ctx, pool, service, account.ID, revolutTestTxn{
+		Date:      time.Date(2026, 7, 21, 9, 0, 0, 0, time.UTC),
+		ID:        "default-source-draft-match",
+		Payee:     "Draft Source Ltd",
+		Reference: "bank transfer",
+		Amount:    money.Money{Amount: 320000, Currency: "GBP"},
+	})
+
+	draftHistory, err := service.SuggestionsForTransaction(ctx, draftTxnID)
+	if err != nil {
+		t.Fatalf("SuggestionsForTransaction() draft error = %v", err)
+	}
+	draftActive := activeSuggestion(t, draftHistory)
+	if draftActive.Kind != SuggestionKindInvoiceMatch || draftActive.Target != "default-source-draft" {
+		t.Fatalf("active draft suggestion = %#v, want default-source draft invoice match", draftActive)
+	}
+	if !strings.Contains(draftActive.Explanation, "draft invoice match") {
+		t.Fatalf("draft suggestion explanation = %q, want draft invoice match", draftActive.Explanation)
 	}
 }
 
@@ -976,6 +1027,7 @@ type sentInvoiceSeed struct {
 	IssueDate  time.Time
 	DueDate    time.Time
 	Amount     money.Money
+	Status     string
 }
 
 func seedSentInvoiceCandidate(t *testing.T, ctx context.Context, pool *pgxpool.Pool, seed sentInvoiceSeed) {
@@ -998,6 +1050,10 @@ INSERT INTO clients (
 	); err != nil {
 		t.Fatalf("seed invoice client: %v", err)
 	}
+	status := seed.Status
+	if strings.TrimSpace(status) == "" {
+		status = "sent"
+	}
 	if _, err := pool.Exec(ctx, `
 INSERT INTO invoices (
 	id,
@@ -1008,10 +1064,11 @@ INSERT INTO invoices (
 	due_date,
 	currency,
 	vat_treatment
-) VALUES ($1, $2, $3, 'sent', $4, $5, $6, 'reverse-charge-eu-b2b')`,
+) VALUES ($1, NULLIF($2, ''), $3, $4, $5, $6, $7, 'reverse-charge-eu-b2b')`,
 		seed.InvoiceID,
 		seed.Number,
 		seed.ClientID,
+		status,
 		seed.IssueDate,
 		seed.DueDate,
 		seed.Amount.Currency,

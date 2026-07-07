@@ -94,6 +94,12 @@ const (
 	BankingReviewCardKindSuggestion BankingReviewCardKind = "suggestion"
 )
 
+// Defines values for BankingReviewTargetInvoiceStatus.
+const (
+	BankingReviewTargetInvoiceStatusDraft BankingReviewTargetInvoiceStatus = "draft"
+	BankingReviewTargetInvoiceStatusSent  BankingReviewTargetInvoiceStatus = "sent"
+)
+
 // Defines values for BankingReviewTargetType.
 const (
 	BankingReviewTargetTypeAccount BankingReviewTargetType = "account"
@@ -337,8 +343,8 @@ const (
 
 // Defines values for ReportsShareResponseStatus.
 const (
-	ReportsShareResponseStatusManualSend ReportsShareResponseStatus = "manual-send"
-	ReportsShareResponseStatusSent       ReportsShareResponseStatus = "sent"
+	ManualSend ReportsShareResponseStatus = "manual-send"
+	Sent       ReportsShareResponseStatus = "sent"
 )
 
 // Defines values for ReportsVATResponseStatus.
@@ -601,13 +607,17 @@ type BankingReviewQueue struct {
 
 // BankingReviewTarget defines model for BankingReviewTarget.
 type BankingReviewTarget struct {
-	AccountCode   *string                 `json:"account_code,omitempty"`
-	Client        *string                 `json:"client,omitempty"`
-	Id            *string                 `json:"id,omitempty"`
-	InvoiceNumber *string                 `json:"invoice_number,omitempty"`
-	TimesApplied  *int                    `json:"times_applied"`
-	Type          BankingReviewTargetType `json:"type"`
+	AccountCode   *string                           `json:"account_code,omitempty"`
+	Client        *string                           `json:"client,omitempty"`
+	Id            *string                           `json:"id,omitempty"`
+	InvoiceNumber *string                           `json:"invoice_number,omitempty"`
+	InvoiceStatus *BankingReviewTargetInvoiceStatus `json:"invoice_status,omitempty"`
+	TimesApplied  *int                              `json:"times_applied"`
+	Type          BankingReviewTargetType           `json:"type"`
 }
+
+// BankingReviewTargetInvoiceStatus defines model for BankingReviewTarget.InvoiceStatus.
+type BankingReviewTargetInvoiceStatus string
 
 // BankingReviewTargetType defines model for BankingReviewTarget.Type.
 type BankingReviewTargetType string

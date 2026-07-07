@@ -678,10 +678,13 @@ function ReceiptControls({
 }
 
 function MatchDetails({ card }: { readonly card: BankingReviewCard }) {
+  const invoiceLabel = isDraftInvoiceMatch(card)
+    ? "Draft invoice"
+    : (card.target.invoice_number ?? card.target.id);
   return (
     <div className="banking-review-card__detail">
       <p>
-        <strong>{card.target.invoice_number ?? card.target.id}</strong>
+        <strong>{invoiceLabel}</strong>
         {card.target.client ? <span> · {card.target.client}</span> : null}
       </p>
       <p>{card.explanation}</p>
@@ -740,7 +743,7 @@ function ReviewCardActions({
           size="small"
           type="button"
         >
-          Confirm
+          {isDraftInvoiceMatch(card) ? "Send + allocate" : "Confirm"}
         </Button>
       </div>
     );
@@ -995,12 +998,16 @@ function problemMessage(error: unknown) {
 function reviewCardTitle(card: BankingReviewCard) {
   switch (card.kind) {
     case "match":
-      return "Invoice match";
+      return isDraftInvoiceMatch(card) ? "Draft invoice match" : "Invoice match";
     case "rule":
       return "Payee rule";
     case "suggestion":
       return "DLA suggestion";
   }
+}
+
+function isDraftInvoiceMatch(card: BankingReviewCard) {
+  return card.kind === "match" && card.target.invoice_status === "draft";
 }
 
 function kindIcon(kind: BankingReviewCard["kind"]) {

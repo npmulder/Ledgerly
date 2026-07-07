@@ -581,6 +581,7 @@ func bankingReviewTargetSchema() map[string]any {
 			"type":           map[string]any{"type": "string", "enum": []string{"invoice", "dla", "account"}},
 			"id":             map[string]any{"type": "string"},
 			"invoice_number": map[string]any{"type": "string"},
+			"invoice_status": map[string]any{"type": "string", "enum": []string{"draft", "sent"}},
 			"client":         map[string]any{"type": "string"},
 			"account_code":   map[string]any{"type": "string"},
 			"times_applied":  map[string]any{"type": "integer", "nullable": true},

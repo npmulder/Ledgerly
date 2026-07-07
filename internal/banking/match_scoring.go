@@ -177,8 +177,12 @@ func scoreInvoiceCandidate(txn Transaction, candidate InvoiceMatchCandidate) (fl
 	if strings.TrimSpace(candidate.InvoiceID) == "" {
 		return 0, nil, false
 	}
-	if status := strings.TrimSpace(candidate.Status); status != "" && status != "sent" {
-		return 0, nil, false
+	if status := strings.TrimSpace(candidate.Status); status != "" {
+		switch status {
+		case "draft", "sent":
+		default:
+			return 0, nil, false
+		}
 	}
 	if candidate.Settled {
 		return 0, nil, false
@@ -230,7 +234,10 @@ func scoreInvoiceCandidate(txn Transaction, candidate InvoiceMatchCandidate) (fl
 func invoiceMatchExplanation(match invoiceMatchResult) string {
 	number := strings.TrimSpace(match.candidate.Number)
 	if number == "" {
-		number = match.candidate.InvoiceID
+		number = "draft invoice " + match.candidate.InvoiceID
+	}
+	if strings.TrimSpace(match.candidate.Status) == "draft" {
+		return fmt.Sprintf("%d%% draft invoice match for %s: confirming will send the invoice before allocating payment; %s", confidencePercent(match.score), number, strings.Join(match.factors, ", "))
 	}
 	return fmt.Sprintf("%d%% invoice match for %s: %s", confidencePercent(match.score), number, strings.Join(match.factors, ", "))
 }

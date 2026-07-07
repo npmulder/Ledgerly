@@ -83,6 +83,50 @@ describe("BankingScreen", () => {
     expect(formatConfidence(91)).toBe("91% match");
   });
 
+  it("labels draft invoice matches as send-and-allocate actions", async () => {
+    vi.stubGlobal(
+      "fetch",
+      bankingApi({
+        accounts: accountsFixture(),
+        queue: {
+          matches: [
+            reviewCard({
+              confidence: 0.85,
+              explanation:
+                "85% draft invoice match for draft invoice inv_draft: confirming will send the invoice before allocating payment; exact native amount, payee resembles client",
+              kind: "match",
+              suggestion_id: 9011,
+              target: {
+                client: "Contoso GmbH",
+                id: "inv_draft",
+                invoice_status: "draft",
+                type: "invoice",
+              },
+              transaction: transactionFixture({
+                payee: "CONTOSO GMBH SEPA",
+                reference: "bank transfer",
+              }),
+            }),
+          ],
+          rules: [],
+          suggestions: [],
+        },
+        recent: [],
+      }).fetch,
+    );
+
+    renderBanking();
+
+    expect(await screen.findByText("Draft invoice match")).toBeInTheDocument();
+    expect(screen.getByText("Draft invoice")).toBeInTheDocument();
+    expect(
+      screen.getByText(/confirming will send the invoice before allocating/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Send + allocate" }),
+    ).toBeEnabled();
+  });
+
   it("shows caught-up empty state when the selected account queue is empty", async () => {
     vi.stubGlobal(
       "fetch",
@@ -616,6 +660,7 @@ function reviewQueueFixture(): BankingReviewQueue {
           client: "Contoso GmbH",
           id: "inv_2026_07",
           invoice_number: "INV-2026-07",
+          invoice_status: "sent",
           type: "invoice",
         },
         transaction: transactionFixture({
