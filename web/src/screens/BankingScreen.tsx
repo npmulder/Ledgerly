@@ -20,6 +20,7 @@ import {
 import { isApiError } from "@/api/client";
 import { queryKeys } from "@/api/queryKeys";
 import {
+  AdvisorStrip,
   Badge,
   Button,
   Card,
@@ -330,11 +331,7 @@ export function BankingScreen() {
         />
       ) : null}
 
-      <section
-        aria-label="Banking advisor insights"
-        className="banking-advisor-strip"
-        data-surface="banking"
-      />
+      <AdvisorStrip surface="banking" />
 
       <AccountCards
         accounts={accounts}

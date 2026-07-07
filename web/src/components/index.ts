@@ -1,5 +1,10 @@
 export { AmountText } from "@/components/AmountText";
 export type { AmountTextProps } from "@/components/AmountText";
+export { AdvisorPanel, AdvisorStrip } from "@/components/Advisor";
+export type {
+  AdvisorPanelProps,
+  AdvisorStripProps,
+} from "@/components/Advisor";
 export { formatMinorUnits } from "@/components/amountFormat";
 export { Badge, Pill } from "@/components/Badge";
 export type { BadgeProps, PillProps, PillVariant } from "@/components/Badge";

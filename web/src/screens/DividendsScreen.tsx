@@ -17,6 +17,7 @@ import {
 import { isApiError } from "@/api/client";
 import { queryKeys } from "@/api/queryKeys";
 import {
+  AdvisorStrip,
   Button,
   Card,
   EmptyState,
@@ -121,6 +122,8 @@ export function DividendsScreen() {
           </p>
         </div>
       </div>
+
+      <AdvisorStrip surface="dividends" />
 
       <SplitMain>
         <div className="dividends-main">

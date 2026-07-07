@@ -33,13 +33,11 @@ test("creates, edits, autosaves, sends, shows locked rate, and reverts same-day"
   await expect(page.getByRole("status")).toContainText("Saved");
   await expect(page.getByText("€1,560.00")).toBeVisible();
 
-  await page
-    .getByLabel("VAT treatment")
-    .selectOption("reverse-charge-eu-b2b");
+  await page.getByLabel("VAT treatment").selectOption("reverse-charge-eu-b2b");
 
-  await expect.poll(() => state.patchRequests.at(-1)?.vat_treatment).toBe(
-    "reverse-charge-eu-b2b",
-  );
+  await expect
+    .poll(() => state.patchRequests.at(-1)?.vat_treatment)
+    .toBe("reverse-charge-eu-b2b");
   await expect(page.getByText("€0.00")).toBeVisible();
   await expect(page.getByText("€1,300.00").first()).toBeVisible();
 
@@ -55,7 +53,9 @@ test("creates, edits, autosaves, sends, shows locked rate, and reverts same-day"
 
   await page.getByRole("button", { name: "Revert same-day" }).click();
 
-  await expect(page.getByRole("button", { name: "Send invoice" })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Send invoice" }),
+  ).toBeVisible();
   await expect(page.getByText("≈ 0.85")).toBeVisible();
 });
 
@@ -68,7 +68,7 @@ test("sends overdue reminder from list advisor and logs it in editor", async ({
 
   await page.goto("/invoices");
 
-  const advisor = page.getByRole("region", { name: "Invoice advisor" });
+  const advisor = page.getByRole("region", { name: "Invoices advisor" });
   await expect(advisor).toContainText("9 days overdue");
   await advisor.getByRole("button", { name: "Send reminder" }).click();
 
@@ -124,7 +124,40 @@ async function mockInvoiceApi(
       await fulfillJson(route, state.invoice, 201);
       return;
     }
-    if (path === "/api/invoicing/invoices/inv_1" && request.method() === "GET") {
+    if (path === "/api/advisor/insights" && request.method() === "GET") {
+      await fulfillJson(route, {
+        insights: advisorInsightsForInvoice(state.invoice),
+      });
+      return;
+    }
+    if (
+      path.startsWith("/api/advisor/insights/") &&
+      path.endsWith("/dismiss") &&
+      request.method() === "POST"
+    ) {
+      await fulfillJson(route, undefined, 204);
+      return;
+    }
+    if (path === "/api/advisor/refresh" && request.method() === "POST") {
+      await fulfillJson(route, {
+        run: {
+          duration_ms: 1,
+          finished_at: "2026-07-06T13:15:00Z",
+          id: 1,
+          insights_created: 0,
+          insights_resolved: 0,
+          insights_superseded: 0,
+          started_at: "2026-07-06T13:15:00Z",
+          trigger: "manual.RefreshNow",
+          warnings: [],
+        },
+      });
+      return;
+    }
+    if (
+      path === "/api/invoicing/invoices/inv_1" &&
+      request.method() === "GET"
+    ) {
       await fulfillJson(route, state.invoice ?? draftInvoice());
       return;
     }
@@ -211,6 +244,28 @@ type InvoiceState = {
 
 function invoiceState(): InvoiceState {
   return { invoice: null, patchRequests: [], reminderRequests: [] };
+}
+
+function advisorInsightsForInvoice(invoice: InvoicingInvoice | null) {
+  if (invoice?.status !== "overdue") {
+    return [];
+  }
+  return [
+    {
+      bindings: { invoice_id: invoice.id },
+      created_at: "2026-07-06T13:00:00Z",
+      cta: {
+        action: "invoicing.sendReminder",
+        label: "Send reminder",
+        params: { invoice_id: invoice.id },
+      },
+      key: `overdue-${invoice.id}`,
+      rendered_text: `Invoice ${invoice.number ?? invoice.id} is 9 days overdue. Send a reminder to Contoso GmbH.`,
+      rule_id: "overdue_invoice",
+      severity: "amber",
+      surfaces: ["dashboard", "invoices"],
+    },
+  ];
 }
 
 function clientsFixture(): InvoicingClient[] {
@@ -317,32 +372,25 @@ function applyPatch(
 ): InvoicingInvoice {
   const currency = patch.currency ?? invoice.currency;
   const vatTreatment = patch.vat_treatment ?? invoice.vat_treatment;
-  const lines = (patch.lines ?? invoice.lines).map(
-    (line, index) => {
-      const amount = Math.round(Number(line.qty) * line.unit_price.amount);
-      return {
-        description: line.description,
-        id: line.id,
-        invoice_id: invoice.id,
-        line_total: { amount, currency },
-        position: index + 1,
-        qty: line.qty,
-        unit_price: { amount: line.unit_price.amount, currency },
-      };
-    },
-  );
-  const subtotal = lines.reduce(
-    (sum, line) => sum + line.line_total.amount,
-    0,
-  );
+  const lines = (patch.lines ?? invoice.lines).map((line, index) => {
+    const amount = Math.round(Number(line.qty) * line.unit_price.amount);
+    return {
+      description: line.description,
+      id: line.id,
+      invoice_id: invoice.id,
+      line_total: { amount, currency },
+      position: index + 1,
+      qty: line.qty,
+      unit_price: { amount: line.unit_price.amount, currency },
+    };
+  });
+  const subtotal = lines.reduce((sum, line) => sum + line.line_total.amount, 0);
   const vat = vatTreatment === "domestic" ? Math.round(subtotal * 0.2) : 0;
   return {
     ...invoice,
     client_id: patch.client_id ?? invoice.client_id,
     currency,
-    due_date: patch.due_date
-      ? `${patch.due_date}T00:00:00Z`
-      : invoice.due_date,
+    due_date: patch.due_date ? `${patch.due_date}T00:00:00Z` : invoice.due_date,
     issue_date: patch.issue_date
       ? `${patch.issue_date}T00:00:00Z`
       : invoice.issue_date,
@@ -444,7 +492,7 @@ function identityProfile() {
 
 async function fulfillJson(route: Route, body: unknown, status = 200) {
   await route.fulfill({
-    body: JSON.stringify(body),
+    body: status === 204 ? "" : JSON.stringify(body),
     contentType: "application/json",
     status,
   });

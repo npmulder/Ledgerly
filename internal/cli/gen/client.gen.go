@@ -23,6 +23,22 @@ const (
 	SessionCookieScopes = "sessionCookie.Scopes"
 )
 
+// Defines values for AdvisorSeverity.
+const (
+	Amber AdvisorSeverity = "amber"
+	Teal  AdvisorSeverity = "teal"
+)
+
+// Defines values for AdvisorSurface.
+const (
+	AdvisorSurfaceBanking   AdvisorSurface = "banking"
+	AdvisorSurfaceDashboard AdvisorSurface = "dashboard"
+	AdvisorSurfaceDividends AdvisorSurface = "dividends"
+	AdvisorSurfaceDla       AdvisorSurface = "dla"
+	AdvisorSurfaceInvoices  AdvisorSurface = "invoices"
+	AdvisorSurfaceReports   AdvisorSurface = "reports"
+)
+
 // Defines values for BankingAccountProvider.
 const (
 	BankingAccountProviderRevolut BankingAccountProvider = "revolut"
@@ -67,9 +83,9 @@ const (
 
 // Defines values for BankingReviewTargetType.
 const (
-	Account BankingReviewTargetType = "account"
-	Dla     BankingReviewTargetType = "dla"
-	Invoice BankingReviewTargetType = "invoice"
+	BankingReviewTargetTypeAccount BankingReviewTargetType = "account"
+	BankingReviewTargetTypeDla     BankingReviewTargetType = "dla"
+	BankingReviewTargetTypeInvoice BankingReviewTargetType = "invoice"
 )
 
 // Defines values for BankingStateChangeFrom.
@@ -307,6 +323,16 @@ const (
 	ReportsShareResponseStatusSent       ReportsShareResponseStatus = "sent"
 )
 
+// Defines values for AdvisorListInsightsParamsSurface.
+const (
+	Banking   AdvisorListInsightsParamsSurface = "banking"
+	Dashboard AdvisorListInsightsParamsSurface = "dashboard"
+	Dividends AdvisorListInsightsParamsSurface = "dividends"
+	Dla       AdvisorListInsightsParamsSurface = "dla"
+	Invoices  AdvisorListInsightsParamsSurface = "invoices"
+	Reports   AdvisorListInsightsParamsSurface = "reports"
+)
+
 // Defines values for BankingGetFeedParamsState.
 const (
 	BankingGetFeedParamsStateExcluded     BankingGetFeedParamsState = "excluded"
@@ -322,6 +348,61 @@ const (
 	InvoicingListInvoicesParamsStatusPaid    InvoicingListInvoicesParamsStatus = "paid"
 	InvoicingListInvoicesParamsStatusSent    InvoicingListInvoicesParamsStatus = "sent"
 )
+
+// AdvisorCTA defines model for AdvisorCTA.
+type AdvisorCTA struct {
+	Action string                  `json:"action"`
+	Label  string                  `json:"label"`
+	Params *map[string]interface{} `json:"params,omitempty"`
+}
+
+// AdvisorEvaluationRun defines model for AdvisorEvaluationRun.
+type AdvisorEvaluationRun struct {
+	DurationMs         int64            `json:"duration_ms"`
+	Error              *string          `json:"error,omitempty"`
+	FinishedAt         time.Time        `json:"finished_at"`
+	Id                 int64            `json:"id"`
+	InsightsCreated    int              `json:"insights_created"`
+	InsightsResolved   int              `json:"insights_resolved"`
+	InsightsSuperseded int              `json:"insights_superseded"`
+	StartedAt          time.Time        `json:"started_at"`
+	Trigger            string           `json:"trigger"`
+	Warnings           []AdvisorWarning `json:"warnings"`
+}
+
+// AdvisorInsight defines model for AdvisorInsight.
+type AdvisorInsight struct {
+	Bindings     map[string]interface{} `json:"bindings"`
+	CreatedAt    time.Time              `json:"created_at"`
+	Cta          AdvisorCTA             `json:"cta"`
+	Key          string                 `json:"key"`
+	RenderedText string                 `json:"rendered_text"`
+	RuleId       string                 `json:"rule_id"`
+	Severity     AdvisorSeverity        `json:"severity"`
+	Surfaces     []AdvisorSurface       `json:"surfaces"`
+}
+
+// AdvisorInsightsResponse defines model for AdvisorInsightsResponse.
+type AdvisorInsightsResponse struct {
+	Insights []AdvisorInsight `json:"insights"`
+}
+
+// AdvisorRefreshResponse defines model for AdvisorRefreshResponse.
+type AdvisorRefreshResponse struct {
+	Run AdvisorEvaluationRun `json:"run"`
+}
+
+// AdvisorSeverity defines model for AdvisorSeverity.
+type AdvisorSeverity string
+
+// AdvisorSurface defines model for AdvisorSurface.
+type AdvisorSurface string
+
+// AdvisorWarning defines model for AdvisorWarning.
+type AdvisorWarning struct {
+	Message string `json:"message"`
+	RuleId  string `json:"rule_id"`
+}
 
 // BankDetails defines model for BankDetails.
 type BankDetails struct {
@@ -1552,6 +1633,15 @@ type YearEnd struct {
 	Month int `json:"month"`
 }
 
+// AdvisorListInsightsParams defines parameters for AdvisorListInsights.
+type AdvisorListInsightsParams struct {
+	// Surface Advisor display surface.
+	Surface *AdvisorListInsightsParamsSurface `form:"surface,omitempty" json:"surface,omitempty"`
+}
+
+// AdvisorListInsightsParamsSurface defines parameters for AdvisorListInsights.
+type AdvisorListInsightsParamsSurface string
+
 // BankingImportAccountCSVMultipartBody defines parameters for BankingImportAccountCSV.
 type BankingImportAccountCSVMultipartBody struct {
 	File openapi_types.File `json:"file"`
@@ -2506,6 +2596,15 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 
 // The interface specification for the client above.
 type ClientInterface interface {
+	// AdvisorListInsights request
+	AdvisorListInsights(ctx context.Context, params *AdvisorListInsightsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AdvisorDismissInsight request
+	AdvisorDismissInsight(ctx context.Context, key string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AdvisorRefreshNow request
+	AdvisorRefreshNow(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// BankingListAccounts request
 	BankingListAccounts(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -2738,6 +2837,42 @@ type ClientInterface interface {
 
 	// GetReadyz request
 	GetReadyz(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+}
+
+func (c *Client) AdvisorListInsights(ctx context.Context, params *AdvisorListInsightsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAdvisorListInsightsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) AdvisorDismissInsight(ctx context.Context, key string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAdvisorDismissInsightRequest(c.Server, key)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) AdvisorRefreshNow(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAdvisorRefreshNowRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
 }
 
 func (c *Client) BankingListAccounts(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -3734,6 +3869,116 @@ func (c *Client) GetReadyz(ctx context.Context, reqEditors ...RequestEditorFn) (
 		return nil, err
 	}
 	return c.Client.Do(req)
+}
+
+// NewAdvisorListInsightsRequest generates requests for AdvisorListInsights
+func NewAdvisorListInsightsRequest(server string, params *AdvisorListInsightsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/advisor/insights")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Surface != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "surface", runtime.ParamLocationQuery, *params.Surface); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewAdvisorDismissInsightRequest generates requests for AdvisorDismissInsight
+func NewAdvisorDismissInsightRequest(server string, key string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "key", runtime.ParamLocationPath, key)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/advisor/insights/%s/dismiss", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewAdvisorRefreshNowRequest generates requests for AdvisorRefreshNow
+func NewAdvisorRefreshNowRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/advisor/refresh")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
 }
 
 // NewBankingListAccountsRequest generates requests for BankingListAccounts
@@ -6496,6 +6741,15 @@ func WithBaseURL(baseURL string) ClientOption {
 
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
+	// AdvisorListInsightsWithResponse request
+	AdvisorListInsightsWithResponse(ctx context.Context, params *AdvisorListInsightsParams, reqEditors ...RequestEditorFn) (*AdvisorListInsightsResponse, error)
+
+	// AdvisorDismissInsightWithResponse request
+	AdvisorDismissInsightWithResponse(ctx context.Context, key string, reqEditors ...RequestEditorFn) (*AdvisorDismissInsightResponse, error)
+
+	// AdvisorRefreshNowWithResponse request
+	AdvisorRefreshNowWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*AdvisorRefreshNowResponse, error)
+
 	// BankingListAccountsWithResponse request
 	BankingListAccountsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*BankingListAccountsResponse, error)
 
@@ -6728,6 +6982,77 @@ type ClientWithResponsesInterface interface {
 
 	// GetReadyzWithResponse request
 	GetReadyzWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetReadyzResponse, error)
+}
+
+type AdvisorListInsightsResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON200                   *AdvisorInsightsResponse
+	ApplicationproblemJSON400 *Problem
+	ApplicationproblemJSON401 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r AdvisorListInsightsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AdvisorListInsightsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type AdvisorDismissInsightResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	ApplicationproblemJSON400 *Problem
+	ApplicationproblemJSON401 *Problem
+	ApplicationproblemJSON404 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r AdvisorDismissInsightResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AdvisorDismissInsightResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type AdvisorRefreshNowResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON200                   *AdvisorRefreshResponse
+	ApplicationproblemJSON401 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r AdvisorRefreshNowResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AdvisorRefreshNowResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
 }
 
 type BankingListAccountsResponse struct {
@@ -8383,6 +8708,33 @@ func (r GetReadyzResponse) StatusCode() int {
 	return 0
 }
 
+// AdvisorListInsightsWithResponse request returning *AdvisorListInsightsResponse
+func (c *ClientWithResponses) AdvisorListInsightsWithResponse(ctx context.Context, params *AdvisorListInsightsParams, reqEditors ...RequestEditorFn) (*AdvisorListInsightsResponse, error) {
+	rsp, err := c.AdvisorListInsights(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAdvisorListInsightsResponse(rsp)
+}
+
+// AdvisorDismissInsightWithResponse request returning *AdvisorDismissInsightResponse
+func (c *ClientWithResponses) AdvisorDismissInsightWithResponse(ctx context.Context, key string, reqEditors ...RequestEditorFn) (*AdvisorDismissInsightResponse, error) {
+	rsp, err := c.AdvisorDismissInsight(ctx, key, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAdvisorDismissInsightResponse(rsp)
+}
+
+// AdvisorRefreshNowWithResponse request returning *AdvisorRefreshNowResponse
+func (c *ClientWithResponses) AdvisorRefreshNowWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*AdvisorRefreshNowResponse, error) {
+	rsp, err := c.AdvisorRefreshNow(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAdvisorRefreshNowResponse(rsp)
+}
+
 // BankingListAccountsWithResponse request returning *BankingListAccountsResponse
 func (c *ClientWithResponses) BankingListAccountsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*BankingListAccountsResponse, error) {
 	rsp, err := c.BankingListAccounts(ctx, reqEditors...)
@@ -9112,6 +9464,119 @@ func (c *ClientWithResponses) GetReadyzWithResponse(ctx context.Context, reqEdit
 		return nil, err
 	}
 	return ParseGetReadyzResponse(rsp)
+}
+
+// ParseAdvisorListInsightsResponse parses an HTTP response from a AdvisorListInsightsWithResponse call
+func ParseAdvisorListInsightsResponse(rsp *http.Response) (*AdvisorListInsightsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AdvisorListInsightsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AdvisorInsightsResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAdvisorDismissInsightResponse parses an HTTP response from a AdvisorDismissInsightWithResponse call
+func ParseAdvisorDismissInsightResponse(rsp *http.Response) (*AdvisorDismissInsightResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AdvisorDismissInsightResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAdvisorRefreshNowResponse parses an HTTP response from a AdvisorRefreshNowWithResponse call
+func ParseAdvisorRefreshNowResponse(rsp *http.Response) (*AdvisorRefreshNowResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AdvisorRefreshNowResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AdvisorRefreshResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	}
+
+	return response, nil
 }
 
 // ParseBankingListAccountsResponse parses an HTTP response from a BankingListAccountsWithResponse call

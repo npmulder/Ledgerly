@@ -22,6 +22,7 @@ import {
 import { getIdentityProfile } from "@/api/identity";
 import { queryKeys } from "@/api/queryKeys";
 import {
+  AdvisorStrip,
   Button,
   Card,
   EmptyState,
@@ -235,11 +236,7 @@ export function DlaScreen() {
 
       <SplitMain>
         <div className="dla-main">
-          <section
-            aria-label="DLA advisor insights"
-            className="dla-advisor-slot"
-            data-surface="dla"
-          />
+          <AdvisorStrip surface="dla" />
 
           {balance ? (
             <BalanceBanner balance={balance} text={currentBalanceText} />

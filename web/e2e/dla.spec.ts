@@ -55,12 +55,21 @@ test("overdrawn DLA CTA opens dividends with clearance amount", async ({
 
   await expect(page.getByRole("status")).toContainText("£3,000.00 DR");
   await expect(
-    page.getByText(/interest-free loan can create a taxable benefit in kind/),
+    page
+      .getByRole("complementary", { name: "DLA status and manual entry" })
+      .getByText(/interest-free loan can create a taxable benefit in kind/),
   ).toBeVisible();
 
-  await page.getByRole("button", { name: /Clear with dividend/ }).click();
+  const advisor = page.getByRole("region", { name: "DLA advisor" });
+  await expect(advisor).toContainText("loan account is £3,000.00 overdrawn");
+  await page.screenshot({
+    fullPage: true,
+    path: "test-results/dla-advisor-strip.png",
+  });
+  await advisor.getByRole("button", { name: "Clear with dividend" }).click();
 
   await expect(page).toHaveURL(/\/dividends\?amount=3000\.00$/);
+  await expect(page.getByLabel("Dividend amount")).toHaveValue("3000.00");
 });
 
 async function mockDLAApi(
@@ -94,6 +103,25 @@ async function mockDLAApi(
     }
     if (path === "/api/dla/ledger") {
       await fulfillJson(route, state.ledger);
+      return;
+    }
+    if (path === "/api/advisor/insights" && request.method() === "GET") {
+      const surface = new URL(request.url()).searchParams.get("surface");
+      await fulfillJson(route, {
+        insights: surface === "dla" ? advisorInsightsForDLA(state) : [],
+      });
+      return;
+    }
+    if (
+      path.startsWith("/api/advisor/insights/") &&
+      path.endsWith("/dismiss") &&
+      request.method() === "POST"
+    ) {
+      await fulfillJson(route, {}, 204);
+      return;
+    }
+    if (path === "/api/advisor/refresh" && request.method() === "POST") {
+      await fulfillJson(route, advisorRefreshResponse());
       return;
     }
     if (path === "/api/dla/entries" && request.method() === "POST") {
@@ -152,6 +180,47 @@ function dlaState(overrides: Partial<DLAState> = {}): DLAState {
     balance: creditBalance(),
     ledger: creditLedger(),
     ...overrides,
+  };
+}
+
+function advisorInsightsForDLA(state: DLAState) {
+  if (state.balance.status !== "overdrawn") {
+    return [];
+  }
+  const amount =
+    state.balance.suggested_clearance?.amount_minor ??
+    Math.abs(state.balance.balance.amount_minor);
+  return [
+    {
+      bindings: { clearance_amount_minor_units: amount },
+      created_at: "2026-07-06T09:00:00Z",
+      cta: {
+        action: `navigate:/dividends?amount=${amount}`,
+        label: "Clear with dividend",
+      },
+      key: "dla-overdrawn",
+      rendered_text:
+        "Your loan account is £3,000.00 overdrawn. The Isle of Man has no UK-style s455 charge, but an interest-free loan can create a taxable benefit in kind - charge interest at the official rate or clear it with a dividend.",
+      rule_id: "dla_overdrawn_bik",
+      severity: "amber",
+      surfaces: ["dashboard", "dla"],
+    },
+  ];
+}
+
+function advisorRefreshResponse() {
+  return {
+    run: {
+      duration_ms: 1,
+      finished_at: "2026-07-06T09:00:01Z",
+      id: 1,
+      insights_created: 0,
+      insights_resolved: 0,
+      insights_superseded: 0,
+      started_at: "2026-07-06T09:00:00Z",
+      trigger: "manual.RefreshNow",
+      warnings: [],
+    },
   };
 }
 
@@ -258,7 +327,7 @@ function identityProfile() {
 
 async function fulfillJson(route: Route, body: unknown, status = 200) {
   await route.fulfill({
-    body: JSON.stringify(body),
+    body: status === 204 ? "" : JSON.stringify(body),
     contentType: "application/json",
     status,
   });

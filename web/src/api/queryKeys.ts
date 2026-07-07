@@ -12,6 +12,13 @@ export type InvoicesQueryParams = {
 };
 
 export const queryKeys = {
+  advisor: {
+    insights: (surface: string): ApiQueryKey => [
+      "advisor",
+      "insights",
+      { surface },
+    ],
+  },
   banking: {
     accounts: (): ApiQueryKey => ["banking", "accounts", {}],
     feed: (accountId: number | null = null): ApiQueryKey => [
@@ -77,6 +84,13 @@ export const queryKeys = {
   },
   jurisdiction: {
     pack: (): ApiQueryKey => ["jurisdiction", "pack", {}],
+  },
+  moneyfx: {
+    todayRate: (from: string, to: string): ApiQueryKey => [
+      "moneyfx",
+      "todayRate",
+      { from, to },
+    ],
   },
   platform: {
     health: (): ApiQueryKey => ["platform", "healthz", {}],

@@ -14,6 +14,7 @@ import {
   type ReportsVAT,
 } from "@/api/reports";
 import {
+  AdvisorStrip,
   Button,
   Card,
   Field,
@@ -65,19 +66,15 @@ export function ReportsScreen() {
     queryKey: queryKeys.reports.calendar(),
   });
 
-  const vatFiling = useMemo(
-    () => {
-      const dueDate = dueDateForVATPeriod(period.vatPeriod);
-      if (!dueDate) {
-        return undefined;
-      }
-      return calendarQuery.data?.filings.find(
-        (filing) =>
-          filing.key === "vat_return" && filing.due_date === dueDate,
-      );
-    },
-    [calendarQuery.data, period.vatPeriod],
-  );
+  const vatFiling = useMemo(() => {
+    const dueDate = dueDateForVATPeriod(period.vatPeriod);
+    if (!dueDate) {
+      return undefined;
+    }
+    return calendarQuery.data?.filings.find(
+      (filing) => filing.key === "vat_return" && filing.due_date === dueDate,
+    );
+  }, [calendarQuery.data, period.vatPeriod]);
 
   const shareMutation = useMutation({
     mutationFn: () => shareReportsExport(shareEmail, period.from, period.to),
@@ -138,7 +135,11 @@ export function ReportsScreen() {
       <div className="reports-screen__header">
         <PageTitle>Reports</PageTitle>
         <div className="reports-screen__actions">
-          <Button type="button" variant="secondary" onClick={() => setShareOpen(true)}>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => setShareOpen(true)}
+          >
             Share with accountant
           </Button>
           <Button type="button" onClick={exportPack}>
@@ -189,11 +190,7 @@ export function ReportsScreen() {
         </div>
       ) : null}
 
-      <section
-        aria-label="Reports advisor insights"
-        className="reports-advisor-slot"
-        data-surface="reports"
-      />
+      <AdvisorStrip surface="reports" />
 
       <div className="reports-layout">
         <ProfitAndLossCard

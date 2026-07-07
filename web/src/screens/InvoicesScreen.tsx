@@ -1,4 +1,4 @@
-import { type ReactNode, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 
@@ -7,7 +7,6 @@ import {
   createDraftInvoice,
   getInvoices,
   getInvoicingClients,
-  resolveInvoicingCTA,
   type InvoicingInvoiceListItem,
   type InvoicingInvoicesResponse,
   type InvoicingInvoiceStatus,
@@ -15,6 +14,7 @@ import {
 import { queryKeys } from "@/api/queryKeys";
 import {
   Badge,
+  AdvisorStrip,
   Button,
   Card,
   EmptyState,
@@ -33,15 +33,6 @@ import {
 
 type InvoiceStatusFilter = InvoicingInvoiceStatus | "all";
 
-export type InvoiceAdvisorInsight = {
-  readonly ctaDisabled?: boolean;
-  readonly ctaLabel?: ReactNode;
-  readonly id: string;
-  readonly onCtaClick?: () => void;
-  readonly severity?: "opportunity" | "warning";
-  readonly text: ReactNode;
-};
-
 const invoiceStatusFilters: readonly {
   label: string;
   value: InvoiceStatusFilter;
@@ -59,17 +50,11 @@ const dateFormatter = new Intl.DateTimeFormat("en-GB", {
   timeZone: "UTC",
 });
 
-export function InvoicesScreen({
-  advisorInsights = [],
-}: {
-  readonly advisorInsights?: readonly InvoiceAdvisorInsight[];
-} = {}) {
+export function InvoicesScreen() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<InvoiceStatusFilter>("all");
-  const [reminderToast, setReminderToast] = useState("");
-  const [reminderError, setReminderError] = useState("");
 
   const listParams = useMemo(() => ({ search, status }), [search, status]);
 
@@ -82,10 +67,6 @@ export function InvoicesScreen({
     queryKey: queryKeys.invoicing.clients(false),
   });
   const defaultClient = clientsQuery.data?.clients[0];
-  const overdueInvoice = invoicesQuery.data?.invoices.find(
-    (invoice) => invoice.status === "overdue",
-  );
-
   const createDraftMutation = useMutation({
     mutationFn: (clientId: string) =>
       createDraftInvoice({ client_id: clientId }),
@@ -97,49 +78,10 @@ export function InvoicesScreen({
     },
   });
 
-  const reminderMutation = useMutation({
-    mutationFn: (invoiceID: string) =>
-      resolveInvoicingCTA("invoicing.sendReminder", { invoice_id: invoiceID }),
-    onError: (error) => {
-      setReminderToast("");
-      setReminderError(problemMessage(error, "Unable to send reminder"));
-    },
-    onSuccess: (result) => {
-      const number = result.invoice.number ?? "invoice";
-      setReminderError("");
-      setReminderToast(`Reminder sent for ${number}.`);
-      queryClient.setQueryData(
-        queryKeys.invoicing.invoice(result.invoice.id),
-        result.invoice,
-      );
-      void queryClient.invalidateQueries({
-        queryKey: ["invoicing", "invoices"],
-      });
-    },
-  });
-
   const counts = useMemo(
     () => invoiceCounts(invoicesQuery.data),
     [invoicesQuery.data],
   );
-  const combinedAdvisorInsights = overdueInvoice
-    ? [
-        {
-          ctaDisabled: reminderMutation.isPending,
-          ctaLabel: reminderMutation.isPending ? "Sending" : "Send reminder",
-          id: `overdue-reminder-${overdueInvoice.id}`,
-          onCtaClick: () => reminderMutation.mutate(overdueInvoice.id),
-          severity: "warning" as const,
-          text: (
-            <>
-              {overdueInvoice.client_name} is {overdueInvoice.days_overdue} days
-              overdue on {formatMoney(overdueInvoice.totals.total)}.
-            </>
-          ),
-        },
-        ...advisorInsights,
-      ]
-    : advisorInsights;
 
   function handleNewInvoice() {
     if (!defaultClient) {
@@ -165,17 +107,7 @@ export function InvoicesScreen({
         </Button>
       </div>
 
-      <InvoiceAdvisorStrip insights={combinedAdvisorInsights} />
-      {reminderToast ? (
-        <div className="invoice-toast" role="status">
-          {reminderToast}
-        </div>
-      ) : null}
-      {reminderError ? (
-        <div className="problem-alert" role="alert">
-          <strong>{reminderError}</strong>
-        </div>
-      ) : null}
+      <AdvisorStrip surface="invoices" />
 
       <div className="invoices-toolbar">
         <div
@@ -221,7 +153,9 @@ export function InvoicesScreen({
         />
       </div>
 
-      {clientsQuery.isError ? <ProblemAlert error={clientsQuery.error} /> : null}
+      {clientsQuery.isError ? (
+        <ProblemAlert error={clientsQuery.error} />
+      ) : null}
       {createDraftMutation.isError ? (
         <ProblemAlert error={createDraftMutation.error} />
       ) : null}
@@ -233,42 +167,6 @@ export function InvoicesScreen({
         isLoading={invoicesQuery.isPending}
       />
     </div>
-  );
-}
-
-export function InvoiceAdvisorStrip({
-  insights,
-}: {
-  readonly insights: readonly InvoiceAdvisorInsight[];
-}) {
-  return (
-    <section
-      aria-label="Invoice advisor"
-      className="invoices-advisor-strip"
-      data-surface="invoices"
-    >
-      {insights.map((insight) => (
-        <div
-          className="invoices-advisor-strip__insight"
-          data-severity={insight.severity ?? "opportunity"}
-          key={insight.id}
-        >
-          <span aria-hidden="true" className="invoices-advisor-strip__dot" />
-          <span>{insight.text}</span>
-          {insight.ctaLabel ? (
-            <Button
-              aria-disabled={insight.onCtaClick ? undefined : "true"}
-              disabled={insight.ctaDisabled}
-              onClick={insight.onCtaClick}
-              size="small"
-              type="button"
-            >
-              {insight.ctaLabel}
-            </Button>
-          ) : null}
-        </div>
-      ))}
-    </section>
   );
 }
 
@@ -393,15 +291,6 @@ function ProblemAlert({ error }: { readonly error: Error | null }) {
       {error?.message ? <span>{error.message}</span> : null}
     </div>
   );
-}
-
-function problemMessage(error: unknown, fallbackTitle: string) {
-  if (isApiError(error)) {
-    return error.problem.detail
-      ? `${error.problem.title}: ${error.problem.detail}`
-      : error.problem.title;
-  }
-  return fallbackTitle;
 }
 
 function invoiceCounts(data: InvoicingInvoicesResponse | undefined) {

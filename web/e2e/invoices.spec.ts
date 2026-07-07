@@ -8,9 +8,7 @@ test("fixture invoices render, filter and search round-trip, and new invoice nav
 
   await page.goto("/invoices");
 
-  await expect(
-    page.getByRole("heading", { name: "Invoices" }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Invoices" })).toBeVisible();
   const table = page.getByLabel("Invoices list");
   await expect(table.getByText("INV-2026-07")).toBeVisible();
   await expect(table.getByText("INV-2026-F2")).toBeVisible();
@@ -38,6 +36,36 @@ test("fixture invoices render, filter and search round-trip, and new invoice nav
     page.getByRole("heading", { name: "Invoice editor" }),
   ).toBeVisible();
   expect(state.createdClientId).toBe("client-contoso");
+});
+
+test("invoice advisor strip sends reminders and dismiss survives reload", async ({
+  page,
+}) => {
+  const state = invoicesState();
+  await mockInvoicesApi(page, state);
+
+  await page.goto("/invoices");
+
+  const advisor = page.getByRole("region", { name: "Invoices advisor" });
+  await expect(advisor).toContainText("9 days overdue");
+  await page.screenshot({
+    fullPage: true,
+    path: "test-results/invoices-advisor-strip.png",
+  });
+  await advisor.getByRole("button", { name: "Send reminder" }).click();
+
+  await expect(page.getByRole("status")).toContainText(
+    "Reminder sent for INV-2026-F2.",
+  );
+  await expect.poll(() => state.reminderRequests.length).toBe(1);
+
+  await advisor
+    .getByRole("button", { name: /Dismiss advisor insight:/ })
+    .click();
+  await expect(page.getByText("9 days overdue")).toHaveCount(0);
+
+  await page.reload();
+  await expect(page.getByText("9 days overdue")).toHaveCount(0);
 });
 
 async function mockInvoicesApi(
@@ -78,6 +106,45 @@ async function mockInvoicesApi(
       const body = JSON.parse(request.postData() ?? "{}");
       state.createdClientId = body.client_id;
       await fulfillJson(route, draftInvoice(body.client_id), 201);
+      return;
+    }
+    if (
+      path === "/api/invoicing/invoices/invoice-overdue/remind" &&
+      request.method() === "POST"
+    ) {
+      state.reminderRequests.push("invoice-overdue");
+      await fulfillJson(route, {
+        invoice: {
+          id: "invoice-overdue",
+          number: "INV-2026-F2",
+        },
+        reminder: {
+          invoice_id: "invoice-overdue",
+          sent_at: "2026-07-06T13:15:00Z",
+        },
+      });
+      return;
+    }
+    if (path === "/api/advisor/insights" && request.method() === "GET") {
+      const surface = url.searchParams.get("surface");
+      await fulfillJson(route, {
+        insights:
+          surface === "invoices" ? advisorInsightsForInvoices(state) : [],
+      });
+      return;
+    }
+    if (
+      path.startsWith("/api/advisor/insights/") &&
+      path.endsWith("/dismiss") &&
+      request.method() === "POST"
+    ) {
+      const key = decodeURIComponent(path.split("/").at(-2) ?? "");
+      state.dismissedAdvisorKeys.add(key);
+      await fulfillJson(route, undefined, 204);
+      return;
+    }
+    if (path === "/api/advisor/refresh" && request.method() === "POST") {
+      await fulfillJson(route, advisorRefreshResponse());
       return;
     }
 
@@ -132,12 +199,15 @@ type InvoiceFixture = {
 
 type InvoicesState = {
   createdClientId: string | null;
+  dismissedAdvisorKeys: Set<string>;
   invoices: InvoiceFixture[];
+  reminderRequests: string[];
 };
 
 function invoicesState(): InvoicesState {
   return {
     createdClientId: null,
+    dismissedAdvisorKeys: new Set(),
     invoices: [
       invoiceListItem({
         client_name: "Contoso GmbH",
@@ -173,6 +243,48 @@ function invoicesState(): InvoicesState {
         totals: euroTotals(450000, 386100, "0.8580"),
       }),
     ],
+    reminderRequests: [],
+  };
+}
+
+function advisorInsightsForInvoices(state: InvoicesState) {
+  const overdue = state.invoices.find(
+    (invoice) => invoice.id === "invoice-overdue",
+  );
+  if (!overdue || state.dismissedAdvisorKeys.has("overdue-invoice-overdue")) {
+    return [];
+  }
+  return [
+    {
+      bindings: { invoice_id: overdue.id },
+      created_at: "2026-07-06T13:00:00Z",
+      cta: {
+        action: "invoicing.sendReminder",
+        label: "Send reminder",
+        params: { invoice_id: overdue.id },
+      },
+      key: "overdue-invoice-overdue",
+      rendered_text: `Invoice ${overdue.number} is ${overdue.days_overdue} days overdue. Send a reminder to ${overdue.client_name}.`,
+      rule_id: "overdue_invoice",
+      severity: "amber",
+      surfaces: ["dashboard", "invoices"],
+    },
+  ];
+}
+
+function advisorRefreshResponse() {
+  return {
+    run: {
+      duration_ms: 1,
+      finished_at: "2026-07-06T13:15:00Z",
+      id: 1,
+      insights_created: 0,
+      insights_resolved: 0,
+      insights_superseded: 0,
+      started_at: "2026-07-06T13:15:00Z",
+      trigger: "manual.RefreshNow",
+      warnings: [],
+    },
   };
 }
 
@@ -227,9 +339,7 @@ function totalsSummary(invoices: InvoiceFixture[]) {
   };
 }
 
-function invoiceListItem(
-  overrides: Partial<InvoiceFixture>,
-): InvoiceFixture {
+function invoiceListItem(overrides: Partial<InvoiceFixture>): InvoiceFixture {
   return {
     client_id: "client-contoso",
     client_name: "Contoso GmbH",
@@ -349,7 +459,7 @@ function identityProfile() {
 
 async function fulfillJson(route: Route, body: unknown, status = 200) {
   await route.fulfill({
-    body: JSON.stringify(body),
+    body: status === 204 ? "" : JSON.stringify(body),
     contentType: "application/json",
     status,
   });
