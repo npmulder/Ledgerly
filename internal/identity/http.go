@@ -645,12 +645,49 @@ func requiredRegisteredOffice(raw map[string]json.RawMessage, fieldErrs *[]field
 	if rejectJSONNull(value, pointer, "must be an object with address fields", fieldErrs) {
 		return RegisteredOffice{}
 	}
-	var office RegisteredOffice
-	if err := decodeStrict(value, &office); err != nil {
+	var fields map[string]json.RawMessage
+	if err := decodeStrict(value, &fields); err != nil {
 		*fieldErrs = append(*fieldErrs, fieldError{Pointer: pointer, Detail: "must be an object with address fields"})
 		return RegisteredOffice{}
 	}
+	office := RegisteredOffice{
+		Line1:      requiredRegisteredOfficeString(fields, "line1", fieldErrs),
+		Line2:      requiredRegisteredOfficeString(fields, "line2", fieldErrs),
+		Locality:   requiredRegisteredOfficeString(fields, "locality", fieldErrs),
+		Region:     requiredRegisteredOfficeString(fields, "region", fieldErrs),
+		PostalCode: requiredRegisteredOfficeString(fields, "postal_code", fieldErrs),
+		Country:    requiredRegisteredOfficeString(fields, "country", fieldErrs),
+	}
+	for field := range fields {
+		if !registeredOfficeFieldAllowed(field) {
+			*fieldErrs = append(*fieldErrs, fieldError{Pointer: pointer + "/" + field, Detail: "is not allowed"})
+		}
+	}
 	return office
+}
+
+func requiredRegisteredOfficeString(raw map[string]json.RawMessage, field string, fieldErrs *[]fieldError) string {
+	pointer := "/registered_office/" + field
+	value, ok := raw[field]
+	if !ok {
+		*fieldErrs = append(*fieldErrs, fieldError{Pointer: pointer, Detail: "is required"})
+		return ""
+	}
+	var decoded string
+	if err := decodeStrict(value, &decoded); err != nil {
+		*fieldErrs = append(*fieldErrs, fieldError{Pointer: pointer, Detail: "must be a string"})
+		return ""
+	}
+	return decoded
+}
+
+func registeredOfficeFieldAllowed(field string) bool {
+	switch field {
+	case "line1", "line2", "locality", "region", "postal_code", "country":
+		return true
+	default:
+		return false
+	}
 }
 
 func validateRegisterWithProfileRequest(request registerWithProfileRequest) []fieldError {

@@ -165,6 +165,79 @@ func TestRegisterWithProfileValidationErrorsUseFieldPointers(t *testing.T) {
 	}
 }
 
+func TestRegisterWithProfileRequiresRegisteredOfficeFields(t *testing.T) {
+	router, _, _ := newTestRouter(t, LoginRateLimit{Capacity: 100, RefillEvery: time.Hour})
+	tests := []struct {
+		name    string
+		office  any
+		wantPtr []string
+	}{
+		{
+			name:   "empty object",
+			office: map[string]any{},
+			wantPtr: []string{
+				"/registered_office/line1",
+				"/registered_office/line2",
+				"/registered_office/locality",
+				"/registered_office/region",
+				"/registered_office/postal_code",
+				"/registered_office/country",
+			},
+		},
+		{
+			name: "missing line and country",
+			office: map[string]any{
+				"line2":       "",
+				"locality":    "Douglas",
+				"region":      "",
+				"postal_code": "",
+			},
+			wantPtr: []string{
+				"/registered_office/line1",
+				"/registered_office/country",
+			},
+		},
+		{
+			name: "field type mismatch",
+			office: map[string]any{
+				"line1":       123,
+				"line2":       "",
+				"locality":    "Douglas",
+				"region":      "",
+				"postal_code": "",
+				"country":     "IM",
+			},
+			wantPtr: []string{"/registered_office/line1"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			payload := firstRunProfilePayload()
+			payload["registered_office"] = test.office
+
+			response := performJSON(router, nethttp.MethodPost, "/api/identity/register-with-profile", payload, nil)
+			if response.Code != nethttp.StatusBadRequest {
+				t.Fatalf("register-with-profile status = %d, want %d; body=%s", response.Code, nethttp.StatusBadRequest, response.Body.String())
+			}
+			if got := response.Header().Get("Content-Type"); got != httpserver.ProblemContentType {
+				t.Fatalf("Content-Type = %q, want %s", got, httpserver.ProblemContentType)
+			}
+
+			problem := decodeValidationProblem(t, response)
+			got := make(map[string]bool, len(problem.Errors))
+			for _, fieldErr := range problem.Errors {
+				got[fieldErr.Pointer] = true
+			}
+			for _, pointer := range test.wantPtr {
+				if !got[pointer] {
+					t.Fatalf("problem errors = %+v, missing pointer %s", problem.Errors, pointer)
+				}
+			}
+		})
+	}
+}
+
 func TestWrongPasswordReturnsUnauthorized(t *testing.T) {
 	router, _, _ := newTestRouter(t, LoginRateLimit{Capacity: 100, RefillEvery: time.Hour})
 	registerOwner(t, router)
