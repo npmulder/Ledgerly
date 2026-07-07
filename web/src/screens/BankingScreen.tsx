@@ -25,22 +25,17 @@ import {
   Button,
   Card,
   EmptyState,
-  Field,
   PageTitle,
-  Select,
   SplitMain,
   formatMinorUnits,
 } from "@/components";
 import { formatConfidence } from "@/screens/bankingFormat";
+import {
+  ExpenseCategoryPicker,
+  defaultExpenseAccountCode,
+} from "@/screens/ExpenseCategoryPicker";
 
 const recentLimit = 8;
-
-const recodeAccounts = [
-  { label: "Fees", value: "5000-fees" },
-  { label: "Software", value: "5010-software" },
-  { label: "Travel", value: "5020-travel" },
-  { label: "Office", value: "5030-office" },
-] as const;
 
 type ToastState = {
   message: string;
@@ -650,7 +645,7 @@ function ReviewCardActions({
 
 function RecodePicker({
   busy,
-  defaultAccountCode = recodeAccounts[1].value,
+  defaultAccountCode = defaultExpenseAccountCode,
   label,
   onRecode,
 }: {
@@ -664,20 +659,14 @@ function RecodePicker({
     <details className="banking-recode">
       <summary>Recode ▾</summary>
       <div className="banking-recode__panel">
-        <Field label={`${label} account`}>
-          <Select
-            onChange={(event) => setAccountCode(event.target.value)}
-            value={accountCode}
-          >
-            {recodeAccounts.map((account) => (
-              <option key={account.value} value={account.value}>
-                {account.label}
-              </option>
-            ))}
-          </Select>
-        </Field>
-        <Button
+        <ExpenseCategoryPicker
           disabled={busy}
+          label={`${label} account`}
+          onChange={setAccountCode}
+          value={accountCode}
+        />
+        <Button
+          disabled={busy || accountCode === ""}
           onClick={() => onRecode(accountCode)}
           size="small"
           type="button"
@@ -919,10 +908,7 @@ function formatProvider(provider: BankingAccount["provider"]) {
 }
 
 function formatAccountCode(accountCode: string) {
-  return (
-    recodeAccounts.find((account) => account.value === accountCode)?.label ??
-    accountCode
-  );
+  return accountCode;
 }
 
 function formatCount(count: number, noun: string) {

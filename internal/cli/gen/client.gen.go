@@ -291,11 +291,16 @@ const (
 
 // Defines values for LedgerAccountType.
 const (
-	Asset     LedgerAccountType = "asset"
-	Equity    LedgerAccountType = "equity"
-	Expense   LedgerAccountType = "expense"
-	Income    LedgerAccountType = "income"
-	Liability LedgerAccountType = "liability"
+	LedgerAccountTypeAsset     LedgerAccountType = "asset"
+	LedgerAccountTypeEquity    LedgerAccountType = "equity"
+	LedgerAccountTypeExpense   LedgerAccountType = "expense"
+	LedgerAccountTypeIncome    LedgerAccountType = "income"
+	LedgerAccountTypeLiability LedgerAccountType = "liability"
+)
+
+// Defines values for LedgerCreateExpenseAccountRequestType.
+const (
+	LedgerCreateExpenseAccountRequestTypeExpense LedgerCreateExpenseAccountRequestType = "expense"
 )
 
 // Defines values for LedgerTrialBalanceStatus.
@@ -347,6 +352,15 @@ const (
 	InvoicingListInvoicesParamsStatusOverdue InvoicingListInvoicesParamsStatus = "overdue"
 	InvoicingListInvoicesParamsStatusPaid    InvoicingListInvoicesParamsStatus = "paid"
 	InvoicingListInvoicesParamsStatusSent    InvoicingListInvoicesParamsStatus = "sent"
+)
+
+// Defines values for LedgerListAccountsParamsType.
+const (
+	Asset     LedgerListAccountsParamsType = "asset"
+	Equity    LedgerListAccountsParamsType = "equity"
+	Expense   LedgerListAccountsParamsType = "expense"
+	Income    LedgerListAccountsParamsType = "income"
+	Liability LedgerListAccountsParamsType = "liability"
 )
 
 // AdvisorCTA defines model for AdvisorCTA.
@@ -1443,6 +1457,19 @@ type LedgerAccountsResponse struct {
 	Accounts []LedgerAccount `json:"accounts"`
 }
 
+// LedgerCreateExpenseAccountRequest defines model for LedgerCreateExpenseAccountRequest.
+type LedgerCreateExpenseAccountRequest struct {
+	// Code Unique ledger account code in ####-slug form.
+	Code string `json:"code"`
+	Name string `json:"name"`
+
+	// Type Optional guard value; when present it must be expense.
+	Type *LedgerCreateExpenseAccountRequestType `json:"type,omitempty"`
+}
+
+// LedgerCreateExpenseAccountRequestType Optional guard value; when present it must be expense.
+type LedgerCreateExpenseAccountRequestType string
+
 // LedgerEntriesResponse defines model for LedgerEntriesResponse.
 type LedgerEntriesResponse struct {
 	Entries    []LedgerEntry `json:"entries"`
@@ -1738,6 +1765,15 @@ type InvoicingGetInvoicePrintPayloadParams struct {
 	Draft *bool `form:"draft,omitempty" json:"draft,omitempty"`
 }
 
+// LedgerListAccountsParams defines parameters for LedgerListAccounts.
+type LedgerListAccountsParams struct {
+	// Type Optionally filter accounts by ledger account type. Use type=expense for recode/category pickers.
+	Type *LedgerListAccountsParamsType `form:"type,omitempty" json:"type,omitempty"`
+}
+
+// LedgerListAccountsParamsType defines parameters for LedgerListAccounts.
+type LedgerListAccountsParamsType string
+
 // LedgerListEntriesParams defines parameters for LedgerListEntries.
 type LedgerListEntriesParams struct {
 	// From Inclusive entry date lower bound.
@@ -1853,6 +1889,9 @@ type InvoicingCreateDraftInvoiceJSONRequestBody = InvoicingCreateDraftInvoiceReq
 
 // InvoicingPatchInvoiceJSONRequestBody defines body for InvoicingPatchInvoice for application/json ContentType.
 type InvoicingPatchInvoiceJSONRequestBody = InvoicingInvoicePatch
+
+// LedgerCreateExpenseAccountJSONRequestBody defines body for LedgerCreateExpenseAccount for application/json ContentType.
+type LedgerCreateExpenseAccountJSONRequestBody = LedgerCreateExpenseAccountRequest
 
 // ReportsShareExportPackJSONRequestBody defines body for ReportsShareExportPack for application/json ContentType.
 type ReportsShareExportPackJSONRequestBody = ReportsShareRequest
@@ -2831,7 +2870,12 @@ type ClientInterface interface {
 	JurisdictionGetPack(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// LedgerListAccounts request
-	LedgerListAccounts(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+	LedgerListAccounts(ctx context.Context, params *LedgerListAccountsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// LedgerCreateExpenseAccountWithBody request with any body
+	LedgerCreateExpenseAccountWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	LedgerCreateExpenseAccount(ctx context.Context, body LedgerCreateExpenseAccountJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// LedgerListEntries request
 	LedgerListEntries(ctx context.Context, params *LedgerListEntriesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -3760,8 +3804,32 @@ func (c *Client) JurisdictionGetPack(ctx context.Context, reqEditors ...RequestE
 	return c.Client.Do(req)
 }
 
-func (c *Client) LedgerListAccounts(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewLedgerListAccountsRequest(c.Server)
+func (c *Client) LedgerListAccounts(ctx context.Context, params *LedgerListAccountsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewLedgerListAccountsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) LedgerCreateExpenseAccountWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewLedgerCreateExpenseAccountRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) LedgerCreateExpenseAccount(ctx context.Context, body LedgerCreateExpenseAccountJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewLedgerCreateExpenseAccountRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -6178,7 +6246,7 @@ func NewJurisdictionGetPackRequest(server string) (*http.Request, error) {
 }
 
 // NewLedgerListAccountsRequest generates requests for LedgerListAccounts
-func NewLedgerListAccountsRequest(server string) (*http.Request, error) {
+func NewLedgerListAccountsRequest(server string, params *LedgerListAccountsParams) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -6196,10 +6264,72 @@ func NewLedgerListAccountsRequest(server string) (*http.Request, error) {
 		return nil, err
 	}
 
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Type != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "type", runtime.ParamLocationQuery, *params.Type); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
 	req, err := http.NewRequest("GET", queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewLedgerCreateExpenseAccountRequest calls the generic LedgerCreateExpenseAccount builder with application/json body
+func NewLedgerCreateExpenseAccountRequest(server string, body LedgerCreateExpenseAccountJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewLedgerCreateExpenseAccountRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewLedgerCreateExpenseAccountRequestWithBody generates requests for LedgerCreateExpenseAccount with any type of body
+func NewLedgerCreateExpenseAccountRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/ledger/accounts")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -7045,7 +7175,12 @@ type ClientWithResponsesInterface interface {
 	JurisdictionGetPackWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*JurisdictionGetPackResponse, error)
 
 	// LedgerListAccountsWithResponse request
-	LedgerListAccountsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*LedgerListAccountsResponse, error)
+	LedgerListAccountsWithResponse(ctx context.Context, params *LedgerListAccountsParams, reqEditors ...RequestEditorFn) (*LedgerListAccountsResponse, error)
+
+	// LedgerCreateExpenseAccountWithBodyWithResponse request with any body
+	LedgerCreateExpenseAccountWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*LedgerCreateExpenseAccountResponse, error)
+
+	LedgerCreateExpenseAccountWithResponse(ctx context.Context, body LedgerCreateExpenseAccountJSONRequestBody, reqEditors ...RequestEditorFn) (*LedgerCreateExpenseAccountResponse, error)
 
 	// LedgerListEntriesWithResponse request
 	LedgerListEntriesWithResponse(ctx context.Context, params *LedgerListEntriesParams, reqEditors ...RequestEditorFn) (*LedgerListEntriesResponse, error)
@@ -8527,6 +8662,7 @@ type LedgerListAccountsResponse struct {
 	Body                      []byte
 	HTTPResponse              *http.Response
 	JSON200                   *LedgerAccountsResponse
+	ApplicationproblemJSON400 *Problem
 	ApplicationproblemJSON401 *Problem
 }
 
@@ -8540,6 +8676,34 @@ func (r LedgerListAccountsResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r LedgerListAccountsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type LedgerCreateExpenseAccountResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON201                   *LedgerAccount
+	ApplicationproblemJSON400 *Problem
+	ApplicationproblemJSON401 *Problem
+	ApplicationproblemJSON409 *Problem
+	ApplicationproblemJSON413 *Problem
+	ApplicationproblemJSON415 *Problem
+	ApplicationproblemJSON422 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r LedgerCreateExpenseAccountResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r LedgerCreateExpenseAccountResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -9486,12 +9650,29 @@ func (c *ClientWithResponses) JurisdictionGetPackWithResponse(ctx context.Contex
 }
 
 // LedgerListAccountsWithResponse request returning *LedgerListAccountsResponse
-func (c *ClientWithResponses) LedgerListAccountsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*LedgerListAccountsResponse, error) {
-	rsp, err := c.LedgerListAccounts(ctx, reqEditors...)
+func (c *ClientWithResponses) LedgerListAccountsWithResponse(ctx context.Context, params *LedgerListAccountsParams, reqEditors ...RequestEditorFn) (*LedgerListAccountsResponse, error) {
+	rsp, err := c.LedgerListAccounts(ctx, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseLedgerListAccountsResponse(rsp)
+}
+
+// LedgerCreateExpenseAccountWithBodyWithResponse request with arbitrary body returning *LedgerCreateExpenseAccountResponse
+func (c *ClientWithResponses) LedgerCreateExpenseAccountWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*LedgerCreateExpenseAccountResponse, error) {
+	rsp, err := c.LedgerCreateExpenseAccountWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseLedgerCreateExpenseAccountResponse(rsp)
+}
+
+func (c *ClientWithResponses) LedgerCreateExpenseAccountWithResponse(ctx context.Context, body LedgerCreateExpenseAccountJSONRequestBody, reqEditors ...RequestEditorFn) (*LedgerCreateExpenseAccountResponse, error) {
+	rsp, err := c.LedgerCreateExpenseAccount(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseLedgerCreateExpenseAccountResponse(rsp)
 }
 
 // LedgerListEntriesWithResponse request returning *LedgerListEntriesResponse
@@ -12266,12 +12447,87 @@ func ParseLedgerListAccountsResponse(rsp *http.Response) (*LedgerListAccountsRes
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Problem
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.ApplicationproblemJSON401 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseLedgerCreateExpenseAccountResponse parses an HTTP response from a LedgerCreateExpenseAccountWithResponse call
+func ParseLedgerCreateExpenseAccountResponse(rsp *http.Response) (*LedgerCreateExpenseAccountResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &LedgerCreateExpenseAccountResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest LedgerAccount
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON415 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
 
 	}
 

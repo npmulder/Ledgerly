@@ -40,15 +40,12 @@ import {
   TableRow,
   formatMinorUnits,
 } from "@/components";
+import {
+  ExpenseCategoryPicker,
+  defaultExpenseAccountCode,
+} from "@/screens/ExpenseCategoryPicker";
 
 const repaymentCashAccount = "1000-cash-gbp";
-
-const expenseCategories = [
-  { label: "Fees", value: "5000-fees" },
-  { label: "Software", value: "5010-software" },
-  { label: "Travel", value: "5020-travel" },
-  { label: "Office", value: "5030-office" },
-] as const;
 
 type ManualKind = "repayment" | "expense-owed";
 
@@ -69,7 +66,7 @@ type CreateEntryContext = {
 
 const initialFormState = (): EntryFormState => ({
   amount: "",
-  category: expenseCategories[1].value,
+  category: defaultExpenseAccountCode,
   date: new Date().toISOString().slice(0, 10),
   description: "",
   kind: "repayment",
@@ -188,6 +185,9 @@ export function DlaScreen() {
     event.preventDefault();
     const amountMinor = decimalAmountToMinor(form.amount);
     if (amountMinor <= 0) {
+      return;
+    }
+    if (form.kind === "expense-owed" && form.category.trim() === "") {
       return;
     }
 
@@ -312,21 +312,15 @@ export function DlaScreen() {
                 />
               </Field>
               {form.kind === "expense-owed" ? (
-                <Field label="Category">
-                  <Select
-                    name="expense_category"
-                    onChange={(event) =>
-                      updateForm("category", event.target.value)
-                    }
-                    value={form.category}
-                  >
-                    {expenseCategories.map((category) => (
-                      <option key={category.value} value={category.value}>
-                        {category.label}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
+                <ExpenseCategoryPicker
+                  label="Category"
+                  name="expense_category"
+                  onChange={(accountCode) =>
+                    updateForm("category", accountCode)
+                  }
+                  required
+                  value={form.category}
+                />
               ) : null}
               {submitProblem ? (
                 <div className="problem-alert" role="alert">
