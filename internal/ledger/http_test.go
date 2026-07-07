@@ -72,6 +72,18 @@ func TestHTTPAccountsAndTrialBalance(t *testing.T) {
 	}
 	assertAccountResponse(t, accounts.Accounts, "4000-sales")
 
+	expenseResult := performLedgerRequest(router, http.MethodGet, "/api/ledger/accounts?type=expense", true)
+	if expenseResult.Code != http.StatusOK {
+		t.Fatalf("expense accounts status = %d, want %d; body=%s", expenseResult.Code, http.StatusOK, expenseResult.Body.String())
+	}
+	var expenses accountsResponse
+	if err := json.Unmarshal(expenseResult.Body.Bytes(), &expenses); err != nil {
+		t.Fatalf("decode expense accounts: %v; body=%s", err, expenseResult.Body.String())
+	}
+	assertAccountResponse(t, expenses.Accounts, "5010-software")
+	assertNoAccountResponse(t, expenses.Accounts, "4000-sales")
+	assertAccountsHaveType(t, expenses.Accounts, "expense")
+
 	trialBalanceResult := performLedgerRequest(router, http.MethodGet, "/api/ledger/trial-balance", true)
 	if trialBalanceResult.Code != http.StatusOK {
 		t.Fatalf("trial-balance status = %d, want %d; body=%s", trialBalanceResult.Code, http.StatusOK, trialBalanceResult.Body.String())
@@ -82,6 +94,59 @@ func TestHTTPAccountsAndTrialBalance(t *testing.T) {
 	}
 	if trialBalance.AsOf != "2026-07-06" || trialBalance.Status != "balanced" {
 		t.Fatalf("trial balance = %+v, want as_of 2026-07-06 balanced", trialBalance)
+	}
+}
+
+func TestHTTPCreateExpenseAccount(t *testing.T) {
+	_, _, ledgerPool := temporaryMigratedLedgerDatabase(t)
+	router := newLedgerHTTPTestRouter(t, ledgerPool, time.Date(2026, 7, 6, 12, 0, 0, 0, time.UTC))
+
+	createResult := performLedgerJSONRequest(router, http.MethodPost, "/api/ledger/accounts", `{"code":"5999-training","name":"Training","type":"expense"}`, true)
+	if createResult.Code != http.StatusCreated {
+		t.Fatalf("create account status = %d, want %d; body=%s", createResult.Code, http.StatusCreated, createResult.Body.String())
+	}
+	var created accountResponse
+	if err := json.Unmarshal(createResult.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode created account: %v; body=%s", err, createResult.Body.String())
+	}
+	if created.Code != "5999-training" || created.Name != "Training" || created.Type != "expense" || created.Currency != nil {
+		t.Fatalf("created account = %+v, want expense training account without currency", created)
+	}
+
+	expenseResult := performLedgerRequest(router, http.MethodGet, "/api/ledger/accounts?type=expense", true)
+	var expenses accountsResponse
+	if err := json.Unmarshal(expenseResult.Body.Bytes(), &expenses); err != nil {
+		t.Fatalf("decode expense accounts after create: %v; body=%s", err, expenseResult.Body.String())
+	}
+	assertAccountResponse(t, expenses.Accounts, "5999-training")
+
+	duplicate := performLedgerJSONRequest(router, http.MethodPost, "/api/ledger/accounts", `{"code":"5999-training","name":"Training"}`, true)
+	if duplicate.Code != http.StatusConflict {
+		t.Fatalf("duplicate account status = %d, want %d; body=%s", duplicate.Code, http.StatusConflict, duplicate.Body.String())
+	}
+	if got := duplicate.Header().Get("Content-Type"); got != httpserver.ProblemContentType {
+		t.Fatalf("duplicate Content-Type = %q, want %s", got, httpserver.ProblemContentType)
+	}
+}
+
+func TestHTTPCreateExpenseAccountValidation(t *testing.T) {
+	_, _, ledgerPool := temporaryMigratedLedgerDatabase(t)
+	router := newLedgerHTTPTestRouter(t, ledgerPool, time.Date(2026, 7, 6, 12, 0, 0, 0, time.UTC))
+
+	invalid := performLedgerJSONRequest(router, http.MethodPost, "/api/ledger/accounts", `{"code":"bad code","name":"","type":"income"}`, true)
+	if invalid.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("invalid account status = %d, want %d; body=%s", invalid.Code, http.StatusUnprocessableEntity, invalid.Body.String())
+	}
+	body := invalid.Body.String()
+	for _, want := range []string{"/code", "/name", "/type"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("invalid account body missing %s: %s", want, body)
+		}
+	}
+
+	existingNonExpense := performLedgerJSONRequest(router, http.MethodPost, "/api/ledger/accounts", `{"code":"4000-sales","name":"Sales"}`, true)
+	if existingNonExpense.Code != http.StatusConflict {
+		t.Fatalf("existing non-expense status = %d, want %d; body=%s", existingNonExpense.Code, http.StatusConflict, existingNonExpense.Body.String())
 	}
 }
 
@@ -148,6 +213,17 @@ func performLedgerRequest(router http.Handler, method string, path string, authe
 	return response
 }
 
+func performLedgerJSONRequest(router http.Handler, method string, path string, body string, authenticated bool) *httptest.ResponseRecorder {
+	request := httptest.NewRequest(method, path, strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	if authenticated {
+		request.AddCookie(&http.Cookie{Name: "test_session", Value: "ok"})
+	}
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	return response
+}
+
 func decodeEntriesResponse(t *testing.T, response *httptest.ResponseRecorder) entriesResponse {
 	t.Helper()
 
@@ -178,6 +254,26 @@ func assertAccountResponse(t *testing.T, accounts []accountResponse, code string
 		}
 	}
 	t.Fatalf("account %q missing from %+v", code, accounts)
+}
+
+func assertNoAccountResponse(t *testing.T, accounts []accountResponse, code string) {
+	t.Helper()
+
+	for _, account := range accounts {
+		if account.Code == code {
+			t.Fatalf("account %q unexpectedly present in %+v", code, accounts)
+		}
+	}
+}
+
+func assertAccountsHaveType(t *testing.T, accounts []accountResponse, accountType string) {
+	t.Helper()
+
+	for _, account := range accounts {
+		if account.Type != accountType {
+			t.Fatalf("account %s type = %q, want %q", account.Code, account.Type, accountType)
+		}
+	}
 }
 
 func assertLedgerAmountsAreJSONIntegers(t *testing.T, body []byte) {

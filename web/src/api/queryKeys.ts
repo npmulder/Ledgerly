@@ -85,6 +85,13 @@ export const queryKeys = {
   jurisdiction: {
     pack: (): ApiQueryKey => ["jurisdiction", "pack", {}],
   },
+  ledger: {
+    expenseAccounts: (): ApiQueryKey => [
+      "ledger",
+      "accounts",
+      { type: "expense" },
+    ],
+  },
   moneyfx: {
     todayRate: (from: string, to: string): ApiQueryKey => [
       "moneyfx",

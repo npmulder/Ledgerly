@@ -1204,6 +1204,10 @@
   line-height: 1.2;
 }
 
+.banking-review-card {
+  overflow: visible;
+}
+
 .banking-review-card .ui-card__body {
   display: grid;
   gap: 14px;
@@ -1323,15 +1327,51 @@
   position: absolute;
   z-index: 5;
   top: calc(100% + 6px);
-  right: 0;
   display: grid;
-  min-width: 220px;
   gap: 10px;
   padding: 12px;
   border: var(--border-card);
   border-radius: var(--radius-card);
   background: var(--color-card);
   box-shadow: var(--shadow-screen);
+}
+
+.banking-recode__panel {
+  left: 0;
+  min-width: 260px;
+  max-width: min(320px, calc(100vw - 48px));
+}
+
+.banking-card-menu__panel {
+  right: 0;
+  min-width: 140px;
+}
+
+.expense-category-picker {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.expense-category-picker__form {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--color-border-input);
+  border-radius: var(--radius-input);
+  background: var(--color-panel);
+}
+
+.expense-category-picker__fields,
+.expense-category-picker__actions {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.expense-category-picker__actions {
+  grid-template-columns: repeat(2, max-content);
 }
 
 .banking-card-menu {

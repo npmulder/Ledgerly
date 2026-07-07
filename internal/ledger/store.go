@@ -76,6 +76,31 @@ FROM ledger.accounts_list()`)
 	return accounts, nil
 }
 
+// CreateAccount inserts a new chart account and fails if the code already exists.
+func (Store) CreateAccount(ctx context.Context, tx db.Tx, spec AccountSpec) (Account, error) {
+	normalized, err := normalizeAccountSpec(spec)
+	if err != nil {
+		return Account{}, err
+	}
+
+	account, err := scanSingleAccount(tx.QueryRow(ctx, `
+INSERT INTO ledger.accounts (code, name, type, currency)
+VALUES ($1, $2, $3::ledger.account_type, $4)
+RETURNING id, code, name, type::text, currency, created_at`,
+		string(normalized.Code),
+		normalized.Name,
+		string(normalized.Type),
+		nullableText(normalized.Currency),
+	))
+	if err != nil {
+		if isAccountCodeUniqueViolation(err) {
+			return Account{}, fmt.Errorf("ledger: account %s already exists: %w", normalized.Code, ErrAccountAlreadyExists)
+		}
+		return Account{}, fmt.Errorf("ledger: create account %s: %w", normalized.Code, err)
+	}
+	return account, nil
+}
+
 // PostingAccountCurrencies loads fixed account currencies and verifies every posting account exists.
 func (Store) PostingAccountCurrencies(ctx context.Context, tx db.Tx, codes []AccountCode) (map[AccountCode]*string, error) {
 	unique := make([]string, 0, len(codes))
@@ -666,6 +691,13 @@ func isReversalUniqueViolation(err error) bool {
 	return errors.As(err, &pgErr) &&
 		pgErr.Code == "23505" &&
 		pgErr.ConstraintName == "journal_entries_reversal_of_unique_idx"
+}
+
+func isAccountCodeUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) &&
+		pgErr.Code == "23505" &&
+		pgErr.ConstraintName == "accounts_code_key"
 }
 
 func isCheckViolation(err error) bool {
