@@ -114,11 +114,24 @@ type ProfileService struct {
 	bus    *bus.Bus
 	store  profileStore
 	assets fileAssetStore
+	audit  AuditRecorder
 }
 
 var _ Identity = (*ProfileService)(nil)
 
 type ProfileOption func(*ProfileService)
+
+// AuditRecorder records service-layer profile mutations in the caller's transaction.
+type AuditRecorder interface {
+	Record(ctx context.Context, tx db.Tx, module, entity, entityID string, before, after any) error
+}
+
+// WithAuditRecorder installs non-ledger mutation audit logging for profile commands.
+func WithAuditRecorder(recorder AuditRecorder) ProfileOption {
+	return func(s *ProfileService) {
+		s.audit = recorder
+	}
+}
 
 // WithDataDir configures disk-backed asset storage for profile APIs.
 func WithDataDir(dataDir string) ProfileOption {
@@ -320,6 +333,9 @@ func (s *ProfileService) UpdateProfile(ctx context.Context, patch UpdateProfileP
 			return err
 		}
 	}
+	if err := s.recordAudit(ctx, profileAuditValue(profile, !create), profileAuditValue(updated, true)); err != nil {
+		return err
+	}
 	return s.publishProfileUpdated(ctx)
 }
 
@@ -351,8 +367,12 @@ func (s *ProfileService) ReplaceLogo(ctx context.Context, upload LogoUpload) (As
 	if err != nil {
 		return "", err
 	}
+	before := profile
 	profile.LogoAssetID = &id
 	if err := s.store.updateProfile(ctx, s.tx, profile); err != nil {
+		return "", err
+	}
+	if err := s.recordAudit(ctx, profileAuditValue(before, true), profileAuditValue(profile, true)); err != nil {
 		return "", err
 	}
 	if err := s.publishProfileUpdated(ctx); err != nil {
@@ -414,6 +434,62 @@ func (s *ProfileService) publishProfileUpdated(ctx context.Context) error {
 		return fmt.Errorf("publish profile updated: %w", err)
 	}
 	return nil
+}
+
+func (s *ProfileService) recordAudit(ctx context.Context, before, after any) error {
+	if s.audit == nil {
+		return nil
+	}
+	return s.audit.Record(ctx, s.tx, "identity", "profile", "1", before, after)
+}
+
+type profileAuditRecord struct {
+	TradingName       string           `json:"trading_name"`
+	LegalName         string           `json:"legal_name"`
+	CompanyNumber     string           `json:"company_number"`
+	RegisteredOffice  RegisteredOffice `json:"registered_office"`
+	IncorporationDate string           `json:"incorporation_date"`
+	YearEnd           yearEndAudit     `json:"year_end"`
+	IsVATRegistered   bool             `json:"is_vat_registered"`
+	VATNumber         *string          `json:"vat_number"`
+	BankDetails       BankDetails      `json:"bank_details"`
+	Shareholders      []Shareholder    `json:"shareholders"`
+	LogoAssetID       *AssetID         `json:"logo_asset_id"`
+}
+
+type yearEndAudit struct {
+	Month int `json:"month"`
+	Day   int `json:"day"`
+}
+
+func profileAuditValue(profile CompanyProfile, exists bool) any {
+	if !exists {
+		return nil
+	}
+	return profileAuditRecord{
+		TradingName:       profile.TradingName,
+		LegalName:         profile.LegalName,
+		CompanyNumber:     profile.CompanyNumber,
+		RegisteredOffice:  profile.RegisteredOffice,
+		IncorporationDate: profile.IncorporationDate.UTC().Format(dateLayout),
+		YearEnd: yearEndAudit{
+			Month: int(profile.YearEnd.Month),
+			Day:   profile.YearEnd.Day,
+		},
+		IsVATRegistered: profile.IsVATRegistered,
+		VATNumber:       cloneStringPointer(profile.VATNumber),
+		BankDetails:     profile.BankDetails,
+		Shareholders:    append([]Shareholder{}, profile.Shareholders...),
+		LogoAssetID:     cloneAssetIDPointer(profile.LogoAssetID),
+	}
+}
+
+func cloneAssetIDPointer(value *AssetID) *AssetID {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
 }
 
 func (s *Service) Register(ctx context.Context, input RegisterInput) (User, error) {

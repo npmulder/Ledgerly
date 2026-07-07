@@ -36,6 +36,7 @@ import { getJurisdictionPack } from "@/api/jurisdiction";
 import { queryKeys } from "@/api/queryKeys";
 import {
   AmountText,
+  AuditHistoryPanel,
   Badge,
   Button,
   Card,
@@ -320,6 +321,9 @@ function CompanySettings() {
     },
     onSuccess: (updatedProfile) => {
       queryClient.setQueryData(queryKeys.identity.profile(), updatedProfile);
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.audit.history("identity", "profile", "1"),
+      });
       setFormDraft(null);
     },
   });
@@ -343,6 +347,9 @@ function CompanySettings() {
               }
             : currentProfile,
       );
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.audit.history("identity", "profile", "1"),
+      });
       setLogoPreviewUrl(null);
     },
   });
@@ -445,7 +452,9 @@ function CompanySettings() {
             {submitLabel}
           </Button>
         }
-        title={isCreatingProfile ? "Create company profile" : "Company identity"}
+        title={
+          isCreatingProfile ? "Create company profile" : "Company identity"
+        }
       >
         <div className="company-settings">
           {isCreatingProfile ? null : (
@@ -488,7 +497,9 @@ function CompanySettings() {
                   ref={fileInputRef}
                   type="file"
                 />
-                <span>PNG or JPEG, appears on invoices, vouchers and emails</span>
+                <span>
+                  PNG or JPEG, appears on invoices, vouchers and emails
+                </span>
               </div>
             </div>
           )}
@@ -674,6 +685,9 @@ function CompanySettings() {
           )}
         </div>
       </Card>
+      {!isCreatingProfile ? (
+        <AuditHistoryPanel entity="profile" entityId="1" module="identity" />
+      ) : null}
     </form>
   );
 }
@@ -686,9 +700,7 @@ function ClientsSettings() {
   });
   const clients = clientsQuery.data?.clients ?? [];
   const [editingClientId, setEditingClientId] = useState<string | null>(null);
-  const [formDraft, setFormDraft] = useState<ClientFormState>(
-    emptyClientForm,
-  );
+  const [formDraft, setFormDraft] = useState<ClientFormState>(emptyClientForm);
 
   const saveMutation = useMutation({
     mutationFn: (request: InvoicingClientRequest) =>
@@ -700,7 +712,10 @@ function ClientsSettings() {
         queryKey: queryKeys.invoicing.clients(false),
       });
     },
-    onSuccess: () => {
+    onSuccess: (saved) => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.audit.history("invoicing", "client", saved.id),
+      });
       setEditingClientId(null);
       setFormDraft(emptyClientForm());
     },
@@ -713,6 +728,9 @@ function ClientsSettings() {
       });
     },
     onSuccess: (_result, id) => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.audit.history("invoicing", "client", id),
+      });
       if (editingClientId === id) {
         setEditingClientId(null);
         setFormDraft(emptyClientForm());
@@ -842,7 +860,11 @@ function ClientsSettings() {
       <form className="settings-detail" onSubmit={handleClientSubmit}>
         <Card
           actions={
-            <Button disabled={saveMutation.isPending} size="small" type="submit">
+            <Button
+              disabled={saveMutation.isPending}
+              size="small"
+              type="submit"
+            >
               {saveMutation.isPending ? "Saving" : "Save client"}
             </Button>
           }
@@ -984,6 +1006,13 @@ function ClientsSettings() {
             </div>
           </div>
         </Card>
+        {editingClientId ? (
+          <AuditHistoryPanel
+            entity="client"
+            entityId={editingClientId}
+            module="invoicing"
+          />
+        ) : null}
       </form>
     </div>
   );
@@ -1302,8 +1331,7 @@ function applyProfilePatch(
     bank_details: patch.bank_details ?? profile.bank_details,
     company_number: patch.company_number ?? profile.company_number,
     incorporation_date: patch.incorporation_date ?? profile.incorporation_date,
-    is_vat_registered:
-      patch.is_vat_registered ?? profile.is_vat_registered,
+    is_vat_registered: patch.is_vat_registered ?? profile.is_vat_registered,
     legal_name: patch.legal_name ?? profile.legal_name,
     logo_asset_id:
       patch.logo_asset_id === undefined
@@ -1394,10 +1422,7 @@ function formToClientRequest(form: ClientFormState): InvoicingClientRequest {
     default_currency: form.defaultCurrency,
     email: form.email.trim() || null,
     name: form.name.trim(),
-    retainer_amount: moneyFromInput(
-      form.retainerAmount,
-      form.defaultCurrency,
-    ),
+    retainer_amount: moneyFromInput(form.retainerAmount, form.defaultCurrency),
     terms_days: clientTermsDays(form.termsDays),
     vat_number: form.vatNumber.trim() || null,
     vat_treatment: form.vatTreatment,
@@ -1478,10 +1503,7 @@ function MoneyAmountText({
   readonly amount: InvoicingMoneyAmount;
 }) {
   return (
-    <AmountText
-      amountMinor={amount.amount_minor}
-      currency={amount.currency}
-    />
+    <AmountText amountMinor={amount.amount_minor} currency={amount.currency} />
   );
 }
 

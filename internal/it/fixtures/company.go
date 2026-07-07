@@ -118,13 +118,6 @@ func CompanyIncorporationDate(date time.Time) CompanyOverride {
 	}
 }
 
-// CompanyVATRegistered overrides whether VAT return reporting applies.
-func CompanyVATRegistered(registered bool) CompanyOverride {
-	return func(profile *identity.CompanyProfile) {
-		profile.IsVATRegistered = registered
-	}
-}
-
 func npmCompanyProfile() identity.CompanyProfile {
 	return identity.CompanyProfile{
 		TradingName:   "NPM Limited",
