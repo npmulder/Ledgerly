@@ -10,19 +10,22 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/npmulder/ledgerly/internal/cli/gen"
 )
 
 type Runtime struct {
-	stdin      io.Reader
-	stdout     io.Writer
-	stderr     io.Writer
-	httpClient *http.Client
-	configPath string
-	version    string
-	json       bool
-	yes        bool
+	stdout      io.Writer
+	stderr      io.Writer
+	stdin       io.Reader
+	httpClient  *http.Client
+	configPath  string
+	version     string
+	commandArgs []string
+	json        bool
+	yes         bool
+	stdinIsTTY  func() bool
 }
 
 type Option func(*Runtime)
@@ -30,6 +33,15 @@ type Option func(*Runtime)
 func WithHTTPClient(client *http.Client) Option {
 	return func(runtime *Runtime) {
 		runtime.httpClient = client
+	}
+}
+
+func WithInput(stdin io.Reader, isTTY bool) Option {
+	return func(runtime *Runtime) {
+		runtime.stdin = stdin
+		runtime.stdinIsTTY = func() bool {
+			return isTTY
+		}
 	}
 }
 
@@ -47,10 +59,14 @@ func WithVersion(version string) Option {
 
 func Execute(ctx context.Context, args []string, stdout, stderr io.Writer, opts ...Option) error {
 	runtime := &Runtime{
-		stdin:   os.Stdin,
-		stdout:  stdout,
-		stderr:  stderr,
-		version: "dev",
+		stdout:      stdout,
+		stderr:      stderr,
+		stdin:       os.Stdin,
+		version:     "dev",
+		commandArgs: append([]string(nil), args...),
+	}
+	runtime.stdinIsTTY = func() bool {
+		return isTerminal(runtime.stdin)
 	}
 	for _, opt := range opts {
 		opt(runtime)
@@ -90,9 +106,18 @@ func newRootCommand(runtime *Runtime) *cobra.Command {
 		newReportCommand(runtime),
 		newAdvisorCommand(runtime),
 		newRatesCommand(runtime),
+		newDocsCommand(runtime),
 		newMCPCommand(runtime),
 	)
 	return root
+}
+
+func isTerminal(reader io.Reader) bool {
+	file, ok := reader.(*os.File)
+	if !ok {
+		return false
+	}
+	return term.IsTerminal(int(file.Fd()))
 }
 
 func newAuthCommand(runtime *Runtime) *cobra.Command {

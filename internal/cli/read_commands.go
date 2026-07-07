@@ -57,7 +57,46 @@ func newInvoiceCommand(runtime *Runtime) *cobra.Command {
 	}
 	pdf.Flags().StringVar(&pdfOutput, "output", "", "output PDF path")
 
-	invoice.AddCommand(list, show, pdf)
+	var createClient string
+	var createLines []string
+	create := &cobra.Command{
+		Use:   "create --client <id> [--line \"desc:qty:price\"]...",
+		Short: "Create a draft invoice",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runInvoiceCreate(cmd.Context(), runtime, createClient, createLines)
+		},
+	}
+	create.Flags().StringVar(&createClient, "client", "", "client id")
+	create.Flags().StringArrayVar(&createLines, "line", nil, `invoice line in "desc:qty:price" form`)
+
+	send := &cobra.Command{
+		Use:   "send <id>",
+		Short: "Send an invoice",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runInvoiceSend(cmd.Context(), runtime, args[0])
+		},
+	}
+
+	remind := &cobra.Command{
+		Use:   "remind <id>",
+		Short: "Send an invoice reminder",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runInvoiceRemind(cmd.Context(), runtime, args[0])
+		},
+	}
+
+	revert := &cobra.Command{
+		Use:   "revert <id>",
+		Short: "Revert a sent invoice to draft",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runInvoiceRevert(cmd.Context(), runtime, args[0])
+		},
+	}
+
+	invoice.AddCommand(list, show, pdf, create, send, remind, revert)
 	return invoice
 }
 
@@ -73,7 +112,31 @@ func newClientCommand(runtime *Runtime) *cobra.Command {
 			return runClientList(cmd.Context(), runtime)
 		},
 	}
-	client.AddCommand(list)
+	var addFlags clientAddFlags
+	add := &cobra.Command{
+		Use:   "add",
+		Short: "Add a client",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runClientAdd(cmd.Context(), runtime, addFlags)
+		},
+	}
+	add.Flags().StringVar(&addFlags.fromJSON, "from-json", "", "read client JSON from path or -")
+	add.Flags().StringVar(&addFlags.name, "name", "", "client name")
+	add.Flags().StringVar(&addFlags.email, "email", "", "client email")
+	add.Flags().StringVar(&addFlags.currency, "currency", "GBP", "default currency")
+	add.Flags().IntVar(&addFlags.termsDays, "terms", 14, "payment terms in days")
+	add.Flags().StringVar(&addFlags.vatTreatment, "vat-treatment", "domestic", "VAT treatment")
+	add.Flags().StringVar(&addFlags.vatNumber, "vat-number", "", "VAT number")
+	add.Flags().StringVar(&addFlags.retainerAmount, "retainer", "", "retainer amount")
+	add.Flags().StringVar(&addFlags.dayRate, "day-rate", "", "day rate amount")
+	add.Flags().StringVar(&addFlags.addressLine1, "address-line1", "", "address line 1")
+	add.Flags().StringVar(&addFlags.addressLine2, "address-line2", "", "address line 2")
+	add.Flags().StringVar(&addFlags.addressLocality, "locality", "", "address locality")
+	add.Flags().StringVar(&addFlags.addressRegion, "region", "", "address region")
+	add.Flags().StringVar(&addFlags.addressPostcode, "postal-code", "", "address postal code")
+	add.Flags().StringVar(&addFlags.addressCountry, "country", "IM", "address country")
+
+	client.AddCommand(list, add)
 	return client
 }
 
@@ -111,7 +174,74 @@ func newBankCommand(runtime *Runtime) *cobra.Command {
 	feed.Flags().StringVar(&feedState, "state", "", "transaction state")
 	feed.Flags().StringVar(&feedCursor, "cursor", "", "next cursor")
 
-	bank.AddCommand(accounts, review, feed)
+	var importAccount int64
+	importCSV := &cobra.Command{
+		Use:   "import <file.csv> --account <id>",
+		Short: "Import a bank statement CSV",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runBankImport(cmd.Context(), runtime, args[0], importAccount)
+		},
+	}
+	importCSV.Flags().Int64Var(&importAccount, "account", 0, "bank account id")
+
+	confirm := &cobra.Command{
+		Use:   "confirm <txn>",
+		Short: "Confirm a suggested bank match",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			txnID, err := parsePositiveInt64(args[0], "txn")
+			if err != nil {
+				return err
+			}
+			return runBankConfirm(cmd.Context(), runtime, txnID)
+		},
+	}
+
+	fileDLA := &cobra.Command{
+		Use:   "file-dla <txn>",
+		Short: "File a bank transaction to the director loan account",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			txnID, err := parsePositiveInt64(args[0], "txn")
+			if err != nil {
+				return err
+			}
+			return runBankFileDLA(cmd.Context(), runtime, txnID)
+		},
+	}
+
+	var recodeAccount string
+	recode := &cobra.Command{
+		Use:   "recode <txn> --account <code>",
+		Short: "Recode a bank transaction to a ledger account",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			txnID, err := parsePositiveInt64(args[0], "txn")
+			if err != nil {
+				return err
+			}
+			return runBankRecode(cmd.Context(), runtime, txnID, recodeAccount)
+		},
+	}
+	recode.Flags().StringVar(&recodeAccount, "account", "", "target ledger account code")
+
+	var excludeReason string
+	exclude := &cobra.Command{
+		Use:   "exclude <txn> --reason <reason>",
+		Short: "Exclude a bank transaction from reconciliation",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			txnID, err := parsePositiveInt64(args[0], "txn")
+			if err != nil {
+				return err
+			}
+			return runBankExclude(cmd.Context(), runtime, txnID, excludeReason)
+		},
+	}
+	exclude.Flags().StringVar(&excludeReason, "reason", "", "exclusion reason")
+
+	bank.AddCommand(accounts, review, feed, importCSV, confirm, fileDLA, recode, exclude)
 	return bank
 }
 
@@ -143,7 +273,23 @@ func newDLACommand(runtime *Runtime) *cobra.Command {
 		},
 	}
 
-	dla.AddCommand(ledger, balance)
+	var addFlags dlaAddFlags
+	add := &cobra.Command{
+		Use:   "add --kind repayment|expense-owed --date YYYY-MM-DD --amount <amount> --description <text>",
+		Short: "Add a manual DLA entry",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runDLAAdd(cmd.Context(), runtime, addFlags)
+		},
+	}
+	add.Flags().StringVar(&addFlags.kind, "kind", "", "entry kind: repayment or expense-owed")
+	add.Flags().StringVar(&addFlags.date, "date", "", "entry date YYYY-MM-DD")
+	add.Flags().StringVar(&addFlags.description, "description", "", "entry description")
+	add.Flags().StringVar(&addFlags.amount, "amount", "", "entry amount")
+	add.Flags().StringVar(&addFlags.cashAccount, "cash-account", "", "cash/bank account code for repayments")
+	add.Flags().StringVar(&addFlags.expenseCategory, "expense-category", "", "expense account code for expense-owed entries")
+	add.Flags().StringVar(&addFlags.sourceRef, "source-ref", "", "manual source reference")
+
+	dla.AddCommand(ledger, balance, add)
 	return dla
 }
 
@@ -166,7 +312,15 @@ func newDividendCommand(runtime *Runtime) *cobra.Command {
 			return runDividendHistory(cmd.Context(), runtime)
 		},
 	}
-	dividend.AddCommand(headroom, history)
+	declare := &cobra.Command{
+		Use:   "declare <amount>",
+		Short: "Declare a dividend",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runDividendDeclare(cmd.Context(), runtime, args[0])
+		},
+	}
+	dividend.AddCommand(headroom, history, declare)
 	return dividend
 }
 
