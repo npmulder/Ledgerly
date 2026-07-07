@@ -506,9 +506,23 @@ func ledgerFXAccountBalances(t *testing.T, ctx context.Context, service *ledger.
 		if err != nil {
 			t.Fatalf("AccountBalance(%s) error = %v", account, err)
 		}
-		balances[account] = balance
+		balances[account] = ledgerFXCanonicalBalance(balance)
 	}
 	return balances
+}
+
+func ledgerFXCanonicalBalance(balance ledger.AccountBalance) ledger.AccountBalance {
+	// Fully reversed nullable accounts can report either no native rows or
+	// explicit zero rows depending on whether postings ever touched them.
+	native := make([]money.Money, 0, len(balance.Native))
+	for _, amount := range balance.Native {
+		if amount.IsZero() {
+			continue
+		}
+		native = append(native, amount)
+	}
+	balance.Native = native
+	return balance
 }
 
 func ledgerFXPostingAccounts(entries []ledger.NewJournalEntry) []ledger.AccountCode {
