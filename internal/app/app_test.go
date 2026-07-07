@@ -96,6 +96,52 @@ func TestIdentityInvoicePDFAssetStoreLoadInvoicePDF(t *testing.T) {
 	}
 }
 
+func TestIdentityDirectorNamesTreatsMissingProfileAsNoNames(t *testing.T) {
+	names, err := (identityDirectorNames{
+		profile: fakeDirectorNameProfile{err: identity.ErrProfileNotFound},
+	}).DirectorNames(context.Background())
+	if err != nil {
+		t.Fatalf("DirectorNames() error = %v, want nil", err)
+	}
+	if len(names) != 0 {
+		t.Fatalf("DirectorNames() = %v, want no names", names)
+	}
+}
+
+func TestIdentityDirectorNamesPropagatesUnexpectedProfileError(t *testing.T) {
+	wantErr := errors.New("profile unavailable")
+	_, err := (identityDirectorNames{
+		profile: fakeDirectorNameProfile{err: wantErr},
+	}).DirectorNames(context.Background())
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("DirectorNames() error = %v, want %v", err, wantErr)
+	}
+}
+
+func TestIdentityDirectorNamesReturnsTrimmedShareholderNames(t *testing.T) {
+	names, err := (identityDirectorNames{
+		profile: fakeDirectorNameProfile{profile: identity.CompanyProfile{
+			Shareholders: []identity.Shareholder{
+				{Name: "  Neil Mulder  "},
+				{Name: " "},
+				{Name: "Jane Director"},
+			},
+		}},
+	}).DirectorNames(context.Background())
+	if err != nil {
+		t.Fatalf("DirectorNames() error = %v", err)
+	}
+	want := []string{"Neil Mulder", "Jane Director"}
+	if len(names) != len(want) {
+		t.Fatalf("DirectorNames() = %v, want %v", names, want)
+	}
+	for i := range want {
+		if names[i] != want[i] {
+			t.Fatalf("DirectorNames()[%d] = %q, want %q", i, names[i], want[i])
+		}
+	}
+}
+
 type fakeInvoicePDFProfile struct {
 	gotID identity.AssetID
 	asset identity.Asset
@@ -104,4 +150,16 @@ type fakeInvoicePDFProfile struct {
 func (p *fakeInvoicePDFProfile) Asset(_ context.Context, id identity.AssetID) (identity.Asset, error) {
 	p.gotID = id
 	return p.asset, nil
+}
+
+type fakeDirectorNameProfile struct {
+	profile identity.CompanyProfile
+	err     error
+}
+
+func (p fakeDirectorNameProfile) Profile(context.Context) (identity.CompanyProfile, error) {
+	if p.err != nil {
+		return identity.CompanyProfile{}, p.err
+	}
+	return p.profile, nil
 }

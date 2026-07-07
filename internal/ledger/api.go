@@ -146,10 +146,24 @@ func (EntryPosted) Name() string {
 	return EntryPostedName
 }
 
+// ReadSnapshot is a stable read view for derived reports that need multiple
+// ledger queries from the same database snapshot.
+type ReadSnapshot interface {
+	AccountBalance(ctx context.Context, code AccountCode, asOf time.Time) (AccountBalance, error)
+	BalancesByType(ctx context.Context, from time.Time, to time.Time) ([]AccountBalance, error)
+	Entries(ctx context.Context, filter EntryFilter) ([]JournalEntry, error)
+	Accounts(ctx context.Context) ([]Account, error)
+}
+
+// ReadSnapshotFunc consumes one stable ledger read snapshot. Implementations
+// own transaction lifetime and close the snapshot when the callback returns.
+type ReadSnapshotFunc func(context.Context, ReadSnapshot) error
+
 // Ledger exposes account management and append-only journal write operations.
 type Ledger interface {
 	Post(ctx context.Context, tx db.Tx, entry NewJournalEntry) (EntryID, error)
 	Reverse(ctx context.Context, tx db.Tx, id EntryID, reason string) (EntryID, error)
+	ReadSnapshot(ctx context.Context, fn ReadSnapshotFunc) error
 	AccountBalance(ctx context.Context, code AccountCode, asOf time.Time) (AccountBalance, error)
 	AccountBalanceInTx(ctx context.Context, tx db.Tx, code AccountCode, asOf time.Time) (AccountBalance, error)
 	BalancesByType(ctx context.Context, from time.Time, to time.Time) ([]AccountBalance, error)

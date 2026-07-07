@@ -124,6 +124,86 @@ func TestReadSideQueriesFixtureScenarios(t *testing.T) {
 	}
 }
 
+func TestReadSnapshotKeepsMultiQueryReadsStableAcrossConcurrentPost(t *testing.T) {
+	ctx, _, ledgerPool := temporaryMigratedLedgerDatabase(t)
+	service := New(ledgerPool, discardLedgerBus())
+	from := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 5, 31, 0, 0, 0, 0, time.UTC)
+
+	ensureFixtureAccount(t, ctx, ledgerPool, service, AccountSpec{
+		Code:     "1000-cash-gbp",
+		Name:     "Fixture cash GBP",
+		Type:     AccountTypeAsset,
+		Currency: stringPtr("GBP"),
+	})
+	postFixtureEntry(t, ctx, ledgerPool, service, NewJournalEntry{
+		Date:         from,
+		Description:  "snapshot initial income",
+		SourceModule: "ledger-read-snapshot-test",
+		SourceRef:    "initial-income",
+		Postings: []NewPosting{
+			{AccountCode: "1000-cash-gbp", Amount: moneyAmount(1000, "GBP"), AmountGBP: moneyAmount(1000, "GBP")},
+			{AccountCode: "4000-sales", Amount: moneyAmount(-1000, "GBP"), AmountGBP: moneyAmount(-1000, "GBP")},
+		},
+	})
+
+	var snapshotBalances []AccountBalance
+	var snapshotEntries []JournalEntry
+	if err := service.ReadSnapshot(ctx, func(ctx context.Context, snapshot ReadSnapshot) error {
+		var err error
+		snapshotBalances, err = snapshot.BalancesByType(ctx, from, to)
+		if err != nil {
+			return err
+		}
+		postFixtureEntry(t, ctx, ledgerPool, service, NewJournalEntry{
+			Date:         from.AddDate(0, 0, 1),
+			Description:  "snapshot interleaved income",
+			SourceModule: "ledger-read-snapshot-test",
+			SourceRef:    "interleaved-income",
+			Postings: []NewPosting{
+				{AccountCode: "1000-cash-gbp", Amount: moneyAmount(500, "GBP"), AmountGBP: moneyAmount(500, "GBP")},
+				{AccountCode: "4000-sales", Amount: moneyAmount(-500, "GBP"), AmountGBP: moneyAmount(-500, "GBP")},
+			},
+		})
+		snapshotEntries, err = snapshot.Entries(ctx, EntryFilter{
+			From:         &from,
+			To:           &to,
+			SourceModule: "ledger-read-snapshot-test",
+			Limit:        10,
+		})
+		return err
+	}); err != nil {
+		t.Fatalf("ReadSnapshot() error = %v", err)
+	}
+
+	assertTypeBalance(t, snapshotBalances, AccountTypeIncome, []money.Money{
+		moneyAmount(-1000, "GBP"),
+	}, moneyAmount(-1000, "GBP"))
+	if len(snapshotEntries) != 1 || snapshotEntries[0].SourceRef != "initial-income" {
+		t.Fatalf("snapshot entries = %#v, want only initial income", snapshotEntries)
+	}
+
+	rootBalances, err := service.BalancesByType(ctx, from, to)
+	if err != nil {
+		t.Fatalf("BalancesByType() after snapshot error = %v", err)
+	}
+	assertTypeBalance(t, rootBalances, AccountTypeIncome, []money.Money{
+		moneyAmount(-1500, "GBP"),
+	}, moneyAmount(-1500, "GBP"))
+	rootEntries, err := service.Entries(ctx, EntryFilter{
+		From:         &from,
+		To:           &to,
+		SourceModule: "ledger-read-snapshot-test",
+		Limit:        10,
+	})
+	if err != nil {
+		t.Fatalf("Entries() after snapshot error = %v", err)
+	}
+	if len(rootEntries) != 2 {
+		t.Fatalf("root entries = %d, want both committed entries", len(rootEntries))
+	}
+}
+
 func BenchmarkAccountBalanceExplainPlan100kRows(b *testing.B) {
 	ctx, _, ledgerPool := temporaryMigratedLedgerDatabase(b)
 	service := New(ledgerPool, discardLedgerBus())
