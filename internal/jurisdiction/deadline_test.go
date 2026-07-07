@@ -9,14 +9,15 @@ func TestFilingDeadlinesResolvesNextOccurrences(t *testing.T) {
 	pack := loadTestPack(t)
 
 	tests := []struct {
-		name           string
-		facts          CompanyFacts
-		reference      time.Time
-		key            string
-		wantDue        time.Time
-		wantLabel      string
-		wantAuthority  string
-		wantRecurrence string
+		name                        string
+		facts                       CompanyFacts
+		reference                   time.Time
+		key                         string
+		wantDue                     time.Time
+		wantLabel                   string
+		wantAuthority               string
+		wantRecurrence              string
+		wantRequiresVATRegistration bool
 	}{
 		{
 			name: "year end 31 March company tax return compound offset",
@@ -63,12 +64,13 @@ func TestFilingDeadlinesResolvesNextOccurrences(t *testing.T) {
 				IncorporationDate: testDate(2020, time.January, 30),
 				YearEnd:           YearEnd{Month: time.March, Day: 31},
 			},
-			reference:      testDate(2026, time.May, 15),
-			key:            "vat_return",
-			wantDue:        testDate(2026, time.July, 30),
-			wantLabel:      "VAT return",
-			wantAuthority:  "Testland Customs",
-			wantRecurrence: "quarterly",
+			reference:                   testDate(2026, time.May, 15),
+			key:                         "vat_return",
+			wantDue:                     testDate(2026, time.July, 30),
+			wantLabel:                   "VAT return",
+			wantAuthority:               "Testland Customs",
+			wantRecurrence:              "quarterly",
+			wantRequiresVATRegistration: true,
 		},
 		{
 			name: "VAT from mid third quarter",
@@ -76,12 +78,13 @@ func TestFilingDeadlinesResolvesNextOccurrences(t *testing.T) {
 				IncorporationDate: testDate(2020, time.January, 30),
 				YearEnd:           YearEnd{Month: time.March, Day: 31},
 			},
-			reference:      testDate(2026, time.August, 15),
-			key:            "vat_return",
-			wantDue:        testDate(2026, time.October, 30),
-			wantLabel:      "VAT return",
-			wantAuthority:  "Testland Customs",
-			wantRecurrence: "quarterly",
+			reference:                   testDate(2026, time.August, 15),
+			key:                         "vat_return",
+			wantDue:                     testDate(2026, time.October, 30),
+			wantLabel:                   "VAT return",
+			wantAuthority:               "Testland Customs",
+			wantRecurrence:              "quarterly",
+			wantRequiresVATRegistration: true,
 		},
 		{
 			name: "accounting year end ignores periods before incorporation",
@@ -119,6 +122,9 @@ func TestFilingDeadlinesResolvesNextOccurrences(t *testing.T) {
 			}
 			if got.Recurrence != tt.wantRecurrence {
 				t.Fatalf("%s Recurrence = %q, want %q", tt.key, got.Recurrence, tt.wantRecurrence)
+			}
+			if got.RequiresVATRegistration != tt.wantRequiresVATRegistration {
+				t.Fatalf("%s RequiresVATRegistration = %v, want %v", tt.key, got.RequiresVATRegistration, tt.wantRequiresVATRegistration)
 			}
 		})
 	}

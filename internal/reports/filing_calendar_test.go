@@ -64,6 +64,31 @@ func TestFilingCalendarUsesSeededNPMFacts(t *testing.T) {
 	}
 }
 
+func TestFilingCalendarSkipsVATReturnWhenUnregistered(t *testing.T) {
+	loadIsleOfManPack(t)
+
+	facts := npmFacts()
+	facts.IsVATRegistered = false
+	service := newTestService(t, facts, clock.NewFake(testDate(2026, time.July, 5)))
+
+	got, err := service.FilingCalendar()
+	if err != nil {
+		t.Fatalf("FilingCalendar() error = %v", err)
+	}
+
+	if _, ok := filingByKey(got, "vat_return"); ok {
+		t.Fatalf("vat_return present for VAT-unregistered company: %+v", got)
+	}
+	if len(got) != 3 {
+		t.Fatalf("FilingCalendar() length = %d, want 3: %+v", len(got), got)
+	}
+	for _, wantKey := range []string{"annual_return", "personal_tax_return", "company_tax_return"} {
+		if _, ok := filingByKey(got, wantKey); !ok {
+			t.Fatalf("%s missing from VAT-unregistered calendar: %+v", wantKey, got)
+		}
+	}
+}
+
 func TestFilingCalendarStatusTransitionsUsePackWindow(t *testing.T) {
 	loadIsleOfManPack(t)
 
@@ -188,8 +213,17 @@ func TestFilingCalendarReadsEditedFactsOnNextCall(t *testing.T) {
 	if want := testDate(2027, time.January, 1); !updatedCompanyTax.DueDate.Equal(want) {
 		t.Fatalf("updated company_tax_return DueDate = %s, want %s", updatedCompanyTax.DueDate.Format(time.DateOnly), want.Format(time.DateOnly))
 	}
-	if provider.calls != 2 {
-		t.Fatalf("CompanyFacts() calls = %d, want 2", provider.calls)
+
+	provider.facts.IsVATRegistered = false
+	toggled, err := service.FilingCalendar()
+	if err != nil {
+		t.Fatalf("toggled FilingCalendar() error = %v", err)
+	}
+	if _, ok := filingByKey(toggled, "vat_return"); ok {
+		t.Fatalf("vat_return present after VAT registration toggle off: %+v", toggled)
+	}
+	if provider.calls != 3 {
+		t.Fatalf("CompanyFacts() calls = %d, want 3", provider.calls)
 	}
 }
 
@@ -215,6 +249,7 @@ func npmFacts() identity.CompanyFacts {
 	return identity.CompanyFacts{
 		IncorporationDate: testDate(2020, time.July, 14),
 		YearEnd:           identity.YearEnd{Month: time.March, Day: 31},
+		IsVATRegistered:   true,
 	}
 }
 

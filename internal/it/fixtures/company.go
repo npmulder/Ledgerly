@@ -111,6 +111,13 @@ func CompanyIncorporationDate(date time.Time) CompanyOverride {
 	}
 }
 
+// CompanyVATRegistered overrides whether the company is registered for VAT.
+func CompanyVATRegistered(registered bool) CompanyOverride {
+	return func(profile *identity.CompanyProfile) {
+		profile.IsVATRegistered = registered
+	}
+}
+
 func npmCompanyProfile() identity.CompanyProfile {
 	return identity.CompanyProfile{
 		TradingName:   "NPM Limited",
@@ -157,9 +164,10 @@ func patchCompanyProfile(t testing.TB, h *harness.Harness, profile identity.Comp
 			"month": int(profile.YearEnd.Month),
 			"day":   profile.YearEnd.Day,
 		},
-		"vat_number":   profile.VATNumber,
-		"bank_details": profile.BankDetails,
-		"shareholders": profile.Shareholders,
+		"vat_number":        profile.VATNumber,
+		"is_vat_registered": profile.IsVATRegistered,
+		"bank_details":      profile.BankDetails,
+		"shareholders":      profile.Shareholders,
 	}
 
 	responseBody, err := doJSONResult(t, h, nethttp.MethodPatch, "/api/identity/profile", body, nethttp.StatusOK)
@@ -206,6 +214,7 @@ type companyProfileResponse struct {
 	RegisteredOffice  identity.RegisteredOffice `json:"registered_office"`
 	IncorporationDate string                    `json:"incorporation_date"`
 	YearEnd           yearEndResponse           `json:"year_end"`
+	IsVATRegistered   bool                      `json:"is_vat_registered"`
 	VATNumber         *string                   `json:"vat_number"`
 	BankDetails       identity.BankDetails      `json:"bank_details"`
 	Shareholders      []identity.Shareholder    `json:"shareholders"`
@@ -235,8 +244,9 @@ func decodeCompanyProfile(body []byte) (identity.CompanyProfile, error) {
 			Month: time.Month(response.YearEnd.Month),
 			Day:   response.YearEnd.Day,
 		},
-		VATNumber:    response.VATNumber,
-		BankDetails:  response.BankDetails,
-		Shareholders: response.Shareholders,
+		IsVATRegistered: response.IsVATRegistered,
+		VATNumber:       response.VATNumber,
+		BankDetails:     response.BankDetails,
+		Shareholders:    response.Shareholders,
 	}, nil
 }

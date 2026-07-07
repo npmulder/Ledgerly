@@ -147,7 +147,7 @@ func newReportsHTTPTestRouter(t *testing.T) http.Handler {
 		ledger.Account{Code: vatControlAccount, Name: "VAT control", Type: ledger.AccountTypeLiability},
 	)
 
-	identityAPI := fakeIdentity{yearEnd: identityYearEnd(time.March, 31)}
+	identityAPI := fakeIdentity{yearEnd: identityYearEnd(time.March, 31), isVATRegistered: true}
 	invoicingAPI := reportsHTTPInvoicing{}
 	clk := clock.NewFake(testDate(2026, time.July, 5))
 	service := New(fakeLedger, identityAPI, invoicingAPI, WithClock(clk))

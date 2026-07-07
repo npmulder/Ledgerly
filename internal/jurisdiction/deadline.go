@@ -29,11 +29,12 @@ type CompanyFacts struct {
 
 // Deadline is one concrete next filing deadline resolved from the active pack.
 type Deadline struct {
-	Key        string
-	Label      string
-	Authority  string
-	DueDate    time.Time
-	Recurrence string
+	Key                     string
+	Label                   string
+	Authority               string
+	DueDate                 time.Time
+	Recurrence              string
+	RequiresVATRegistration bool
 }
 
 type realClock struct{}
@@ -101,11 +102,12 @@ func resolveFilingDeadlines(pack *Pack, facts CompanyFacts, reference time.Time)
 		}
 
 		deadlines = append(deadlines, Deadline{
-			Key:        key,
-			Label:      filingLabel(key),
-			Authority:  filing.Authority,
-			DueDate:    dueDate,
-			Recurrence: recurrence,
+			Key:                     key,
+			Label:                   filingLabel(key),
+			Authority:               filing.Authority,
+			DueDate:                 dueDate,
+			Recurrence:              recurrence,
+			RequiresVATRegistration: filing.RequiresVATRegistration,
 		})
 	}
 
