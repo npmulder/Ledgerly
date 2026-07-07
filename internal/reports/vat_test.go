@@ -47,11 +47,41 @@ func TestVATPositionDueDateMatchesReportedQuarter(t *testing.T) {
 	if want := testDate(2025, time.April, 1); !position.Period.From.Equal(want) {
 		t.Fatalf("Period.From = %s, want %s", position.Period.From.Format(time.DateOnly), want.Format(time.DateOnly))
 	}
+	if position.Status != VATRegistrationRegistered {
+		t.Fatalf("Status = %q, want %q", position.Status, VATRegistrationRegistered)
+	}
+	if position.Figures == nil {
+		t.Fatal("Figures = nil, want registered VAT figures")
+	}
 	if position.DueDate == nil {
 		t.Fatal("DueDate = nil, want current-quarter due date")
 	}
 	if want := testDate(2025, time.July, 30); !position.DueDate.Equal(want) {
 		t.Fatalf("DueDate = %s, want %s", position.DueDate.Format(time.DateOnly), want.Format(time.DateOnly))
+	}
+}
+
+func TestVATPositionNotRegisteredHasNoDueDateOrFigures(t *testing.T) {
+	service := New(
+		nil,
+		fakeIdentity{yearEnd: identityYearEnd(time.March, 31)},
+		nil,
+		WithClock(clock.NewFake(testDate(2025, time.April, 15))),
+	)
+
+	position, err := service.VATPosition(context.Background())
+	if err != nil {
+		t.Fatalf("VATPosition() error = %v", err)
+	}
+
+	if position.Status != VATRegistrationNotRegistered {
+		t.Fatalf("Status = %q, want %q", position.Status, VATRegistrationNotRegistered)
+	}
+	if position.Figures != nil {
+		t.Fatalf("Figures = %#v, want nil", position.Figures)
+	}
+	if position.DueDate != nil {
+		t.Fatalf("DueDate = %s, want nil", position.DueDate.Format(time.DateOnly))
 	}
 }
 

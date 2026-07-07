@@ -69,7 +69,7 @@ func authIsPublicPath(path string) bool {
 	}
 
 	switch path {
-	case "/api/identity/register", "/api/identity/login", "/api/openapi.json":
+	case "/api/identity/register", "/api/identity/register-with-profile", "/api/identity/login", "/api/openapi.json":
 		return true
 	default:
 		return false

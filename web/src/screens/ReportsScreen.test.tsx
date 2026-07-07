@@ -118,6 +118,30 @@ describe("ReportsScreen", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("shows a neutral VAT note without return figures when not registered", async () => {
+    vi.stubGlobal(
+      "fetch",
+      reportsFetch({
+        calendar: calendarFixture([]),
+        vat: notRegisteredVATFixture(),
+      }),
+    );
+
+    renderReportsScreen();
+
+    expect(await screen.findByText("Not VAT registered.")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Box 1 · VAT due on sales"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Box 4 · VAT reclaimed")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Box 6 · Total sales ex-VAT"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Net payable to IoM C&E"),
+    ).not.toBeInTheDocument();
+  });
+
   it("maps filing calendar statuses to teal, amber, and red badge classes", async () => {
     const reportYear = currentReportYear();
     vi.stubGlobal(
@@ -430,6 +454,14 @@ function vatFixture(): ReportsVAT {
     box6: money(1_510_310),
     net_position: money(-4_120),
     period: { from: "2026-04-01", to: "2026-06-30" },
+    status: "registered",
+  };
+}
+
+function notRegisteredVATFixture(): ReportsVAT {
+  return {
+    period: { from: "2026-04-01", to: "2026-06-30" },
+    status: "not_registered",
   };
 }
 

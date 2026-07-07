@@ -373,7 +373,7 @@ func TestPayeeRuleApplicationCountSerializedByTransactionLock(t *testing.T) {
 	rule, err := service.CreatePayeeRule(ctx, PayeeRuleInput{
 		Matcher:     "Race Vendor Ltd",
 		MatchMode:   PayeeRuleMatchExact,
-		AccountCode: "6200-software",
+		AccountCode: "5010-software",
 		CreatedFrom: PayeeRuleCreatedFromManual,
 	})
 	if err != nil {

@@ -2,13 +2,13 @@ package ledger
 
 import httpserver "github.com/npmulder/ledgerly/internal/platform/http"
 
-// OpenAPIFragment returns the ledger module's read-only OpenAPI contribution.
+// OpenAPIFragment returns the ledger module's OpenAPI contribution.
 func OpenAPIFragment() httpserver.OpenAPIFragment {
 	return httpserver.OpenAPIFragment{
 		Tags: []map[string]any{
 			{
 				"name":        "ledger",
-				"description": "Read-only journal, chart-of-accounts, and trial-balance APIs. Ledger write endpoints are deliberately absent; modules post entries through the Go Ledger API inside their own transactions.",
+				"description": "Journal, chart-of-accounts, and trial-balance APIs. Journal posting remains deliberately absent from HTTP; modules post entries through the Go Ledger API inside their own transactions.",
 			},
 		},
 		Paths: map[string]any{
@@ -57,9 +57,43 @@ func OpenAPIFragment() httpserver.OpenAPIFragment {
 					"summary":     "List chart of accounts",
 					"operationId": "ledgerListAccounts",
 					"security":    ledgerSessionSecurity(),
+					"parameters": []map[string]any{
+						{
+							"name":        "type",
+							"in":          "query",
+							"required":    false,
+							"description": "Optionally filter accounts by ledger account type. Use type=expense for recode/category pickers.",
+							"schema":      map[string]any{"type": "string", "enum": []string{"asset", "liability", "equity", "income", "expense"}},
+						},
+					},
 					"responses": map[string]any{
 						"200": ledgerJSONResponseRef("Chart of accounts", "LedgerAccountsResponse"),
+						"400": ledgerProblemResponse("Invalid account query"),
 						"401": ledgerProblemResponse("Authentication required"),
+					},
+				},
+				"post": map[string]any{
+					"tags":        []string{"ledger"},
+					"summary":     "Create an expense account",
+					"description": "Creates a user-managed ledger expense account for Banking recode and DLA expense categories. Only expense accounts can be created through this endpoint.",
+					"operationId": "ledgerCreateExpenseAccount",
+					"security":    ledgerSessionSecurity(),
+					"requestBody": map[string]any{
+						"required": true,
+						"content": map[string]any{
+							"application/json": map[string]any{
+								"schema": map[string]any{"$ref": "#/components/schemas/LedgerCreateExpenseAccountRequest"},
+							},
+						},
+					},
+					"responses": map[string]any{
+						"201": ledgerJSONResponseRef("Expense account created", "LedgerAccount"),
+						"400": ledgerProblemResponse("Invalid JSON request"),
+						"401": ledgerProblemResponse("Authentication required"),
+						"409": ledgerProblemResponse("Account code already exists"),
+						"413": ledgerProblemResponse("Request body too large"),
+						"415": ledgerProblemResponse("Unsupported media type"),
+						"422": ledgerProblemResponse("Account validation failed"),
 					},
 				},
 			},
@@ -200,6 +234,24 @@ func ledgerComponents() map[string]any {
 					"accounts": map[string]any{
 						"type":  "array",
 						"items": map[string]any{"$ref": "#/components/schemas/LedgerAccount"},
+					},
+				},
+				"additionalProperties": false,
+			},
+			"LedgerCreateExpenseAccountRequest": map[string]any{
+				"type":     "object",
+				"required": []string{"code", "name"},
+				"properties": map[string]any{
+					"code": map[string]any{
+						"type":        "string",
+						"description": "Unique ledger account code in ####-slug form.",
+						"pattern":     "^[0-9]{4}-[a-z0-9]+(?:-[a-z0-9]+)*$",
+					},
+					"name": map[string]any{"type": "string"},
+					"type": map[string]any{
+						"type":        "string",
+						"description": "Optional guard value; when present it must be expense.",
+						"enum":        []string{"expense"},
 					},
 				},
 				"additionalProperties": false,

@@ -133,6 +133,7 @@ func npmCompanyProfile() identity.CompanyProfile {
 		},
 		IncorporationDate: fixtureDate(2020, time.July, 14),
 		YearEnd:           identity.YearEnd{Month: time.March, Day: 31},
+		IsVATRegistered:   true,
 		BankDetails: identity.BankDetails{
 			IBAN:     "GB29 REVO 0099 6912 3456 78",
 			BIC:      "REVOGB21",

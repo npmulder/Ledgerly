@@ -276,6 +276,7 @@ function CompanySettings() {
   const profile = profileQuery.data;
   const profileNotFound =
     isApiError(profileQuery.error) && profileQuery.error.status === 404;
+  const isCreatingProfile = profileNotFound;
   const [formDraft, setFormDraft] = useState<CompanyFormState | null>(null);
   const form = formDraft ?? profileToForm(profile);
 
@@ -357,6 +358,12 @@ function CompanySettings() {
   const yearEndSummary = useMemo(() => formatYearEnd(profile), [profile]);
   const vatNumberWithoutRegistration =
     !form.isVATRegistered && form.vatNumber.trim() !== "";
+  let submitLabel = isCreatingProfile
+    ? "Create company profile"
+    : "Save changes";
+  if (saveMutation.isPending) {
+    submitLabel = isCreatingProfile ? "Creating" : "Saving";
+  }
 
   function handleFieldChange(field: keyof CompanyFormState) {
     return (event: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
@@ -435,55 +442,59 @@ function CompanySettings() {
       <Card
         actions={
           <Button disabled={saveMutation.isPending} size="small" type="submit">
-            {saveMutation.isPending ? "Saving" : "Save changes"}
+            {submitLabel}
           </Button>
         }
-        title="Company identity"
+        title={isCreatingProfile ? "Create company profile" : "Company identity"}
       >
         <div className="company-settings">
-          <div className="company-logo-row">
-            <div
-              aria-label="Company logo drop area"
-              className={
-                isDraggingLogo
-                  ? "company-logo-drop company-logo-drop--active"
-                  : "company-logo-drop"
-              }
-              onDragLeave={() => setIsDraggingLogo(false)}
-              onDragOver={(event) => {
-                event.preventDefault();
-                setIsDraggingLogo(true);
-              }}
-              onDrop={handleLogoDrop}
-            >
-              {logoSrc ? (
-                <img alt="Company logo preview" src={logoSrc} />
-              ) : (
-                <span>{companyInitial}</span>
-              )}
-            </div>
-            <div className="company-logo-actions">
-              <Button
-                disabled={logoMutation.isPending}
-                onClick={() => fileInputRef.current?.click()}
-                size="small"
-                type="button"
-                variant="secondary"
+          {isCreatingProfile ? null : (
+            <div className="company-logo-row">
+              <div
+                aria-label="Company logo drop area"
+                className={
+                  isDraggingLogo
+                    ? "company-logo-drop company-logo-drop--active"
+                    : "company-logo-drop"
+                }
+                onDragLeave={() => setIsDraggingLogo(false)}
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  setIsDraggingLogo(true);
+                }}
+                onDrop={handleLogoDrop}
               >
-                {logoMutation.isPending ? "Uploading" : "Replace logo..."}
-              </Button>
-              <input
-                aria-label="Company logo file"
-                accept="image/png,image/jpeg"
-                className="company-logo-input"
-                onChange={handleFileSelection}
-                ref={fileInputRef}
-                type="file"
-              />
-              <span>PNG or JPEG, appears on invoices, vouchers and emails</span>
+                {logoSrc ? (
+                  <img alt="Company logo preview" src={logoSrc} />
+                ) : (
+                  <span>{companyInitial}</span>
+                )}
+              </div>
+              <div className="company-logo-actions">
+                <Button
+                  disabled={logoMutation.isPending}
+                  onClick={() => fileInputRef.current?.click()}
+                  size="small"
+                  type="button"
+                  variant="secondary"
+                >
+                  {logoMutation.isPending ? "Uploading" : "Replace logo..."}
+                </Button>
+                <input
+                  aria-label="Company logo file"
+                  accept="image/png,image/jpeg"
+                  className="company-logo-input"
+                  onChange={handleFileSelection}
+                  ref={fileInputRef}
+                  type="file"
+                />
+                <span>PNG or JPEG, appears on invoices, vouchers and emails</span>
+              </div>
             </div>
-          </div>
-          {logoProblem ? <ProblemPanel problem={logoProblem} /> : null}
+          )}
+          {!isCreatingProfile && logoProblem ? (
+            <ProblemPanel problem={logoProblem} />
+          ) : null}
           {saveProblem ? <ProblemPanel problem={saveProblem} /> : null}
           <div className="company-field-grid">
             <Field label="Trading name">
@@ -511,54 +522,56 @@ function CompanySettings() {
                 value={form.companyNumber}
               />
             </Field>
-            <div className="vat-registration-group company-field-grid__wide">
-              <div className="vat-registration-toggle">
-                <input
-                  aria-describedby="company-vat-registration-helper"
-                  checked={form.isVATRegistered}
-                  id="company-vat-registered"
-                  name="is_vat_registered"
-                  onChange={handleVATRegisteredChange}
-                  type="checkbox"
-                />
-                <div className="vat-registration-toggle__body">
-                  <label
-                    className="ui-field__label"
-                    htmlFor="company-vat-registered"
-                  >
-                    VAT registered
-                  </label>
-                  <span
-                    className="ui-field__helper"
-                    id="company-vat-registration-helper"
-                  >
-                    Use when the company is registered with Isle of Man Customs
-                    & Excise.
-                  </span>
-                </div>
-              </div>
-              <Field
-                helperText={
-                  vatNumberWithoutRegistration ? (
-                    <span className="vat-registration-warning">
-                      VAT number is present while VAT registered is off.
+            {isCreatingProfile ? null : (
+              <div className="vat-registration-group company-field-grid__wide">
+                <div className="vat-registration-toggle">
+                  <input
+                    aria-describedby="company-vat-registration-helper"
+                    checked={form.isVATRegistered}
+                    id="company-vat-registered"
+                    name="is_vat_registered"
+                    onChange={handleVATRegisteredChange}
+                    type="checkbox"
+                  />
+                  <div className="vat-registration-toggle__body">
+                    <label
+                      className="ui-field__label"
+                      htmlFor="company-vat-registered"
+                    >
+                      VAT registered
+                    </label>
+                    <span
+                      className="ui-field__helper"
+                      id="company-vat-registration-helper"
+                    >
+                      Use when the company is registered with Isle of Man
+                      Customs & Excise.
                     </span>
-                  ) : (
-                    "Appears on VAT invoices and reports when registration is on."
-                  )
-                }
-                label="VAT number"
-              >
-                <Input
-                  aria-label="VAT number"
-                  invalid={vatNumberWithoutRegistration}
-                  name="vat_number"
-                  onChange={handleFieldChange("vatNumber")}
-                  placeholder="Not registered"
-                  value={form.vatNumber}
-                />
-              </Field>
-            </div>
+                  </div>
+                </div>
+                <Field
+                  helperText={
+                    vatNumberWithoutRegistration ? (
+                      <span className="vat-registration-warning">
+                        VAT number is present while VAT registered is off.
+                      </span>
+                    ) : (
+                      "Appears on VAT invoices and reports when registration is on."
+                    )
+                  }
+                  label="VAT number"
+                >
+                  <Input
+                    aria-label="VAT number"
+                    invalid={vatNumberWithoutRegistration}
+                    name="vat_number"
+                    onChange={handleFieldChange("vatNumber")}
+                    placeholder="Not registered"
+                    value={form.vatNumber}
+                  />
+                </Field>
+              </div>
+            )}
             <div className="ui-field company-field-grid__wide">
               <span className="ui-field__label" id="registered-office-label">
                 Registered office
@@ -651,12 +664,14 @@ function CompanySettings() {
               </div>
             </div>
           </div>
-          <div className="company-profile-summary">
-            <span>
-              {profile ? addressSummary(profile.registered_office) : ""}
-            </span>
-            <span>{yearEndSummary}</span>
-          </div>
+          {isCreatingProfile ? null : (
+            <div className="company-profile-summary">
+              <span>
+                {profile ? addressSummary(profile.registered_office) : ""}
+              </span>
+              <span>{yearEndSummary}</span>
+            </div>
+          )}
         </div>
       </Card>
     </form>

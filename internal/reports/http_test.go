@@ -62,10 +62,16 @@ func TestHTTPReportsEndpointsReturnDerivedJSON(t *testing.T) {
 	if err := json.Unmarshal(vatResult.Body.Bytes(), &vat); err != nil {
 		t.Fatalf("decode VAT response: %v; body=%s", err, vatResult.Body.String())
 	}
-	assertMoneyResponse(t, vat.Box1, 0)
-	assertMoneyResponse(t, vat.Box4, 4_120)
-	assertMoneyResponse(t, vat.Box6, 1_510_310)
-	assertMoneyResponse(t, vat.NetPosition, -4_120)
+	if vat.Status != VATRegistrationRegistered {
+		t.Fatalf("VAT status = %q, want %q", vat.Status, VATRegistrationRegistered)
+	}
+	if vat.Box1 == nil || vat.Box4 == nil || vat.Box6 == nil || vat.NetPosition == nil {
+		t.Fatalf("VAT boxes = %+v, want registered VAT figures", vat)
+	}
+	assertMoneyResponse(t, *vat.Box1, 0)
+	assertMoneyResponse(t, *vat.Box4, 4_120)
+	assertMoneyResponse(t, *vat.Box6, 1_510_310)
+	assertMoneyResponse(t, *vat.NetPosition, -4_120)
 
 	calendarResult := performReportsRequest(router, http.MethodGet, "/api/reports/calendar", true)
 	if calendarResult.Code != http.StatusOK {
@@ -91,6 +97,26 @@ func TestHTTPReportsEndpointsReturnDerivedJSON(t *testing.T) {
 		t.Fatalf("decode profit-ytd response: %v; body=%s", err, profitResult.Body.String())
 	}
 	assertMoneyResponse(t, profit.Profit, 1_592_470)
+}
+
+func TestHTTPReportsVATNotRegisteredOmitsBoxes(t *testing.T) {
+	loadReportsPack(t, "")
+	router := newReportsHTTPTestRouterWithIdentity(t, fakeIdentity{yearEnd: identityYearEnd(time.March, 31)})
+
+	vatResult := performReportsRequest(router, http.MethodGet, "/api/reports/vat?period=2026-Q2", true)
+	if vatResult.Code != http.StatusOK {
+		t.Fatalf("VAT status = %d, want %d; body=%s", vatResult.Code, http.StatusOK, vatResult.Body.String())
+	}
+	var vat vatResponse
+	if err := json.Unmarshal(vatResult.Body.Bytes(), &vat); err != nil {
+		t.Fatalf("decode VAT response: %v; body=%s", err, vatResult.Body.String())
+	}
+	if vat.Status != VATRegistrationNotRegistered {
+		t.Fatalf("VAT status = %q, want %q", vat.Status, VATRegistrationNotRegistered)
+	}
+	if vat.Box1 != nil || vat.Box4 != nil || vat.Box6 != nil || vat.NetPosition != nil {
+		t.Fatalf("VAT boxes = %+v, want no VAT figures", vat)
+	}
 }
 
 func TestHTTPReportsRoutesRequireAuthentication(t *testing.T) {
@@ -132,6 +158,15 @@ func TestHTTPReportsUnknownTaxYearReturnsBadRequest(t *testing.T) {
 func newReportsHTTPTestRouter(t *testing.T) http.Handler {
 	t.Helper()
 
+	return newReportsHTTPTestRouterWithIdentity(t, fakeIdentity{
+		yearEnd:         identityYearEnd(time.March, 31),
+		isVATRegistered: true,
+	})
+}
+
+func newReportsHTTPTestRouterWithIdentity(t *testing.T, identityAPI fakeIdentity) http.Handler {
+	t.Helper()
+
 	fakeLedger := newFakeLedger(
 		fakeEntry(1, "2026-04-10", "manual", "consulting-income", fakePosting("4000-sales", -100_000)),
 		fakeEntry(2, "2026-05-02", "manual", "software", fakePosting("5010-software", 20_000)),
@@ -147,7 +182,6 @@ func newReportsHTTPTestRouter(t *testing.T) http.Handler {
 		ledger.Account{Code: vatControlAccount, Name: "VAT control", Type: ledger.AccountTypeLiability},
 	)
 
-	identityAPI := fakeIdentity{yearEnd: identityYearEnd(time.March, 31), isVATRegistered: true}
 	invoicingAPI := reportsHTTPInvoicing{}
 	clk := clock.NewFake(testDate(2026, time.July, 5))
 	service := New(fakeLedger, identityAPI, invoicingAPI, WithClock(clk))

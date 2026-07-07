@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/npmulder/ledgerly/internal/ledger"
 	"github.com/npmulder/ledgerly/internal/moneyfx/money"
@@ -492,7 +493,7 @@ func (Store) InsertPayeeRule(ctx context.Context, tx db.Tx, input PayeeRuleInput
 	if err != nil {
 		return PayeeRule{}, err
 	}
-	return scanPayeeRuleRow(tx.QueryRow(ctx, `
+	rule, err := scanPayeeRuleRow(tx.QueryRow(ctx, `
 INSERT INTO payee_rules (matcher, match_mode, account_code, created_from)
 VALUES ($1, $2, $3, $4)
 RETURNING id, matcher, match_mode, account_code, times_applied, last_applied_at, created_from, created_at`,
@@ -501,6 +502,26 @@ RETURNING id, matcher, match_mode, account_code, times_applied, last_applied_at,
 		string(normalized.AccountCode),
 		string(normalized.CreatedFrom),
 	))
+	if err != nil {
+		return PayeeRule{}, payeeRuleWriteError("insert", 0, err)
+	}
+	return rule, nil
+}
+
+func (Store) ListPayeeRules(ctx context.Context, tx db.Tx) ([]PayeeRule, error) {
+	rows, err := tx.Query(ctx, `
+SELECT id, matcher, match_mode, account_code, times_applied, last_applied_at, created_from, created_at
+FROM payee_rules
+ORDER BY times_applied DESC, last_applied_at DESC NULLS LAST, matcher, id`)
+	if err != nil {
+		return nil, fmt.Errorf("banking: list payee rules: %w", err)
+	}
+	defer rows.Close()
+	rules, err := pgx.CollectRows(rows, scanPayeeRule)
+	if err != nil {
+		return nil, fmt.Errorf("banking: collect payee rules: %w", err)
+	}
+	return rules, nil
 }
 
 func (Store) PayeeRule(ctx context.Context, tx db.Tx, id PayeeRuleID) (PayeeRule, error) {
@@ -515,6 +536,149 @@ WHERE id = $1`, int64(id)))
 		return PayeeRule{}, fmt.Errorf("banking: load payee rule %d: %w", id, err)
 	}
 	return rule, nil
+}
+
+func (Store) UpdatePayeeRule(ctx context.Context, tx db.Tx, id PayeeRuleID, input PayeeRuleUpdateInput) (PayeeRule, error) {
+	normalized, err := normalizePayeeRuleUpdateInput(input)
+	if err != nil {
+		return PayeeRule{}, err
+	}
+	rule, err := scanPayeeRuleRow(tx.QueryRow(ctx, `
+UPDATE payee_rules
+SET matcher = $2,
+	match_mode = $3,
+	account_code = $4,
+	times_applied = CASE
+		WHEN matcher <> $2 OR match_mode <> $3 THEN 0
+		ELSE times_applied
+	END,
+	last_applied_at = CASE
+		WHEN matcher <> $2 OR match_mode <> $3 THEN NULL
+		ELSE last_applied_at
+	END
+WHERE id = $1
+RETURNING id, matcher, match_mode, account_code, times_applied, last_applied_at, created_from, created_at`,
+		int64(id),
+		normalized.Matcher,
+		string(normalized.MatchMode),
+		string(normalized.AccountCode),
+	))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return PayeeRule{}, ErrPayeeRuleNotFound
+		}
+		return PayeeRule{}, payeeRuleWriteError("update", id, err)
+	}
+	return rule, nil
+}
+
+type payeeRuleSuggestionTransaction struct {
+	ID    TransactionID
+	Payee string
+}
+
+func (Store) ActivePayeeRuleSuggestionTransactions(ctx context.Context, tx db.Tx, accountCode ledger.AccountCode) ([]payeeRuleSuggestionTransaction, error) {
+	rows, err := tx.Query(ctx, `
+SELECT t.id, t.payee
+FROM transactions t
+JOIN suggestions s ON s.txn_id = t.id
+	AND s.superseded_at IS NULL
+WHERE t.state = 'suggested'
+	AND s.kind = 'payee-rule'
+	AND s.target = $1
+ORDER BY t.id
+FOR UPDATE OF t, s`,
+		string(accountCode),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("banking: list active payee-rule suggestions for account %q: %w", accountCode, err)
+	}
+	defer rows.Close()
+	var txns []payeeRuleSuggestionTransaction
+	for rows.Next() {
+		var (
+			txn   payeeRuleSuggestionTransaction
+			txnID int64
+		)
+		if err := rows.Scan(&txnID, &txn.Payee); err != nil {
+			return nil, fmt.Errorf("banking: scan active payee-rule suggestion transaction: %w", err)
+		}
+		txn.ID = TransactionID(txnID)
+		txns = append(txns, txn)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("banking: collect active payee-rule suggestion transactions: %w", err)
+	}
+	return txns, nil
+}
+
+func (s Store) ClearActivePayeeRuleSuggestion(ctx context.Context, tx db.Tx, txnID TransactionID, actor string) error {
+	actor = strings.TrimSpace(actor)
+	if txnID <= 0 {
+		return fmt.Errorf("banking: suggestion transaction id is required: %w", ErrInvalidSuggestion)
+	}
+	if actor == "" {
+		return fmt.Errorf("banking: suggestion clear actor is required: %w", ErrInvalidSuggestion)
+	}
+	txn, err := s.TransactionForUpdate(ctx, tx, txnID)
+	if err != nil {
+		return err
+	}
+	active, err := s.ActiveSuggestion(ctx, tx, txnID)
+	if err != nil {
+		if errors.Is(err, ErrSuggestionNotFound) {
+			return nil
+		}
+		return err
+	}
+	if active.Kind != SuggestionKindPayeeRule {
+		return nil
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE suggestions
+SET superseded_at = now()
+WHERE id = $1`,
+		int64(active.ID),
+	); err != nil {
+		return fmt.Errorf("banking: clear active payee-rule suggestion for transaction %d: %w", txnID, err)
+	}
+	if txn.State != TransactionStateSuggested {
+		return nil
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE transactions
+SET state = $2
+WHERE id = $1`,
+		int64(txn.ID),
+		string(TransactionStateUnreconciled),
+	); err != nil {
+		return fmt.Errorf("banking: return transaction %d to unreconciled: %w", txn.ID, err)
+	}
+	if _, err := scanStateChangeRow(tx.QueryRow(ctx, `
+INSERT INTO transaction_state_changes (txn_id, from_state, to_state, actor)
+VALUES ($1, $2, $3, $4)
+RETURNING id, txn_id, from_state, to_state, changed_at, actor`,
+		int64(txn.ID),
+		string(TransactionStateSuggested),
+		string(TransactionStateUnreconciled),
+		actor,
+	)); err != nil {
+		return fmt.Errorf("banking: record clear payee-rule suggestion state change for transaction %d: %w", txn.ID, err)
+	}
+	return nil
+}
+
+func (Store) DeletePayeeRule(ctx context.Context, tx db.Tx, id PayeeRuleID) error {
+	tag, err := tx.Exec(ctx, `
+DELETE FROM payee_rules
+WHERE id = $1`, int64(id))
+	if err != nil {
+		return fmt.Errorf("banking: delete payee rule %d: %w", id, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrPayeeRuleNotFound
+	}
+	return nil
 }
 
 func (Store) RecordPayeeRuleApplied(ctx context.Context, tx db.Tx, id PayeeRuleID) (PayeeRule, error) {
@@ -1173,4 +1337,41 @@ func normalizePayeeRuleInput(input PayeeRuleInput) (PayeeRuleInput, error) {
 		return PayeeRuleInput{}, fmt.Errorf("banking: payee rule created_from %q: %w", input.CreatedFrom, ErrInvalidPayeeRule)
 	}
 	return normalized, nil
+}
+
+func normalizePayeeRuleUpdateInput(input PayeeRuleUpdateInput) (PayeeRuleUpdateInput, error) {
+	matchMode := input.MatchMode
+	if matchMode == "" {
+		matchMode = PayeeRuleMatchExact
+	}
+	normalized := PayeeRuleUpdateInput{
+		Matcher:     NormalizePayee(input.Matcher),
+		MatchMode:   matchMode,
+		AccountCode: ledger.AccountCode(strings.TrimSpace(string(input.AccountCode))),
+	}
+	if normalized.Matcher == "" {
+		return PayeeRuleUpdateInput{}, fmt.Errorf("banking: payee rule matcher is required: %w", ErrInvalidPayeeRule)
+	}
+	switch normalized.MatchMode {
+	case PayeeRuleMatchExact, PayeeRuleMatchContains:
+	default:
+		return PayeeRuleUpdateInput{}, fmt.Errorf("banking: payee rule match mode %q: %w", input.MatchMode, ErrInvalidPayeeRule)
+	}
+	if normalized.AccountCode == "" {
+		return PayeeRuleUpdateInput{}, fmt.Errorf("banking: payee rule account code is required: %w", ErrInvalidPayeeRule)
+	}
+	return normalized, nil
+}
+
+func payeeRuleWriteError(action string, id PayeeRuleID, err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) &&
+		pgErr.Code == "23505" &&
+		pgErr.ConstraintName == "payee_rules_matcher_mode_account_uidx" {
+		return fmt.Errorf("banking: duplicate payee rule: %w", ErrInvalidPayeeRule)
+	}
+	if id > 0 {
+		return fmt.Errorf("banking: %s payee rule %d: %w", action, id, err)
+	}
+	return fmt.Errorf("banking: %s payee rule: %w", action, err)
 }
