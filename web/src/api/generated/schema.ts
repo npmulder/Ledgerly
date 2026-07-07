@@ -344,6 +344,126 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/dividends/declare": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Declare a dividend
+         * @description Creates an immutable dividend declaration, posts the retained-earnings and DLA entries, publishes declaration facts, and schedules voucher/minutes rendering.
+         */
+        post: operations["dividendsDeclareAmount"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/dividends/headroom": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Return live dividend headroom
+         * @description Returns the live distributable-reserves calculation lines rendered by the dividends screen.
+         */
+        get: operations["dividendsGetHeadroom"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/dividends/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List dividend declaration history
+         * @description Returns dividend declarations newest first.
+         */
+        get: operations["dividendsGetHistory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/dividends/validate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Validate a candidate dividend amount
+         * @description Returns the validation-strip payload for a candidate dividend. Over-headroom candidates still return 200 with within_headroom=false so clients can render a blocking strip.
+         */
+        post: operations["dividendsValidateAmount"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/dividends/{id}/minutes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Redirect to a stored board minutes PDF asset
+         * @description Redirects to the immutable stored board minutes PDF asset.
+         */
+        get: operations["dividendsGetMinutesPDFByID"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/dividends/{id}/voucher": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Redirect to a stored dividend voucher PDF asset
+         * @description Redirects to the immutable stored dividend voucher PDF asset.
+         */
+        get: operations["dividendsGetVoucherPDFByID"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/dla/balance": {
         parameters: {
             query?: never;
@@ -1513,6 +1633,9 @@ export interface components {
             postal_code: string;
             region: string;
         };
+        DividendsAmountRequest: {
+            amount: components["schemas"]["DividendsMoney"];
+        };
         DividendsCompanySnapshot: {
             company_number: string;
             director_name: string;
@@ -1541,6 +1664,10 @@ export interface components {
         DividendsDocumentPayload: {
             declaration: components["schemas"]["DividendsDeclaration"];
         };
+        DividendsFieldError: {
+            detail: string;
+            pointer: string;
+        };
         DividendsHeadroomBreakdown: {
             /** Format: date-time */
             as_of: string;
@@ -1548,6 +1675,9 @@ export interface components {
             distributable: boolean;
             financial_year: string;
             lines: components["schemas"]["DividendsMoneyLine"][];
+        };
+        DividendsHistoryResponse: {
+            declarations: components["schemas"]["DividendsDeclaration"][];
         };
         DividendsMoney: {
             /** Format: int64 */
@@ -1558,14 +1688,50 @@ export interface components {
             amount: components["schemas"]["DividendsMoney"];
             label: string;
         };
+        DividendsPersonalTaxValidation: {
+            marginal: components["schemas"]["DividendsMoney"];
+            message: string;
+            prior_ytd: components["schemas"]["DividendsMoney"];
+            tax_year: string;
+            with_dividend: components["schemas"]["DividendsMoney"];
+        };
         DividendsShareholderSnapshot: {
             class: string;
             name: string;
             /** Format: int64 */
             shares: number;
         };
+        DividendsValidationProblem: {
+            detail?: string;
+            distributable_total?: components["schemas"]["DividendsMoney"];
+            errors: components["schemas"]["DividendsFieldError"][];
+            /** Format: uri-reference */
+            instance?: string;
+            /** Format: int32 */
+            status: number;
+            title: string;
+            /** Format: uri-reference */
+            type: string;
+        } & {
+            [key: string]: unknown;
+        };
+        DividendsValidationResult: {
+            amount: components["schemas"]["DividendsMoney"];
+            distributable: boolean;
+            distributable_total: components["schemas"]["DividendsMoney"];
+            headroom: components["schemas"]["DividendsHeadroomBreakdown"];
+            personal_tax: components["schemas"]["DividendsPersonalTaxValidation"];
+            withholding: components["schemas"]["DividendsWithholdingValidation"];
+            within_headroom: boolean;
+        };
         DividendsWithholdingSnapshot: {
             note: string;
+            policy: string;
+            tax_year: string;
+        };
+        DividendsWithholdingValidation: {
+            applies: boolean;
+            informational: boolean;
             policy: string;
             tax_year: string;
         };
@@ -3036,7 +3202,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/problem+json": components["schemas"]["ValidationProblem"];
+                    "application/problem+json": components["schemas"]["DividendsValidationProblem"];
                 };
             };
         };
@@ -3075,7 +3241,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/problem+json": components["schemas"]["ValidationProblem"];
+                    "application/problem+json": components["schemas"]["DividendsValidationProblem"];
                 };
             };
         };
@@ -3124,7 +3290,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/problem+json": components["schemas"]["ValidationProblem"];
+                    "application/problem+json": components["schemas"]["DividendsValidationProblem"];
                 };
             };
         };
@@ -3163,7 +3329,263 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/problem+json": components["schemas"]["ValidationProblem"];
+                    "application/problem+json": components["schemas"]["DividendsValidationProblem"];
+                };
+            };
+        };
+    };
+    dividendsDeclareAmount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DividendsAmountRequest"];
+            };
+        };
+        responses: {
+            /** @description Dividend declaration created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DividendsDeclaration"];
+                };
+            };
+            /** @description Malformed dividend amount request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Dividend amount request body is too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Dividend declaration failed validation */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["DividendsValidationProblem"];
+                };
+            };
+        };
+    };
+    dividendsGetHeadroom: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Dividend headroom breakdown */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DividendsHeadroomBreakdown"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    dividendsGetHistory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Dividend declaration history */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DividendsHistoryResponse"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    dividendsValidateAmount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DividendsAmountRequest"];
+            };
+        };
+        responses: {
+            /** @description Dividend validation strip payload */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DividendsValidationResult"];
+                };
+            };
+            /** @description Malformed dividend amount request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Dividend amount request body is too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Dividend amount validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["DividendsValidationProblem"];
+                };
+            };
+        };
+    };
+    dividendsGetMinutesPDFByID: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Redirect to stored board minutes PDF asset */
+            302: {
+                headers: {
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Board minutes PDF asset was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["DividendsValidationProblem"];
+                };
+            };
+        };
+    };
+    dividendsGetVoucherPDFByID: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Redirect to stored voucher PDF asset */
+            302: {
+                headers: {
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Voucher PDF asset was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["DividendsValidationProblem"];
                 };
             };
         };
