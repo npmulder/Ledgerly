@@ -1,0 +1,46 @@
+{
+  "matches": [
+    {
+      "confidence": "number",
+      "explanation": "string",
+      "kind": "string",
+      "suggestion_id": "number",
+      "target": {
+        "client": "string",
+        "id": "string",
+        "invoice_number": "string",
+        "times_applied": "null",
+        "type": "string"
+      },
+      "transaction": {
+        "account_id": "number",
+        "amount": {
+          "amount_minor": "number",
+          "currency": "string"
+        },
+        "created_at": "string",
+        "date": "string",
+        "id": "number",
+        "import_batch_id": "number",
+        "payee": "string",
+        "provider_meta": {
+          "Amount": "string",
+          "Balance": "string",
+          "Currency": "string",
+          "Date completed (UTC)": "string",
+          "Date started (UTC)": "string",
+          "Description": "string",
+          "Fee": "string",
+          "ID": "string",
+          "Reference": "string",
+          "State": "string",
+          "Type": "string"
+        },
+        "reference": "string",
+        "state": "string"
+      }
+    }
+  ],
+  "rules": [],
+  "suggestions": []
+}

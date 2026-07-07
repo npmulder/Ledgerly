@@ -1,0 +1,8 @@
+{
+  "fetched_at": "string",
+  "from": "string",
+  "rate": "string",
+  "rate_date": "string",
+  "source": "string",
+  "to": "string"
+}

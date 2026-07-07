@@ -1,0 +1,30 @@
+{
+  "entries": [
+    {
+      "amount": {
+        "amount_minor": "number",
+        "currency": "string"
+      },
+      "balance_side": "string",
+      "created_at": "string",
+      "date": "string",
+      "description": "string",
+      "drawn": {
+        "amount_minor": "number",
+        "currency": "string"
+      },
+      "id": "number",
+      "kind": "string",
+      "owed_to_you": {
+        "amount_minor": "number",
+        "currency": "string"
+      },
+      "running_balance": {
+        "amount_minor": "number",
+        "currency": "string"
+      },
+      "source_ref": "string"
+    }
+  ],
+  "next_cursor": "null"
+}

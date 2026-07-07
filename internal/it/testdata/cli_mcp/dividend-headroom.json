@@ -1,0 +1,18 @@
+{
+  "as_of": "string",
+  "available": {
+    "amount": "number",
+    "currency": "string"
+  },
+  "distributable": "boolean",
+  "financial_year": "string",
+  "lines": [
+    {
+      "amount": {
+        "amount": "number",
+        "currency": "string"
+      },
+      "label": "string"
+    }
+  ]
+}
