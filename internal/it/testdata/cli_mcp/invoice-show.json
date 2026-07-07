@@ -1,0 +1,50 @@
+{
+  "client_id": "string",
+  "created_at": "string",
+  "currency": "string",
+  "due_date": "string",
+  "id": "string",
+  "issue_date": "string",
+  "lines": [
+    {
+      "description": "string",
+      "id": "string",
+      "invoice_id": "string",
+      "line_total": {
+        "amount": "number",
+        "currency": "string"
+      },
+      "position": "number",
+      "qty": "string",
+      "unit_price": {
+        "amount": "number",
+        "currency": "string"
+      }
+    }
+  ],
+  "lock_id": "string",
+  "number": "string",
+  "pdf_asset": "null",
+  "sent_at": "string",
+  "settled_amount": "null",
+  "settled_date": "null",
+  "settlement_txn_ref": "null",
+  "status": "string",
+  "totals": {
+    "approx_gbp": "null",
+    "subtotal": {
+      "amount": "number",
+      "currency": "string"
+    },
+    "total": {
+      "amount": "number",
+      "currency": "string"
+    },
+    "vat": {
+      "amount": "number",
+      "currency": "string"
+    }
+  },
+  "updated_at": "string",
+  "vat_treatment": "string"
+}

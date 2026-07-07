@@ -1,0 +1,6 @@
+{
+  "reachable": "boolean",
+  "scope": "string",
+  "token_name": "string",
+  "url": "string"
+}

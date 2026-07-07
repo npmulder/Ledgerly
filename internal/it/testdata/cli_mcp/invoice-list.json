@@ -1,0 +1,70 @@
+{
+  "counts": [
+    {
+      "count": "number",
+      "status": "string"
+    }
+  ],
+  "invoices": [
+    {
+      "client_id": "string",
+      "client_name": "string",
+      "created_at": "string",
+      "currency": "string",
+      "days_overdue": "number",
+      "due_date": "string",
+      "id": "string",
+      "issue_date": "string",
+      "number": "string",
+      "status": "string",
+      "totals": {
+        "approx_gbp": [
+          "null",
+          {
+            "amount": {
+              "amount": "number",
+              "currency": "string"
+            },
+            "as_of": "string",
+            "locked": "boolean",
+            "rate": {
+              "from": "string",
+              "rate_date": "string",
+              "source": "string",
+              "to": "string",
+              "value": "string"
+            }
+          }
+        ],
+        "subtotal": {
+          "amount": "number",
+          "currency": "string"
+        },
+        "total": {
+          "amount": "number",
+          "currency": "string"
+        },
+        "vat": {
+          "amount": "number",
+          "currency": "string"
+        }
+      },
+      "updated_at": "string"
+    }
+  ],
+  "limit": "number",
+  "offset": "number",
+  "total_count": "number",
+  "totals": {
+    "subtotals": [
+      {
+        "amount": "number",
+        "currency": "string"
+      }
+    ],
+    "total_gbp": {
+      "amount": "number",
+      "currency": "string"
+    }
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "box1": {
+    "amount_minor": "number",
+    "currency": "string"
+  },
+  "box4": {
+    "amount_minor": "number",
+    "currency": "string"
+  },
+  "box6": {
+    "amount_minor": "number",
+    "currency": "string"
+  },
+  "net_position": {
+    "amount_minor": "number",
+    "currency": "string"
+  },
+  "period": {
+    "from": "string",
+    "to": "string"
+  }
+}

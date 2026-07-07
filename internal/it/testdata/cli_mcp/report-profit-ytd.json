@@ -1,0 +1,7 @@
+{
+  "profit": {
+    "amount_minor": "number",
+    "currency": "string"
+  },
+  "tax_year": "string"
+}

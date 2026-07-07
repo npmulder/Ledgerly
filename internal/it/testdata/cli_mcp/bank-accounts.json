@@ -1,0 +1,13 @@
+{
+  "accounts": [
+    {
+      "created_at": "string",
+      "currency": "string",
+      "id": "number",
+      "ledger_account_code": "string",
+      "name": "string",
+      "provider": "string",
+      "unreconciled_count": "number"
+    }
+  ]
+}

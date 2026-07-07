@@ -1,0 +1,40 @@
+{
+  "clients": [
+    {
+      "address": {
+        "country": "string",
+        "line1": "string",
+        "line2": "string",
+        "locality": "string",
+        "postal_code": "string",
+        "region": "string"
+      },
+      "archived_at": "null",
+      "created_at": "string",
+      "day_rate": [
+        "null",
+        {
+          "amount_minor": "number",
+          "currency": "string"
+        }
+      ],
+      "default_currency": "string",
+      "email": "string",
+      "id": "string",
+      "name": "string",
+      "retainer_amount": [
+        {
+          "amount_minor": "number",
+          "currency": "string"
+        },
+        "null"
+      ],
+      "terms_days": "number",
+      "vat_number": [
+        "string",
+        "null"
+      ],
+      "vat_treatment": "string"
+    }
+  ]
+}

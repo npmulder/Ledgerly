@@ -1,0 +1,12 @@
+{
+  "filings": [
+    {
+      "authority": "string",
+      "days_until": "number",
+      "due_date": "string",
+      "key": "string",
+      "label": "string",
+      "status": "string"
+    }
+  ]
+}

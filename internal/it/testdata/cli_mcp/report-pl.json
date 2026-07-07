@@ -1,0 +1,61 @@
+{
+  "corporate_tax": {
+    "amount": {
+      "amount_minor": "number",
+      "currency": "string"
+    },
+    "label": "string",
+    "rate": "string",
+    "tax_year": "string"
+  },
+  "expense_total": {
+    "amount_minor": "number",
+    "currency": "string"
+  },
+  "expenses": [
+    {
+      "account_code": "string",
+      "account_name": "string",
+      "amount": {
+        "amount_minor": "number",
+        "currency": "string"
+      }
+    }
+  ],
+  "income": [
+    {
+      "amount": {
+        "amount_minor": "number",
+        "currency": "string"
+      },
+      "client_id": "string",
+      "client_name": "string",
+      "currency": "string",
+      "label": "string"
+    }
+  ],
+  "income_total": {
+    "amount_minor": "number",
+    "currency": "string"
+  },
+  "net_profit": {
+    "amount_minor": "number",
+    "currency": "string"
+  },
+  "period": {
+    "from": "string",
+    "to": "string"
+  },
+  "profit_before_tax": {
+    "amount_minor": "number",
+    "currency": "string"
+  },
+  "realised_fx_gains": {
+    "amount": {
+      "amount_minor": "number",
+      "currency": "string"
+    },
+    "label": "string"
+  },
+  "tax_year": "string"
+}
