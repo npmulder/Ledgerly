@@ -141,6 +141,41 @@ func TestProfitAndLossCorporateTaxLineUsesActivePackRate(t *testing.T) {
 	assertReportMoney(t, pl.NetProfit, 90_000)
 }
 
+func TestProfitAndLossUsesOneLedgerSnapshotDuringInterleavedLedgerWrite(t *testing.T) {
+	loadReportsPack(t, "")
+	ctx := context.Background()
+	fakeLedger := newFakeLedger(
+		fakeEntry(1, "2025-05-01", "manual", "initial-income", fakePosting("4000-sales", -100_000)),
+	)
+	fakeLedger.afterBalances = func() {
+		fakeLedger.addEntry(fakeEntry(2, "2025-05-02", "manual", "interleaved-income", fakePosting("4000-sales", -25_000)))
+	}
+	service := New(
+		fakeLedger,
+		fakeIdentity{yearEnd: identity.YearEnd{Month: time.March, Day: 31}},
+		fakeInvoicing{},
+	)
+
+	pl, err := service.ProfitAndLoss(ctx, Period{
+		From: time.Date(2025, time.May, 1, 0, 0, 0, 0, time.UTC),
+		To:   time.Date(2025, time.May, 31, 0, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("ProfitAndLoss() error = %v", err)
+	}
+	if fakeLedger.snapshotCalls != 1 {
+		t.Fatalf("ledger snapshot calls = %d, want 1", fakeLedger.snapshotCalls)
+	}
+	if len(fakeLedger.entries) != 2 {
+		t.Fatalf("live ledger entries = %d, want interleaved write to be recorded", len(fakeLedger.entries))
+	}
+	assertReportMoney(t, pl.IncomeTotal, 100_000)
+	if len(pl.Income) != 1 {
+		t.Fatalf("Income = %#v, want one line from the original snapshot", pl.Income)
+	}
+	assertReportMoney(t, pl.Income[0].Amount, 100_000)
+}
+
 func loadReportsPack(t *testing.T, corporateRateLine string) {
 	t.Helper()
 
@@ -163,8 +198,10 @@ func loadReportsPack(t *testing.T, corporateRateLine string) {
 type fakeLedger struct {
 	accounts         []ledger.Account
 	entries          []ledger.JournalEntry
+	afterBalances    func()
 	lastBalancesFrom time.Time
 	lastBalancesTo   time.Time
+	snapshotCalls    int
 }
 
 func newFakeLedger(entries ...ledger.JournalEntry) *fakeLedger {
@@ -182,20 +219,121 @@ func newFakeLedger(entries ...ledger.JournalEntry) *fakeLedger {
 	return &fakeLedger{accounts: accounts, entries: entries}
 }
 
+func (f *fakeLedger) ReadSnapshot(ctx context.Context, fn ledger.ReadSnapshotFunc) error {
+	f.snapshotCalls++
+	snapshot := fakeLedgerSnapshot{
+		accounts: cloneFakeAccounts(f.accounts),
+		entries:  cloneFakeEntries(f.entries),
+		recordBalances: func(from time.Time, to time.Time) {
+			f.lastBalancesFrom = from
+			f.lastBalancesTo = to
+		},
+		afterBalances: f.runAfterBalances,
+	}
+	return fn(ctx, snapshot)
+}
+
 func (f *fakeLedger) Accounts(context.Context) ([]ledger.Account, error) {
-	return append([]ledger.Account(nil), f.accounts...), nil
+	return cloneFakeAccounts(f.accounts), nil
 }
 
 func (f *fakeLedger) BalancesByType(_ context.Context, from time.Time, to time.Time) ([]ledger.AccountBalance, error) {
 	f.lastBalancesFrom = from
 	f.lastBalancesTo = to
+	balances, err := fakeBalancesByType(f.accounts, f.entries, from, to)
+	if err != nil {
+		return nil, err
+	}
+	f.runAfterBalances()
+	return balances, nil
+}
+
+func (f *fakeLedger) Entries(_ context.Context, filter ledger.EntryFilter) ([]ledger.JournalEntry, error) {
+	var from, to time.Time
+	if filter.From != nil {
+		from = *filter.From
+	}
+	if filter.To != nil {
+		to = *filter.To
+	}
+	entries := fakeEntriesInWindow(f.entries, from, to, filter.After)
+	if filter.Limit > 0 && len(entries) > filter.Limit {
+		entries = entries[:filter.Limit]
+	}
+	return cloneFakeEntries(entries), nil
+}
+
+func (f *fakeLedger) addEntry(entry ledger.JournalEntry) {
+	f.entries = append(f.entries, entry)
+	sort.Slice(f.entries, func(i, j int) bool {
+		if f.entries[i].Date.Equal(f.entries[j].Date) {
+			return f.entries[i].ID < f.entries[j].ID
+		}
+		return f.entries[i].Date.Before(f.entries[j].Date)
+	})
+}
+
+func (f *fakeLedger) runAfterBalances() {
+	if f.afterBalances == nil {
+		return
+	}
+	hook := f.afterBalances
+	f.afterBalances = nil
+	hook()
+}
+
+type fakeLedgerSnapshot struct {
+	accounts       []ledger.Account
+	entries        []ledger.JournalEntry
+	recordBalances func(time.Time, time.Time)
+	afterBalances  func()
+}
+
+func (s fakeLedgerSnapshot) AccountBalance(context.Context, ledger.AccountCode, time.Time) (ledger.AccountBalance, error) {
+	return ledger.AccountBalance{}, errors.New("unexpected account balance lookup")
+}
+
+func (s fakeLedgerSnapshot) Accounts(context.Context) ([]ledger.Account, error) {
+	return cloneFakeAccounts(s.accounts), nil
+}
+
+func (s fakeLedgerSnapshot) BalancesByType(_ context.Context, from time.Time, to time.Time) ([]ledger.AccountBalance, error) {
+	if s.recordBalances != nil {
+		s.recordBalances(from, to)
+	}
+	balances, err := fakeBalancesByType(s.accounts, s.entries, from, to)
+	if err != nil {
+		return nil, err
+	}
+	if s.afterBalances != nil {
+		s.afterBalances()
+	}
+	return balances, nil
+}
+
+func (s fakeLedgerSnapshot) Entries(_ context.Context, filter ledger.EntryFilter) ([]ledger.JournalEntry, error) {
+	var from, to time.Time
+	if filter.From != nil {
+		from = *filter.From
+	}
+	if filter.To != nil {
+		to = *filter.To
+	}
+	entries := fakeEntriesInWindow(s.entries, from, to, filter.After)
+	if filter.Limit > 0 && len(entries) > filter.Limit {
+		entries = entries[:filter.Limit]
+	}
+	return cloneFakeEntries(entries), nil
+}
+
+func fakeBalancesByType(accounts []ledger.Account, entries []ledger.JournalEntry, from time.Time, to time.Time) ([]ledger.AccountBalance, error) {
 	byCode := map[ledger.AccountCode]ledger.Account{}
-	for _, account := range f.accounts {
+	for _, account := range accounts {
 		byCode[account.Code] = account
 	}
 	income := money.Zero(gbpCurrency)
 	expense := money.Zero(gbpCurrency)
-	for _, entry := range f.entriesInWindow(from, to, nil) {
+	for _, entry := range fakeEntriesInWindow(entries, from, to, nil) {
 		for _, posting := range entry.Postings {
 			account := byCode[posting.AccountCode]
 			switch account.Type {
@@ -220,24 +358,9 @@ func (f *fakeLedger) BalancesByType(_ context.Context, from time.Time, to time.T
 	}, nil
 }
 
-func (f *fakeLedger) Entries(_ context.Context, filter ledger.EntryFilter) ([]ledger.JournalEntry, error) {
-	var from, to time.Time
-	if filter.From != nil {
-		from = *filter.From
-	}
-	if filter.To != nil {
-		to = *filter.To
-	}
-	entries := f.entriesInWindow(from, to, filter.After)
-	if filter.Limit > 0 && len(entries) > filter.Limit {
-		entries = entries[:filter.Limit]
-	}
-	return append([]ledger.JournalEntry(nil), entries...), nil
-}
-
-func (f *fakeLedger) entriesInWindow(from time.Time, to time.Time, after *ledger.EntryCursor) []ledger.JournalEntry {
+func fakeEntriesInWindow(entries []ledger.JournalEntry, from time.Time, to time.Time, after *ledger.EntryCursor) []ledger.JournalEntry {
 	var out []ledger.JournalEntry
-	for _, entry := range f.entries {
+	for _, entry := range entries {
 		if !from.IsZero() && entry.Date.Before(from) {
 			continue
 		}
@@ -248,6 +371,18 @@ func (f *fakeLedger) entriesInWindow(from time.Time, to time.Time, after *ledger
 			continue
 		}
 		out = append(out, entry)
+	}
+	return out
+}
+
+func cloneFakeAccounts(accounts []ledger.Account) []ledger.Account {
+	return append([]ledger.Account(nil), accounts...)
+}
+
+func cloneFakeEntries(entries []ledger.JournalEntry) []ledger.JournalEntry {
+	out := append([]ledger.JournalEntry(nil), entries...)
+	for i := range out {
+		out[i].Postings = append([]ledger.Posting(nil), out[i].Postings...)
 	}
 	return out
 }
