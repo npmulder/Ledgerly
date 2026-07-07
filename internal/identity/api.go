@@ -35,6 +35,7 @@ type Identity interface {
 	ReplaceLogo(context.Context, LogoUpload) (AssetID, error)
 	Asset(context.Context, AssetID) (Asset, error)
 	CompanyFacts(context.Context) (CompanyFacts, error)
+	IsVATRegistered(context.Context) (bool, error)
 }
 
 // CompanyProfile is the canonical single-row company identity record.
@@ -45,6 +46,7 @@ type CompanyProfile struct {
 	RegisteredOffice  RegisteredOffice
 	IncorporationDate time.Time
 	YearEnd           YearEnd
+	IsVATRegistered   bool
 	VATNumber         *string
 	BankDetails       BankDetails
 	Shareholders      []Shareholder
@@ -110,6 +112,7 @@ type YearEnd struct {
 type CompanyFacts struct {
 	IncorporationDate time.Time
 	YearEnd           YearEnd
+	IsVATRegistered   bool
 }
 
 // UpdateProfilePatch is a partial company-profile update.
@@ -120,6 +123,7 @@ type UpdateProfilePatch struct {
 	RegisteredOffice  *RegisteredOffice
 	IncorporationDate *string
 	YearEnd           *YearEnd
+	IsVATRegistered   *bool
 	VATNumber         *string
 	BankDetails       *BankDetails
 	Shareholders      *[]Shareholder

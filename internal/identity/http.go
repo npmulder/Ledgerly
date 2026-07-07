@@ -113,6 +113,7 @@ type profileResponse struct {
 	RegisteredOffice  RegisteredOffice `json:"registered_office"`
 	IncorporationDate string           `json:"incorporation_date"`
 	YearEnd           yearEndResponse  `json:"year_end"`
+	IsVATRegistered   bool             `json:"is_vat_registered"`
 	VATNumber         *string          `json:"vat_number"`
 	BankDetails       BankDetails      `json:"bank_details"`
 	Shareholders      []Shareholder    `json:"shareholders"`
@@ -540,6 +541,16 @@ func decodeProfilePatch(w nethttp.ResponseWriter, r *nethttp.Request) (UpdatePro
 				continue
 			}
 			patch.YearEnd = &YearEnd{Month: time.Month(yearEnd.Month), Day: yearEnd.Day}
+		case "is_vat_registered":
+			if rejectJSONNull(value, "/is_vat_registered", "must be a boolean", &fieldErrors) {
+				continue
+			}
+			var isVATRegistered bool
+			if err := decodeStrict(value, &isVATRegistered); err != nil {
+				fieldErrors = append(fieldErrors, fieldError{Pointer: "/is_vat_registered", Detail: "must be a boolean"})
+				continue
+			}
+			patch.IsVATRegistered = &isVATRegistered
 		case "vat_number":
 			if isJSONNull(value) {
 				vatNumber := ""
@@ -835,9 +846,10 @@ func profileToResponse(profile CompanyProfile) profileResponse {
 			Month: int(profile.YearEnd.Month),
 			Day:   profile.YearEnd.Day,
 		},
-		VATNumber:    cloneStringPointer(profile.VATNumber),
-		BankDetails:  profile.BankDetails,
-		Shareholders: append([]Shareholder{}, profile.Shareholders...),
+		IsVATRegistered: profile.IsVATRegistered,
+		VATNumber:       cloneStringPointer(profile.VATNumber),
+		BankDetails:     profile.BankDetails,
+		Shareholders:    append([]Shareholder{}, profile.Shareholders...),
 	}
 	if profile.LogoAssetID != nil {
 		id := *profile.LogoAssetID

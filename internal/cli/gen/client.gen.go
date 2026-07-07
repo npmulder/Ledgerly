@@ -1015,6 +1015,7 @@ type IdentityProfile struct {
 	BankDetails       BankDetails         `json:"bank_details"`
 	CompanyNumber     string              `json:"company_number"`
 	IncorporationDate openapi_types.Date  `json:"incorporation_date"`
+	IsVatRegistered   bool                `json:"is_vat_registered"`
 	LegalName         string              `json:"legal_name"`
 	LogoAssetId       *openapi_types.UUID `json:"logo_asset_id"`
 	LogoAssetUrl      *string             `json:"logo_asset_url"`
@@ -1030,6 +1031,7 @@ type IdentityProfilePatch struct {
 	BankDetails       *BankDetails        `json:"bank_details,omitempty"`
 	CompanyNumber     *string             `json:"company_number,omitempty"`
 	IncorporationDate *openapi_types.Date `json:"incorporation_date,omitempty"`
+	IsVatRegistered   *bool               `json:"is_vat_registered,omitempty"`
 	LegalName         *string             `json:"legal_name,omitempty"`
 	LogoAssetId       *openapi_types.UUID `json:"logo_asset_id"`
 	RegisteredOffice  *RegisteredOffice   `json:"registered_office,omitempty"`
