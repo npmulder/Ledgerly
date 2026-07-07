@@ -1134,6 +1134,55 @@
   color: var(--color-danger);
 }
 
+.banking-account-modal-backdrop {
+  position: fixed;
+  z-index: 40;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgb(15 23 42 / 45%);
+}
+
+.banking-account-modal {
+  display: grid;
+  width: min(460px, 100%);
+  gap: 16px;
+  padding: 22px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-card);
+  box-shadow: var(--shadow-elevated);
+}
+
+.banking-account-modal h2 {
+  margin: 0;
+  color: var(--color-text);
+  font-size: var(--type-card-title-size);
+  line-height: var(--type-card-title-line-height);
+}
+
+.banking-account-modal__fields {
+  display: grid;
+  gap: 12px;
+}
+
+.banking-account-modal__error {
+  padding: 10px 12px;
+  border: 1px solid var(--color-danger-bg);
+  border-radius: var(--radius-input);
+  background: var(--color-danger-row-tint);
+  color: var(--color-danger);
+  font-size: var(--type-secondary-size);
+  font-weight: 700;
+}
+
+.banking-account-modal__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
 .banking-advisor-strip:empty {
   display: none;
 }
@@ -1170,6 +1219,15 @@
   box-shadow: inset 4px 0 0 var(--color-teal);
 }
 
+.banking-account-card--add {
+  border-style: dashed;
+  background: var(--color-panel);
+}
+
+.banking-account-card--add:hover {
+  background: var(--color-navy-tint);
+}
+
 .banking-account-card__meta,
 .banking-account-card__side {
   display: grid;
@@ -1190,6 +1248,32 @@
 
 .banking-account-card__side {
   justify-items: end;
+}
+
+.banking-account-card__add-icon {
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--color-border-input);
+  border-radius: var(--radius-pill);
+  background: var(--color-card);
+  color: var(--color-navy);
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.banking-empty-state__content {
+  display: grid;
+  gap: 12px;
+  justify-items: center;
+}
+
+.banking-empty-state__actions {
+  display: flex;
+  justify-content: center;
 }
 
 .banking-section-heading {
@@ -3216,6 +3300,15 @@ article.ui-stat-card.dashboard-stat-card--unavailable {
   .banking-receipt-controls .ui-button,
   .banking-receipt-link {
     width: 100%;
+  }
+
+  .banking-account-modal__actions,
+  .banking-account-modal__actions .ui-button {
+    width: 100%;
+  }
+
+  .banking-account-modal__actions {
+    flex-direction: column-reverse;
   }
 
   .banking-recode,
