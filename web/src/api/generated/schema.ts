@@ -961,7 +961,11 @@ export interface paths {
         /** List chart of accounts */
         get: operations["ledgerListAccounts"];
         put?: never;
-        post?: never;
+        /**
+         * Create an expense account
+         * @description Creates a user-managed ledger expense account for Banking recode and DLA expense categories. Only expense accounts can be created through this endpoint.
+         */
+        post: operations["ledgerCreateExpenseAccount"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2126,6 +2130,16 @@ export interface components {
         };
         LedgerAccountsResponse: {
             accounts: components["schemas"]["LedgerAccount"][];
+        };
+        LedgerCreateExpenseAccountRequest: {
+            /** @description Unique ledger account code in ####-slug form. */
+            code: string;
+            name: string;
+            /**
+             * @description Optional guard value; when present it must be expense.
+             * @enum {string}
+             */
+            type?: "expense";
         };
         LedgerEntriesResponse: {
             entries: components["schemas"]["LedgerEntry"][];
@@ -5140,7 +5154,10 @@ export interface operations {
     };
     ledgerListAccounts: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Optionally filter accounts by ledger account type. Use type=expense for recode/category pickers. */
+                type?: "asset" | "liability" | "equity" | "income" | "expense";
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -5156,8 +5173,95 @@ export interface operations {
                     "application/json": components["schemas"]["LedgerAccountsResponse"];
                 };
             };
+            /** @description Invalid account query */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description Authentication required */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    ledgerCreateExpenseAccount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LedgerCreateExpenseAccountRequest"];
+            };
+        };
+        responses: {
+            /** @description Expense account created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LedgerAccount"];
+                };
+            };
+            /** @description Invalid JSON request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Account code already exists */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Request body too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unsupported media type */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Account validation failed */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

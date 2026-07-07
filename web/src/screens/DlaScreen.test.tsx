@@ -11,6 +11,7 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { DLABalance, DLAEntry, DLALedger } from "@/api/dla";
+import type { LedgerAccount } from "@/api/ledger";
 import { DlaScreen } from "@/screens/DlaScreen";
 
 afterEach(() => {
@@ -142,7 +143,7 @@ describe("DlaScreen", () => {
 
     expect(screen.getByLabelText("Category")).toBeInTheDocument();
     expect(
-      screen.getByRole("option", { name: "Software" }),
+      await screen.findByRole("option", { name: "Software" }),
     ).toBeInTheDocument();
   });
 
@@ -184,6 +185,49 @@ describe("DlaScreen", () => {
       kind: "repayment",
     });
   });
+
+  it("creates an expense category and posts an expense-owed entry with it", async () => {
+    const user = userEvent.setup();
+    const fetchImpl = vi.fn(dlaFetchHandler());
+    vi.stubGlobal("fetch", fetchImpl);
+
+    renderDlaScreen();
+
+    await user.selectOptions(
+      await screen.findByLabelText("Entry kind"),
+      "expense-owed",
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "New category" }),
+    );
+    await user.type(screen.getByLabelText("Code"), "5040-training");
+    await user.type(screen.getByLabelText("Name"), "Training");
+    await user.click(screen.getByRole("button", { name: "Create" }));
+
+    expect(
+      await screen.findByRole("option", { name: "Training" }),
+    ).toBeInTheDocument();
+    await user.type(screen.getByLabelText("Amount"), "42.00");
+    await user.type(screen.getByLabelText("Description"), "Training course");
+    await user.click(
+      screen.getAllByRole("button", { name: "Record entry" })[1],
+    );
+
+    await waitFor(() => {
+      const postCall = fetchImpl.mock.calls.find(
+        ([input, init]) =>
+          pathFromRequest(input) === "/api/dla/entries" &&
+          init?.method === "POST",
+      );
+      expect(postCall).toBeDefined();
+      expect(JSON.parse(String(postCall?.[1]?.body))).toMatchObject({
+        amount: { amount_minor: 4200, currency: "GBP" },
+        description: "Training course",
+        expense_category: "5040-training",
+        kind: "expense-owed",
+      });
+    });
+  });
 });
 
 function renderDlaScreen() {
@@ -209,11 +253,13 @@ function dlaFetch(overrides: Partial<DlaFixtures> = {}) {
 
 type DlaFixtures = {
   balance: DLABalance;
+  expenseAccounts: LedgerAccount[];
   ledger: DLALedger;
 };
 
 function dlaFetchHandler(overrides: Partial<DlaFixtures> = {}) {
   let balance = overrides.balance ?? creditBalance();
+  let expenseAccounts = overrides.expenseAccounts ?? expenseAccountsFixture();
   let ledger = overrides.ledger ?? creditLedger();
 
   return async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -226,6 +272,15 @@ function dlaFetchHandler(overrides: Partial<DlaFixtures> = {}) {
     }
     if (path === "/api/dla/ledger") {
       return jsonResponse(ledger);
+    }
+    if (path === "/api/ledger/accounts" && (init?.method ?? "GET") === "GET") {
+      return jsonResponse({ accounts: expenseAccounts });
+    }
+    if (path === "/api/ledger/accounts" && init?.method === "POST") {
+      const body = JSON.parse(String(init.body));
+      const account = ledgerAccount({ code: body.code, name: body.name });
+      expenseAccounts = [...expenseAccounts, account];
+      return jsonResponse(account, 201);
     }
     if (path === "/api/dla/entries" && init?.method === "POST") {
       const entry = JSON.parse(String(init.body));
@@ -262,6 +317,27 @@ function dlaFetchHandler(overrides: Partial<DlaFixtures> = {}) {
       { status: 404, title: "Not Found", type: "about:blank" },
       404,
     );
+  };
+}
+
+function expenseAccountsFixture(): LedgerAccount[] {
+  return [
+    ledgerAccount({ code: "5000-fees", name: "Fees" }),
+    ledgerAccount({ code: "5010-software", name: "Software" }),
+    ledgerAccount({ code: "5020-travel", name: "Travel" }),
+    ledgerAccount({ code: "5030-office", name: "Office" }),
+  ];
+}
+
+function ledgerAccount(overrides: Partial<LedgerAccount>): LedgerAccount {
+  return {
+    code: "5010-software",
+    created_at: "2026-07-06T10:00:00Z",
+    currency: null,
+    id: 5010,
+    name: "Software",
+    type: "expense",
+    ...overrides,
   };
 }
 
