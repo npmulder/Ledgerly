@@ -163,7 +163,10 @@ function InvoiceDocument({
           <Term label="Terms" value={`${client.terms_days} days`} />
           <Term label="Currency" value={invoice.currency} />
           {payload.locked_rate ? (
-            <Term label="Locked rate" value={payload.locked_rate.rate} />
+            <Term
+              label="Locked rate"
+              value={formatLockedRate(payload.locked_rate.rate)}
+            />
           ) : null}
         </dl>
       </section>
@@ -616,6 +619,17 @@ function formatRate(value: string) {
   return new Intl.NumberFormat("en-GB", {
     maximumFractionDigits: 2,
     style: "percent",
+  }).format(rate);
+}
+
+function formatLockedRate(value: string) {
+  const rate = Number.parseFloat(value);
+  if (!Number.isFinite(rate)) {
+    return value;
+  }
+  return new Intl.NumberFormat("en-GB", {
+    maximumFractionDigits: 4,
+    minimumFractionDigits: 4,
   }).format(rate);
 }
 

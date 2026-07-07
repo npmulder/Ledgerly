@@ -36,20 +36,45 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - name: Set up Node
+        uses: actions/setup-node@v4
         with:
-          go-version-file: go.mod
-          cache: true
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Set up Task
+        uses: arduino/setup-task@v2
+
+      - name: Build frontend assets
+        run: task web:build
 
       - name: Prepare integration artifacts
         run: mkdir -p .task/integration-artifacts/golden
+
+      - name: Build deterministic integration image
+        run: docker build --target golden-test -t ledgerly-golden-test:ci .
 
       - name: Integration tests
         shell: bash
         run: |
           set -o pipefail
-          go test -tags=integration ./internal/it/... -count=1 -v 2>&1 | tee .task/integration-artifacts/harness.log
+          docker run --rm \
+            --network host \
+            --user "$(id -u):$(id -g)" \
+            -e CHROME_BIN=/headless-shell/headless-shell \
+            -e GOLDEN_REQUIRE_CHROME=1 \
+            -e GOLDEN_ARTIFACT_DIR=/src/.task/integration-artifacts/golden \
+            -e LEDGERLY_TEST_DB="${LEDGERLY_TEST_DB}" \
+            -e HOME=/tmp \
+            -e XDG_CACHE_HOME=/tmp/.cache \
+            -e XDG_CONFIG_HOME=/tmp/.config \
+            -e GOCACHE=/tmp/go-build \
+            -e GOMODCACHE=/tmp/go/pkg/mod \
+            -v "${PWD}:/src" \
+            -w /src \
+            ledgerly-golden-test:ci \
+            go test -tags=integration ./internal/it/... -count=1 -v 2>&1 | tee .task/integration-artifacts/harness.log
 
       - name: Upload integration failure artifacts
         if: failure()
@@ -233,3 +258,64 @@ jobs:
 
       - name: Build image
         run: docker build --build-arg GIT_SHA="${GITHUB_SHA}" -t ledgerly:"${GITHUB_SHA}" .
+
+  walkthrough:
+    name: walkthrough
+    runs-on: ubuntu-latest
+    needs:
+      - integration
+      - build
+      - web-lint
+      - web-test
+      - web-build
+      - api-drift-check
+      - test
+      - golden-snapshots
+      - lint
+      - docker-image
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ledgerly_dev
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d ledgerly_dev"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      LEDGERLY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/ledgerly_dev?sslmode=disable
+      LEDGERLY_DATA_DIR: /tmp/ledgerly-walkthrough-data
+      LEDGERLY_ENV: dev
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Set up Task
+        uses: arduino/setup-task@v2
+
+      - name: Install Playwright browser
+        working-directory: web
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Full-app walkthrough
+        run: task web:e2e -- --grep @walkthrough

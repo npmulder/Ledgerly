@@ -21,6 +21,7 @@ type Runtime struct {
 	stdin       io.Reader
 	httpClient  *http.Client
 	configPath  string
+	version     string
 	commandArgs []string
 	json        bool
 	yes         bool
@@ -44,11 +45,24 @@ func WithInput(stdin io.Reader, isTTY bool) Option {
 	}
 }
 
+func WithStdin(stdin io.Reader) Option {
+	return func(runtime *Runtime) {
+		runtime.stdin = stdin
+	}
+}
+
+func WithVersion(version string) Option {
+	return func(runtime *Runtime) {
+		runtime.version = version
+	}
+}
+
 func Execute(ctx context.Context, args []string, stdout, stderr io.Writer, opts ...Option) error {
 	runtime := &Runtime{
 		stdout:      stdout,
 		stderr:      stderr,
 		stdin:       os.Stdin,
+		version:     "dev",
 		commandArgs: append([]string(nil), args...),
 	}
 	runtime.stdinIsTTY = func() bool {
@@ -93,6 +107,7 @@ func newRootCommand(runtime *Runtime) *cobra.Command {
 		newAdvisorCommand(runtime),
 		newRatesCommand(runtime),
 		newDocsCommand(runtime),
+		newMCPCommand(runtime),
 	)
 	return root
 }

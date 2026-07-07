@@ -54,6 +54,37 @@ returns the error and the caller rolls back the shared transaction.
 Subscribers must be synchronous and deterministic. Do not start goroutines,
 retry in the handler, or write outside the supplied `db.Tx`.
 
+Same-transaction cross-module handlers keep the publisher's `db.Tx`, but they
+must switch the transaction-local module scope before writing through their own
+store:
+
+```go
+restoreScope, err := db.ScopeTransactionToModule(ctx, tx, ModuleName)
+if err != nil {
+	return err
+}
+defer func() {
+	if restoreErr := restoreScope(ctx); err == nil && restoreErr != nil {
+		err = restoreErr
+	}
+}()
+```
+
+`ScopeTransactionToModule` uses `SET LOCAL ROLE ledgerly_<module>` and a
+transaction-local `search_path`; the returned restore function returns both to
+the previous publisher scope before the subscriber returns. A migration must
+grant the subscriber module role to every module role that can publish that
+event inside the same transaction. Subscriber stores should continue to accept
+the supplied `db.Tx`; opening a fresh pool transaction breaks rollback and
+ordering guarantees.
+
+Cross-module event payloads live in the publisher's root package. Publishers
+own the event name constant, exported payload type, and a `FromEvent` accessor
+such as `InvoiceSettledFromEvent(bus.Event)`. Subscribers may import only the
+publisher root package allowed by `tools/archcheck`, call that accessor, and
+treat the returned payload as an immutable fact. Do not reach into publisher
+stores or subpackages from a subscriber.
+
 Advisor is the deliberate exception. Financial handlers keep using the same
 transaction, but advisor insights are derived recommendations and must never
 roll back source work. Advisor subscriptions register a PostgreSQL notification

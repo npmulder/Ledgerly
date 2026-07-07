@@ -62,6 +62,62 @@ describe("Advisor components", () => {
     expect(panel).toHaveClass("advisor-panel");
   });
 
+  it("limits the dashboard panel to four severity-ordered insights", async () => {
+    vi.stubGlobal(
+      "fetch",
+      advisorFetch([
+        advisorInsight({
+          created_at: "2026-07-06T10:00:00Z",
+          key: "teal-old",
+          rendered_text: "Teal old insight",
+          severity: "teal",
+        }),
+        advisorInsight({
+          created_at: "2026-07-06T13:00:00Z",
+          key: "amber-newest",
+          rendered_text: "Amber newest insight",
+          severity: "amber",
+        }),
+        advisorInsight({
+          created_at: "2026-07-06T11:00:00Z",
+          key: "teal-newer",
+          rendered_text: "Teal newer insight",
+          severity: "teal",
+        }),
+        advisorInsight({
+          created_at: "2026-07-06T12:00:00Z",
+          key: "amber-middle",
+          rendered_text: "Amber middle insight",
+          severity: "amber",
+        }),
+        advisorInsight({
+          created_at: "2026-07-06T09:00:00Z",
+          key: "amber-oldest",
+          rendered_text: "Amber oldest insight",
+          severity: "amber",
+        }),
+      ]),
+    );
+
+    renderAdvisor(<AdvisorPanel surface="dashboard" />);
+
+    const panel = await screen.findByRole("region", {
+      name: "Advisor panel",
+    });
+    await within(panel).findByText("Amber newest insight");
+    const rows = panel.querySelectorAll(".advisor-insight-row");
+
+    expect([...rows].map((row) => row.textContent)).toEqual([
+      expect.stringContaining("Amber newest insight"),
+      expect.stringContaining("Amber middle insight"),
+      expect.stringContaining("Amber oldest insight"),
+      expect.stringContaining("Teal newer insight"),
+    ]);
+    expect(
+      within(panel).queryByText("Teal old insight"),
+    ).not.toBeInTheDocument();
+  });
+
   it("dispatches invoice reminder CTAs and shows the result toast", async () => {
     const user = userEvent.setup();
     const fetchImpl = vi.fn(
@@ -119,6 +175,68 @@ describe("Advisor components", () => {
     );
   });
 
+  it("dispatches invoice reminder CTAs from the dashboard panel context", async () => {
+    const user = userEvent.setup();
+    const fetchImpl = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input), "http://localhost");
+        if (
+          url.pathname === "/api/advisor/insights" &&
+          url.searchParams.get("surface") === "dashboard"
+        ) {
+          return jsonResponse({
+            insights: [
+              advisorInsight({
+                cta: {
+                  action: "invoicing.sendReminder",
+                  label: "Send reminder",
+                  params: { invoice_id: "invoice-dashboard-overdue" },
+                },
+                rendered_text: "Dashboard invoice reminder.",
+                surfaces: ["dashboard"],
+              }),
+            ],
+          });
+        }
+        if (
+          url.pathname ===
+            "/api/invoicing/invoices/invoice-dashboard-overdue/remind" &&
+          init?.method === "POST"
+        ) {
+          return jsonResponse({
+            invoice: { id: "invoice-dashboard-overdue", number: "INV-DASH" },
+            reminder: {
+              invoice_id: "invoice-dashboard-overdue",
+              sent_at: "2026-07-06T12:00:00Z",
+            },
+          });
+        }
+        return jsonResponse(
+          { status: 404, title: "Not Found", type: "about:blank" },
+          404,
+          "application/problem+json",
+        );
+      },
+    );
+    vi.stubGlobal("fetch", fetchImpl);
+
+    renderAdvisor(<AdvisorPanel surface="dashboard" />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Send reminder" }),
+    );
+
+    await waitFor(() => {
+      expect(fetchImpl).toHaveBeenCalledWith(
+        "/api/invoicing/invoices/invoice-dashboard-overdue/remind",
+        expect.objectContaining({ method: "POST" }),
+      );
+    });
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Reminder sent for INV-DASH.",
+    );
+  });
+
   it("dispatches navigate CTAs and normalizes dividends amount prefill", async () => {
     const user = userEvent.setup();
     vi.stubGlobal(
@@ -146,6 +264,36 @@ describe("Advisor components", () => {
     );
 
     expect(await screen.findByText("Search: ?amount=3000.00")).toBeVisible();
+  });
+
+  it("dispatches navigate-with-prefill CTAs from the dashboard panel context", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal(
+      "fetch",
+      advisorFetch([
+        advisorInsight({
+          cta: {
+            action: "navigate:/dividends?amount=1716000",
+            label: "Declare dividend",
+          },
+          rendered_text: "Dividend headroom is available.",
+          surfaces: ["dashboard"],
+        }),
+      ]),
+    );
+
+    renderAdvisor(
+      <Routes>
+        <Route path="/" element={<AdvisorPanel surface="dashboard" />} />
+        <Route path="/dividends" element={<LocationSearch />} />
+      </Routes>,
+    );
+
+    await user.click(
+      await screen.findByRole("button", { name: "Declare dividend" }),
+    );
+
+    expect(await screen.findByText("Search: ?amount=17160.00")).toBeVisible();
   });
 
   it.each([
@@ -334,6 +482,73 @@ describe("Advisor components", () => {
 
     expect(await screen.findByText("Rollback insight")).toBeVisible();
   });
+
+  it("persists successful dashboard panel dismissals and renders the all-caught-up line", async () => {
+    const user = userEvent.setup();
+    const dismissed = new Set<string>();
+    const insight = advisorInsight({
+      key: "persistent-key",
+      rendered_text: "Persistent insight",
+      surfaces: ["dashboard"],
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input), "http://localhost");
+        if (url.pathname === "/api/advisor/insights") {
+          return Promise.resolve(
+            jsonResponse({
+              insights: dismissed.has(insight.key) ? [] : [insight],
+            }),
+          );
+        }
+        if (
+          url.pathname === "/api/advisor/insights/persistent-key/dismiss" &&
+          init?.method === "POST"
+        ) {
+          dismissed.add(insight.key);
+          return Promise.resolve(jsonResponse(undefined, 204));
+        }
+        return Promise.resolve(
+          jsonResponse(
+            { status: 404, title: "Not Found", type: "about:blank" },
+            404,
+            "application/problem+json",
+          ),
+        );
+      }),
+    );
+
+    const { unmount } = renderAdvisor(<AdvisorPanel surface="dashboard" />);
+
+    const panel = await screen.findByRole("region", {
+      name: "Advisor panel",
+    });
+    await within(panel).findByText("Persistent insight");
+    await user.click(
+      within(panel).getByRole("button", {
+        name: /Dismiss advisor insight: Persistent insight/,
+      }),
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByText("Persistent insight")).not.toBeInTheDocument();
+    });
+    expect(
+      await within(panel).findByText("No insights — all caught up"),
+    ).toBeVisible();
+
+    unmount();
+    renderAdvisor(<AdvisorPanel surface="dashboard" />);
+
+    const remountedPanel = await screen.findByRole("region", {
+      name: "Advisor panel",
+    });
+    expect(
+      await within(remountedPanel).findByText("No insights — all caught up"),
+    ).toBeVisible();
+    expect(screen.queryByText("Persistent insight")).not.toBeInTheDocument();
+  });
 });
 
 function renderAdvisor(ui: React.ReactElement) {
@@ -344,7 +559,7 @@ function renderAdvisor(ui: React.ReactElement) {
     },
   });
 
-  render(
+  return render(
     <MemoryRouter initialEntries={["/"]}>
       <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>
     </MemoryRouter>,

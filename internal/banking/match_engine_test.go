@@ -604,6 +604,83 @@ func TestDefaultInvoiceCandidatesUseSentUnsettledInvoicingRecords(t *testing.T) 
 	}
 }
 
+func TestInvoiceSentSubscriberWritesThroughPublisherTransaction(t *testing.T) {
+	pool, ledgerPool := temporaryMigratedBankingDatabase(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	candidates := &mutableInvoiceCandidates{}
+	service := NewService(pool, ledger.New(ledgerPool), WithInvoiceCandidates(candidates))
+	account, err := service.CreateAccount(ctx, AccountInput{
+		Name:     "Revolut GBP",
+		Provider: ProviderRevolut,
+		Currency: "GBP",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount() error = %v", err)
+	}
+	txnID := importSingleBankingTxn(t, ctx, pool, service, account.ID, revolutTestTxn{
+		Date:      time.Date(2026, 7, 20, 9, 0, 0, 0, time.UTC),
+		ID:        "invoice-sent-shared-tx",
+		Payee:     "ACME Consulting",
+		Reference: "Payment INV-2026-20",
+		Amount:    money.Money{Amount: 200000, Currency: "GBP"},
+	})
+	candidates.items = []InvoiceMatchCandidate{{
+		InvoiceID:  "invoice-20",
+		Number:     "INV-2026-20",
+		ClientName: "ACME Consulting",
+		IssueDate:  time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC),
+		DueDate:    time.Date(2026, 7, 31, 0, 0, 0, 0, time.UTC),
+		TermsDays:  30,
+		Amount:     money.Money{Amount: 200000, Currency: "GBP"},
+		Status:     "sent",
+	}}
+
+	eventBus := bus.New()
+	service.SubscribeEvents(eventBus)
+	invoicingPool := openBankingTestRolePool(t, ctx, bankingTestDatabaseURL(t), pool.Config().ConnConfig.Database, "ledgerly_invoicing", db.WithModule(invoicing.ModuleName))
+	t.Cleanup(invoicingPool.Close)
+	tx, err := invoicingPool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin publisher transaction: %v", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(context.Background())
+		}
+	}()
+
+	if err := eventBus.Publish(ctx, tx, invoicing.InvoiceSent{InvoiceID: "invoice-20"}); err != nil {
+		t.Fatalf("Publish() error = %v", err)
+	}
+	assertCurrentScope(t, ctx, tx, "ledgerly_invoicing", "invoicing")
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit publisher transaction: %v", err)
+	}
+	committed = true
+
+	history, err := service.SuggestionsForTransaction(ctx, txnID)
+	if err != nil {
+		t.Fatalf("SuggestionsForTransaction() error = %v", err)
+	}
+	active := activeSuggestion(t, history)
+	if active.Kind != SuggestionKindInvoiceMatch || active.Target != "invoice-20" {
+		t.Fatalf("active suggestion = %#v, want invoice-20 match", active)
+	}
+	var invoiceSentRuns int
+	if err := pool.QueryRow(ctx, `
+SELECT count(*)::integer
+FROM match_engine_runs
+WHERE trigger = 'invoicing.InvoiceSent'`).Scan(&invoiceSentRuns); err != nil {
+		t.Fatalf("count InvoiceSent runs: %v", err)
+	}
+	if invoiceSentRuns != 1 {
+		t.Fatalf("InvoiceSent runs after commit = %d, want 1", invoiceSentRuns)
+	}
+}
+
 func TestInvoiceSentUsesPublisherTransactionRollback(t *testing.T) {
 	pool, ledgerPool := temporaryMigratedBankingDatabase(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -641,14 +718,7 @@ func TestInvoiceSentUsesPublisherTransactionRollback(t *testing.T) {
 	service.SubscribeEvents(eventBus)
 	forced := errors.New("force rollback")
 	eventBus.Subscribe(invoicing.InvoiceSentName, func(ctx context.Context, tx db.Tx, _ bus.Event) error {
-		var role string
-		var searchPath string
-		if err := tx.QueryRow(ctx, "SELECT current_role, current_setting('search_path')").Scan(&role, &searchPath); err != nil {
-			return err
-		}
-		if role != "ledgerly_invoicing" || searchPath != "invoicing" {
-			return fmt.Errorf("subscriber transaction scope = role %q path %q, want invoicing scope", role, searchPath)
-		}
+		assertCurrentScope(t, ctx, tx, "ledgerly_invoicing", "invoicing")
 		return forced
 	})
 	invoicingPool := openBankingTestRolePool(t, ctx, bankingTestDatabaseURL(t), pool.Config().ConnConfig.Database, "ledgerly_invoicing", db.WithModule(invoicing.ModuleName))
@@ -681,6 +751,19 @@ WHERE trigger = 'invoicing.InvoiceSent'`).Scan(&invoiceSentRuns); err != nil {
 	}
 	if invoiceSentRuns != 0 {
 		t.Fatalf("InvoiceSent runs after rollback = %d, want 0", invoiceSentRuns)
+	}
+}
+
+func assertCurrentScope(t testing.TB, ctx context.Context, tx db.Tx, wantRole string, wantSearchPath string) {
+	t.Helper()
+
+	var role string
+	var searchPath string
+	if err := tx.QueryRow(ctx, "SELECT current_role, current_setting('search_path')").Scan(&role, &searchPath); err != nil {
+		t.Fatalf("read transaction scope: %v", err)
+	}
+	if role != wantRole || searchPath != wantSearchPath {
+		t.Fatalf("transaction scope = role %q path %q, want role %q path %q", role, searchPath, wantRole, wantSearchPath)
 	}
 }
 

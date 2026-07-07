@@ -466,6 +466,16 @@ Usage:
 ledgerly invoice show <number|id>
 ```
 
+### `ledgerly mcp`
+
+Run the Ledgerly stdio MCP server
+
+Usage:
+
+```text
+ledgerly mcp
+```
+
 ### `ledgerly rates`
 
 Read FX rates
