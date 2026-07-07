@@ -1,6 +1,11 @@
 import { FormEvent, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import {
+  Link,
+  useLocation,
+  useNavigate,
+  useSearchParams,
+} from "react-router-dom";
 
 import { isApiError } from "@/api/client";
 import { loginIdentity } from "@/api/identity";
@@ -74,6 +79,9 @@ export function LoginScreen() {
         <Button disabled={loginMutation.isPending} type="submit">
           {loginMutation.isPending ? "Signing in" : "Login"}
         </Button>
+        <p className="login-card__footer">
+          First time here? <Link to="/register">Set up Ledgerly</Link>
+        </p>
       </form>
     </main>
   );
