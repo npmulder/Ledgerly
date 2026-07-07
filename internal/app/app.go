@@ -402,6 +402,7 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		banking.WithInvoicingSettler(dashboardInvoicingService),
 		banking.WithDLAFileDrawer(dlaService),
 		banking.WithEventBus(eventBus),
+		banking.WithDirectorNames(identityDirectorNames{profile: identityProfile}),
 	)
 	bankingHTTPModule := banking.NewHTTPModule(bankingService)
 	modules = append(modules, bankingHTTPModule.HTTPModule())
@@ -769,6 +770,29 @@ func registerScheduledJobs(runner *platformcron.Runner, jobs []ScheduledJob) err
 		}
 	}
 	return nil
+}
+
+type identityDirectorNames struct {
+	profile interface {
+		Profile(context.Context) (identity.CompanyProfile, error)
+	}
+}
+
+func (d identityDirectorNames) DirectorNames(ctx context.Context) ([]string, error) {
+	if d.profile == nil {
+		return nil, nil
+	}
+	profile, err := d.profile.Profile(ctx)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(profile.Shareholders))
+	for _, shareholder := range profile.Shareholders {
+		if name := strings.TrimSpace(shareholder.Name); name != "" {
+			names = append(names, name)
+		}
+	}
+	return names, nil
 }
 
 func subscribeAdvisorTriggers(eventBus *bus.Bus, service *advisor.Service) {

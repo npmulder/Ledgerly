@@ -19,6 +19,7 @@ type ReconciliationCommandHooks struct {
 	AfterConfirmLedgerPost      func(context.Context) error
 	AfterConfirmInvoiceSettled  func(context.Context) error
 	AfterConfirmStateTransition func(context.Context) error
+	AfterFileDLADrawing         func(context.Context) error
 }
 
 func (s *Service) ConfirmMatch(ctx context.Context, txnID TransactionID) (_ ConfirmMatchResult, err error) {
@@ -145,6 +146,9 @@ func (s *Service) FileToDLA(ctx context.Context, txnID TransactionID) (_ FileToD
 		Description:     fmt.Sprintf("Banking DLA drawing %s", transactionDisplayRef(txn)),
 	}); err != nil {
 		return FileToDLAResult{}, fmt.Errorf("banking: file DLA drawing: %w", err)
+	}
+	if err = callReconciliationHook(ctx, s.reconciliationHooks.AfterFileDLADrawing); err != nil {
+		return FileToDLAResult{}, err
 	}
 	if err = s.store.SupersedeActiveSuggestion(ctx, tx, txn.ID); err != nil {
 		return FileToDLAResult{}, err
