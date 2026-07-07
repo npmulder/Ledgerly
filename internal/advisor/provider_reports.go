@@ -40,7 +40,10 @@ func (p reportsFactProvider) Keys() []FactKey {
 		FactFilings,
 		FactFilingAuthority,
 		FactFilingDueDate,
+		FactFilingDaysUntil,
 		FactFilingName,
+		FactFilingStatus,
+		FactFilingWarnWindow,
 	}
 }
 
@@ -83,7 +86,15 @@ type reportsFilingFactProvider struct {
 }
 
 func (p reportsFilingFactProvider) Keys() []FactKey {
-	return []FactKey{FactFilings, FactFilingAuthority, FactFilingDueDate, FactFilingName}
+	return []FactKey{
+		FactFilings,
+		FactFilingAuthority,
+		FactFilingDueDate,
+		FactFilingDaysUntil,
+		FactFilingName,
+		FactFilingStatus,
+		FactFilingWarnWindow,
+	}
 }
 
 func (p reportsFilingFactProvider) Gather(ctx context.Context) (map[FactKey]FactValue, error) {
@@ -131,7 +142,10 @@ func gatherFilingFacts(ctx context.Context, api ReportsReadAPI) (map[FactKey]Fac
 		first := filings[0]
 		values[FactFilingAuthority] = first.Authority
 		values[FactFilingDueDate] = first.DueDate
+		values[FactFilingDaysUntil] = first.DaysUntil
 		values[FactFilingName] = first.Label
+		values[FactFilingStatus] = first.Status
+		values[FactFilingWarnWindow] = first.WarnWindow
 	}
 	return values, nil
 }

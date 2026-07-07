@@ -32,6 +32,7 @@ const (
 	postCommitNotifyChannel = "advisor_evaluate"
 	defaultDebounce         = 25 * time.Millisecond
 	listenerReconnectDelay  = time.Second
+	dashboardInsightLimit   = 4
 )
 
 // ServiceConfig supplies the dependencies needed for whole-set evaluations.
@@ -283,7 +284,14 @@ func (s *Service) InsightsFor(ctx context.Context, surface Surface) ([]Insight, 
 	if s == nil {
 		return nil, fmt.Errorf("advisor: nil service")
 	}
-	return s.store.ActiveInsights(ctx, s.pool, surface)
+	insights, err := s.store.ActiveInsights(ctx, s.pool, surface)
+	if err != nil {
+		return nil, err
+	}
+	if surface == SurfaceDashboard && len(insights) > dashboardInsightLimit {
+		return insights[:dashboardInsightLimit], nil
+	}
+	return insights, nil
 }
 
 // Dismiss suppresses one active insight key until its facts change.

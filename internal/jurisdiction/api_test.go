@@ -232,7 +232,7 @@ func TestIsleOfManAccessorsReturnHandoffValues2025_26(t *testing.T) {
 					"filing_deadline_window": {
 						severity:     "amber",
 						surfaces:     []string{"dashboard", "reports"},
-						factQuery:    []string{"authority", "due_date", "filing_name"},
+						factQuery:    []string{"authority", "due_date", "days_until", "filing_name", "filing_status", "warn_window_days"},
 						textTemplate: "{{ filing_name }} due {{ due_date }} - file with {{ authority }}.",
 						ctaLabel:     "Open filing calendar",
 						ctaAction:    "reports.openFilingCalendar",

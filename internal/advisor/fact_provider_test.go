@@ -177,8 +177,17 @@ func TestReportsFactProviderMapsVATAndFilings(t *testing.T) {
 	if got := facts[FactFilingDueDate]; got != dueDate {
 		t.Fatalf("due_date = %#v, want %s", got, dueDate.Format(time.DateOnly))
 	}
+	if got := facts[FactFilingDaysUntil]; got != 24 {
+		t.Fatalf("days_until = %#v, want 24", got)
+	}
 	if got := facts[FactFilingName]; got != "VAT return" {
 		t.Fatalf("filing_name = %#v, want VAT return", got)
+	}
+	if got := facts[FactFilingStatus]; got != "due-soon" {
+		t.Fatalf("filing_status = %#v, want due-soon", got)
+	}
+	if got := facts[FactFilingWarnWindow]; got != Days(30) {
+		t.Fatalf("warn_window_days = %#v, want 30", got)
 	}
 }
 
@@ -208,6 +217,9 @@ func TestReportsSplitProvidersKeepFilingsWhenVATFails(t *testing.T) {
 	}
 	if got := facts[FactFilingAuthority]; got != "IoM Companies Registry" {
 		t.Fatalf("authority = %#v, want IoM Companies Registry", got)
+	}
+	if got := facts[FactFilingStatus]; got != "" {
+		t.Fatalf("filing_status = %#v, want empty status from fixture", got)
 	}
 	if len(report.Providers) != 2 {
 		t.Fatalf("providers reported = %d, want 2", len(report.Providers))
