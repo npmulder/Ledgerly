@@ -32,6 +32,11 @@ const BankingScreen = lazy(() =>
     default: module.BankingScreen,
   })),
 );
+const BankingPayeeRulesScreen = lazy(() =>
+  import("@/screens/BankingPayeeRulesScreen").then((module) => ({
+    default: module.BankingPayeeRulesScreen,
+  })),
+);
 const DlaScreen = lazy(() =>
   import("@/screens/DlaScreen").then((module) => ({
     default: module.DlaScreen,
@@ -79,6 +84,10 @@ export function App() {
         <Route path="/invoices" element={<InvoicesScreen />} />
         <Route path="/invoices/:id" element={<InvoiceEditorScreen />} />
         <Route path="/banking" element={<BankingScreen />} />
+        <Route
+          path="/banking/payee-rules"
+          element={<BankingPayeeRulesScreen />}
+        />
         <Route path="/dla" element={<DlaScreen />} />
         <Route path="/dividends" element={<DividendsScreen />} />
         <Route path="/reports" element={<ReportsScreen />} />

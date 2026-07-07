@@ -324,7 +324,48 @@ func (s *Service) CreatePayeeRule(ctx context.Context, input PayeeRuleInput) (Pa
 	if s.pool == nil {
 		return PayeeRule{}, fmt.Errorf("banking: payee rule storage requires pool")
 	}
-	return s.store.InsertPayeeRule(ctx, s.pool, input)
+	normalized, err := normalizePayeeRuleInput(input)
+	if err != nil {
+		return PayeeRule{}, err
+	}
+	if err := s.validatePayeeRuleAccount(ctx, normalized.AccountCode); err != nil {
+		return PayeeRule{}, err
+	}
+	return s.store.InsertPayeeRule(ctx, s.pool, normalized)
+}
+
+func (s *Service) PayeeRules(ctx context.Context) ([]PayeeRule, error) {
+	if s.pool == nil {
+		return nil, fmt.Errorf("banking: payee rule storage requires pool")
+	}
+	return s.store.ListPayeeRules(ctx, s.pool)
+}
+
+func (s *Service) UpdatePayeeRule(ctx context.Context, id PayeeRuleID, input PayeeRuleUpdateInput) (PayeeRule, error) {
+	if s.pool == nil {
+		return PayeeRule{}, fmt.Errorf("banking: payee rule storage requires pool")
+	}
+	if id <= 0 {
+		return PayeeRule{}, fmt.Errorf("banking: payee rule id is required: %w", ErrInvalidPayeeRule)
+	}
+	normalized, err := normalizePayeeRuleUpdateInput(input)
+	if err != nil {
+		return PayeeRule{}, err
+	}
+	if err := s.validatePayeeRuleAccount(ctx, normalized.AccountCode); err != nil {
+		return PayeeRule{}, err
+	}
+	return s.store.UpdatePayeeRule(ctx, s.pool, id, normalized)
+}
+
+func (s *Service) DeletePayeeRule(ctx context.Context, id PayeeRuleID) error {
+	if s.pool == nil {
+		return fmt.Errorf("banking: payee rule storage requires pool")
+	}
+	if id <= 0 {
+		return fmt.Errorf("banking: payee rule id is required: %w", ErrInvalidPayeeRule)
+	}
+	return s.store.DeletePayeeRule(ctx, s.pool, id)
 }
 
 func (s *Service) RecordPayeeRuleApplied(ctx context.Context, id PayeeRuleID) (PayeeRule, error) {
@@ -369,6 +410,26 @@ func (s *Service) MatchingPayeeRules(ctx context.Context, payee string) ([]Payee
 		return nil, fmt.Errorf("banking: payee rule matching requires pool")
 	}
 	return s.store.MatchingPayeeRules(ctx, s.pool, payee)
+}
+
+func (s *Service) validatePayeeRuleAccount(ctx context.Context, accountCode ledger.AccountCode) error {
+	catalog, ok := s.ledger.(LedgerAccountCatalog)
+	if !ok || catalog == nil {
+		return nil
+	}
+	accounts, err := catalog.Accounts(ctx)
+	if err != nil {
+		return fmt.Errorf("banking: list ledger accounts for payee rule: %w", err)
+	}
+	for _, account := range accounts {
+		if account.Code == accountCode {
+			if account.Type != ledger.AccountTypeExpense {
+				return fmt.Errorf("banking: payee rule account code %q must be an expense account: %w", accountCode, ErrInvalidPayeeRule)
+			}
+			return nil
+		}
+	}
+	return nil
 }
 
 func (s *Service) Feed(ctx context.Context, filter FeedFilter) ([]Transaction, error) {

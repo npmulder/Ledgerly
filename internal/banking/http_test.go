@@ -39,6 +39,10 @@ func TestHTTPImportRoundTripSummaryOversizeAndAuth(t *testing.T) {
 		{http.MethodGet, "/api/banking/review"},
 		{http.MethodGet, "/api/banking/feed"},
 		{http.MethodGet, "/api/banking/recent"},
+		{http.MethodGet, "/api/banking/payee-rules"},
+		{http.MethodPost, "/api/banking/payee-rules"},
+		{http.MethodPut, "/api/banking/payee-rules/1"},
+		{http.MethodDelete, "/api/banking/payee-rules/1"},
 		{http.MethodPost, "/api/banking/transactions/1/confirm"},
 		{http.MethodPost, "/api/banking/transactions/1/file-dla"},
 		{http.MethodPost, "/api/banking/transactions/1/recode"},
@@ -200,6 +204,74 @@ func TestHTTPReviewQueuePayloadIsCardComplete(t *testing.T) {
 	}
 }
 
+func TestHTTPPayeeRuleManagementCRUDUpdatesFutureMatches(t *testing.T) {
+	pool, _ := temporaryMigratedBankingDatabase(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	service := NewService(pool, &recordingBankingLedger{})
+	router := newBankingHTTPTestRouter(t, service)
+
+	createBody := strings.NewReader(`{"matcher":"ACME SaaS Ltd","match_mode":"exact","account_code":"5000-fees"}`)
+	createResponse := performBankingRequest(router, http.MethodPost, "/api/banking/payee-rules", createBody, "application/json", true)
+	if createResponse.Code != http.StatusCreated {
+		t.Fatalf("create payee rule status = %d, want %d; body=%s", createResponse.Code, http.StatusCreated, createResponse.Body.String())
+	}
+	var created payeeRuleResponse
+	decodeBankingResponse(t, createResponse, &created)
+	if created.Matcher != "acme saas ltd" || created.MatchMode != "exact" || created.AccountCode != "5000-fees" || created.CreatedFrom != "manual" || created.TimesApplied != 0 {
+		t.Fatalf("created payee rule = %+v, want normalized manual rule", created)
+	}
+
+	if _, err := service.RecordPayeeRuleApplied(ctx, PayeeRuleID(created.ID)); err != nil {
+		t.Fatalf("RecordPayeeRuleApplied() error = %v", err)
+	}
+	listResponse := performBankingRequest(router, http.MethodGet, "/api/banking/payee-rules", nil, "", true)
+	if listResponse.Code != http.StatusOK {
+		t.Fatalf("list payee rules status = %d, want %d; body=%s", listResponse.Code, http.StatusOK, listResponse.Body.String())
+	}
+	var list payeeRulesResponse
+	decodeBankingResponse(t, listResponse, &list)
+	if len(list.Rules) != 1 || list.Rules[0].ID != created.ID || list.Rules[0].TimesApplied != 1 {
+		t.Fatalf("list payee rules = %+v, want one applied rule", list)
+	}
+
+	updateBody := strings.NewReader(`{"matcher":"ACME SaaS Ltd","match_mode":"exact","account_code":"5010-software"}`)
+	updateResponse := performBankingRequest(router, http.MethodPut, fmt.Sprintf("/api/banking/payee-rules/%d", created.ID), updateBody, "application/json", true)
+	if updateResponse.Code != http.StatusOK {
+		t.Fatalf("update payee rule status = %d, want %d; body=%s", updateResponse.Code, http.StatusOK, updateResponse.Body.String())
+	}
+	var updated payeeRuleResponse
+	decodeBankingResponse(t, updateResponse, &updated)
+	if updated.AccountCode != "5010-software" || updated.TimesApplied != 1 || updated.CreatedFrom != "manual" {
+		t.Fatalf("updated payee rule = %+v, want corrected account preserving metadata", updated)
+	}
+	matches, err := service.MatchingPayeeRules(ctx, "ACME SaaS Ltd")
+	if err != nil {
+		t.Fatalf("MatchingPayeeRules() error = %v", err)
+	}
+	if len(matches) != 1 || matches[0].AccountCode != "5010-software" {
+		t.Fatalf("matches after update = %+v, want corrected software rule only", matches)
+	}
+
+	deleteResponse := performBankingRequest(router, http.MethodDelete, fmt.Sprintf("/api/banking/payee-rules/%d", created.ID), nil, "", true)
+	if deleteResponse.Code != http.StatusNoContent {
+		t.Fatalf("delete payee rule status = %d, want %d; body=%s", deleteResponse.Code, http.StatusNoContent, deleteResponse.Body.String())
+	}
+	matches, err = service.MatchingPayeeRules(ctx, "ACME SaaS Ltd")
+	if err != nil {
+		t.Fatalf("MatchingPayeeRules() after delete error = %v", err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("matches after delete = %+v, want none", matches)
+	}
+
+	notFoundResponse := performBankingRequest(router, http.MethodDelete, fmt.Sprintf("/api/banking/payee-rules/%d", created.ID), nil, "", true)
+	if notFoundResponse.Code != http.StatusNotFound {
+		t.Fatalf("delete missing payee rule status = %d, want %d; body=%s", notFoundResponse.Code, http.StatusNotFound, notFoundResponse.Body.String())
+	}
+}
+
 func TestHTTPFeedRecentAndCommandsHappyAndConflict(t *testing.T) {
 	pool, _ := temporaryMigratedBankingDatabase(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -332,6 +404,8 @@ func TestBankingOpenAPIFragmentDocumentsHTTPPaths(t *testing.T) {
 		"/api/banking/review",
 		"/api/banking/feed",
 		"/api/banking/recent",
+		"/api/banking/payee-rules",
+		"/api/banking/payee-rules/{id}",
 		"/api/banking/transactions/{id}/confirm",
 		"/api/banking/transactions/{id}/file-dla",
 		"/api/banking/transactions/{id}/recode",

@@ -7,6 +7,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type {
@@ -37,6 +38,11 @@ describe("BankingScreen", () => {
     );
 
     renderBanking();
+
+    expect(screen.getByRole("link", { name: "Payee rules" })).toHaveAttribute(
+      "href",
+      "/banking/payee-rules",
+    );
 
     const accountList = await screen.findByLabelText("Bank accounts");
     const gbpCard = within(accountList)
@@ -221,7 +227,9 @@ function renderBanking() {
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <BankingScreen />
+      <MemoryRouter>
+        <BankingScreen />
+      </MemoryRouter>
     </QueryClientProvider>,
   );
 }
