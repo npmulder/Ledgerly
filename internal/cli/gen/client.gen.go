@@ -1048,6 +1048,26 @@ type IdentityRegisterRequest struct {
 	Password string              `json:"password"`
 }
 
+// IdentityRegisterWithProfileRequest defines model for IdentityRegisterWithProfileRequest.
+type IdentityRegisterWithProfileRequest struct {
+	CompanyNumber     string              `json:"company_number"`
+	Email             openapi_types.Email `json:"email"`
+	IncorporationDate openapi_types.Date  `json:"incorporation_date"`
+	LegalName         string              `json:"legal_name"`
+	Name              string              `json:"name"`
+	Password          string              `json:"password"`
+	RegisteredOffice  RegisteredOffice    `json:"registered_office"`
+	TradingName       string              `json:"trading_name"`
+	YearEndDay        int                 `json:"year_end_day"`
+	YearEndMonth      int                 `json:"year_end_month"`
+}
+
+// IdentityRegisterWithProfileResult defines model for IdentityRegisterWithProfileResult.
+type IdentityRegisterWithProfileResult struct {
+	Profile IdentityProfile `json:"profile"`
+	User    IdentityUser    `json:"user"`
+}
+
 // IdentityUser defines model for IdentityUser.
 type IdentityUser struct {
 	CreatedAt  time.Time           `json:"created_at"`
@@ -1818,6 +1838,9 @@ type IdentityPatchProfileJSONRequestBody = IdentityProfilePatch
 
 // IdentityRegisterJSONRequestBody defines body for IdentityRegister for application/json ContentType.
 type IdentityRegisterJSONRequestBody = IdentityRegisterRequest
+
+// IdentityRegisterWithProfileJSONRequestBody defines body for IdentityRegisterWithProfile for application/json ContentType.
+type IdentityRegisterWithProfileJSONRequestBody = IdentityRegisterWithProfileRequest
 
 // InvoicingCreateClientJSONRequestBody defines body for InvoicingCreateClient for application/json ContentType.
 type InvoicingCreateClientJSONRequestBody = InvoicingClientRequest
@@ -2740,6 +2763,11 @@ type ClientInterface interface {
 
 	IdentityRegister(ctx context.Context, body IdentityRegisterJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// IdentityRegisterWithProfileWithBody request with any body
+	IdentityRegisterWithProfileWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	IdentityRegisterWithProfile(ctx context.Context, body IdentityRegisterWithProfileJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// InvoicingListClients request
 	InvoicingListClients(ctx context.Context, params *InvoicingListClientsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -3434,6 +3462,30 @@ func (c *Client) IdentityRegisterWithBody(ctx context.Context, contentType strin
 
 func (c *Client) IdentityRegister(ctx context.Context, body IdentityRegisterJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewIdentityRegisterRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) IdentityRegisterWithProfileWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIdentityRegisterWithProfileRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) IdentityRegisterWithProfile(ctx context.Context, body IdentityRegisterWithProfileJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIdentityRegisterWithProfileRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -5349,6 +5401,46 @@ func NewIdentityRegisterRequestWithBody(server string, contentType string, body 
 	return req, nil
 }
 
+// NewIdentityRegisterWithProfileRequest calls the generic IdentityRegisterWithProfile builder with application/json body
+func NewIdentityRegisterWithProfileRequest(server string, body IdentityRegisterWithProfileJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewIdentityRegisterWithProfileRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewIdentityRegisterWithProfileRequestWithBody generates requests for IdentityRegisterWithProfile with any type of body
+func NewIdentityRegisterWithProfileRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/identity/register-with-profile")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewInvoicingListClientsRequest generates requests for InvoicingListClients
 func NewInvoicingListClientsRequest(server string, params *InvoicingListClientsParams) (*http.Request, error) {
 	var err error
@@ -6885,6 +6977,11 @@ type ClientWithResponsesInterface interface {
 
 	IdentityRegisterWithResponse(ctx context.Context, body IdentityRegisterJSONRequestBody, reqEditors ...RequestEditorFn) (*IdentityRegisterResponse, error)
 
+	// IdentityRegisterWithProfileWithBodyWithResponse request with any body
+	IdentityRegisterWithProfileWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IdentityRegisterWithProfileResponse, error)
+
+	IdentityRegisterWithProfileWithResponse(ctx context.Context, body IdentityRegisterWithProfileJSONRequestBody, reqEditors ...RequestEditorFn) (*IdentityRegisterWithProfileResponse, error)
+
 	// InvoicingListClientsWithResponse request
 	InvoicingListClientsWithResponse(ctx context.Context, params *InvoicingListClientsParams, reqEditors ...RequestEditorFn) (*InvoicingListClientsResponse, error)
 
@@ -7949,6 +8046,31 @@ func (r IdentityRegisterResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r IdentityRegisterResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type IdentityRegisterWithProfileResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON201                   *IdentityRegisterWithProfileResult
+	ApplicationproblemJSON400 *ValidationProblem
+	ApplicationproblemJSON403 *Problem
+	ApplicationproblemJSON413 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r IdentityRegisterWithProfileResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r IdentityRegisterWithProfileResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -9150,6 +9272,23 @@ func (c *ClientWithResponses) IdentityRegisterWithResponse(ctx context.Context, 
 		return nil, err
 	}
 	return ParseIdentityRegisterResponse(rsp)
+}
+
+// IdentityRegisterWithProfileWithBodyWithResponse request with arbitrary body returning *IdentityRegisterWithProfileResponse
+func (c *ClientWithResponses) IdentityRegisterWithProfileWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IdentityRegisterWithProfileResponse, error) {
+	rsp, err := c.IdentityRegisterWithProfileWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseIdentityRegisterWithProfileResponse(rsp)
+}
+
+func (c *ClientWithResponses) IdentityRegisterWithProfileWithResponse(ctx context.Context, body IdentityRegisterWithProfileJSONRequestBody, reqEditors ...RequestEditorFn) (*IdentityRegisterWithProfileResponse, error) {
+	rsp, err := c.IdentityRegisterWithProfile(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseIdentityRegisterWithProfileResponse(rsp)
 }
 
 // InvoicingListClientsWithResponse request returning *InvoicingListClientsResponse
@@ -11217,6 +11356,53 @@ func ParseIdentityRegisterResponse(rsp *http.Response) (*IdentityRegisterRespons
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON413 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseIdentityRegisterWithProfileResponse parses an HTTP response from a IdentityRegisterWithProfileWithResponse call
+func ParseIdentityRegisterWithProfileResponse(rsp *http.Response) (*IdentityRegisterWithProfileResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &IdentityRegisterWithProfileResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest IdentityRegisterWithProfileResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ValidationProblem
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
