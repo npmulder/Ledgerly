@@ -1172,11 +1172,22 @@ func renderReportPL(runtime *Runtime, data *gen.ReportsPLResponse) error {
 }
 
 func renderReportVAT(runtime *Runtime, data *gen.ReportsVATResponse) error {
+	if data.Status == gen.ReportsVATResponseStatusNotRegistered {
+		_, err := fmt.Fprintln(runtime.stdout, "Not VAT registered.")
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintln(runtime.stdout, "Period: "+formatAPIDate(data.Period.From)+" to "+formatAPIDate(data.Period.To))
+		return err
+	}
+	if data.Box1 == nil || data.Box4 == nil || data.Box6 == nil || data.NetPosition == nil {
+		return fmt.Errorf("report vat response missing registered VAT boxes")
+	}
 	rows := [][]string{
-		{"box1", "VAT due on sales", formatReportsMoney(data.Box1)},
-		{"box4", "VAT reclaimed", formatReportsMoney(data.Box4)},
-		{"box6", "Total sales ex-VAT", formatReportsMoney(data.Box6)},
-		{"net", "Net position", formatReportsMoney(data.NetPosition)},
+		{"box1", "VAT due on sales", formatReportsMoney(*data.Box1)},
+		{"box4", "VAT reclaimed", formatReportsMoney(*data.Box4)},
+		{"box6", "Total sales ex-VAT", formatReportsMoney(*data.Box6)},
+		{"net", "Net position", formatReportsMoney(*data.NetPosition)},
 	}
 	return writeRowsTable(runtime.stdout, []string{"box", "label", "amount"}, rows,
 		"Period: "+formatAPIDate(data.Period.From)+" to "+formatAPIDate(data.Period.To),

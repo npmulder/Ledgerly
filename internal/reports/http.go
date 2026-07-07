@@ -78,11 +78,12 @@ type taxLineResponse struct {
 }
 
 type vatResponse struct {
-	Period      periodResponse `json:"period"`
-	Box1        moneyResponse  `json:"box1"`
-	Box4        moneyResponse  `json:"box4"`
-	Box6        moneyResponse  `json:"box6"`
-	NetPosition moneyResponse  `json:"net_position"`
+	Period      periodResponse        `json:"period"`
+	Status      VATRegistrationStatus `json:"status"`
+	Box1        *moneyResponse        `json:"box1,omitempty"`
+	Box4        *moneyResponse        `json:"box4,omitempty"`
+	Box6        *moneyResponse        `json:"box6,omitempty"`
+	NetPosition *moneyResponse        `json:"net_position,omitempty"`
 }
 
 type filingCalendarResponse struct {
@@ -155,12 +156,12 @@ func (h reportsHandler) getVAT(w nethttp.ResponseWriter, r *nethttp.Request) {
 		writeReportsBadRequest(w, r, err)
 		return
 	}
-	figures, err := h.service.VATReturn(r.Context(), period)
+	report, err := h.service.VATReport(r.Context(), period)
 	if err != nil {
 		writeReportsError(w, r, err)
 		return
 	}
-	writeReportsJSON(w, nethttp.StatusOK, vatToResponse(figures))
+	writeReportsJSON(w, nethttp.StatusOK, vatReportToResponse(report))
 }
 
 func (h reportsHandler) getCalendar(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -339,13 +340,30 @@ func plToResponse(pl PL) plResponse {
 }
 
 func vatToResponse(figures VATFigures) vatResponse {
+	box1 := moneyToResponse(figures.Box1)
+	box4 := moneyToResponse(figures.Box4)
+	box6 := moneyToResponse(figures.Box6)
+	netPosition := moneyToResponse(figures.NetPosition)
 	return vatResponse{
 		Period:      periodToResponse(figures.Period),
-		Box1:        moneyToResponse(figures.Box1),
-		Box4:        moneyToResponse(figures.Box4),
-		Box6:        moneyToResponse(figures.Box6),
-		NetPosition: moneyToResponse(figures.NetPosition),
+		Status:      VATRegistrationRegistered,
+		Box1:        &box1,
+		Box4:        &box4,
+		Box6:        &box6,
+		NetPosition: &netPosition,
 	}
+}
+
+func vatReportToResponse(report VATReport) vatResponse {
+	if report.Figures == nil {
+		return vatResponse{
+			Period: periodToResponse(report.Period),
+			Status: report.Status,
+		}
+	}
+	response := vatToResponse(*report.Figures)
+	response.Status = report.Status
+	return response
 }
 
 func calendarToResponse(calendar []Filing) filingCalendarResponse {

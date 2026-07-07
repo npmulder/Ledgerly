@@ -1607,12 +1607,22 @@ type ReportsTaxLine struct {
 
 // ReportsVATResponse defines model for ReportsVATResponse.
 type ReportsVATResponse struct {
-	Box1        ReportsMoney  `json:"box1"`
-	Box4        ReportsMoney  `json:"box4"`
-	Box6        ReportsMoney  `json:"box6"`
-	NetPosition ReportsMoney  `json:"net_position"`
-	Period      ReportsPeriod `json:"period"`
+	Box1        *ReportsMoney            `json:"box1,omitempty"`
+	Box4        *ReportsMoney            `json:"box4,omitempty"`
+	Box6        *ReportsMoney            `json:"box6,omitempty"`
+	NetPosition *ReportsMoney            `json:"net_position,omitempty"`
+	Period      ReportsPeriod            `json:"period"`
+	Status      ReportsVATResponseStatus `json:"status"`
 }
+
+// ReportsVATResponseStatus defines model for ReportsVATResponse.Status.
+type ReportsVATResponseStatus string
+
+// Defines values for ReportsVATResponseStatus.
+const (
+	ReportsVATResponseStatusNotRegistered ReportsVATResponseStatus = "not_registered"
+	ReportsVATResponseStatusRegistered    ReportsVATResponseStatus = "registered"
+)
 
 // Shareholder defines model for Shareholder.
 type Shareholder struct {

@@ -449,13 +449,15 @@ func cloneFakeEntries(entries []ledger.JournalEntry) []ledger.JournalEntry {
 }
 
 type fakeIdentity struct {
-	yearEnd identity.YearEnd
+	yearEnd         identity.YearEnd
+	isVATRegistered bool
 }
 
 func (f fakeIdentity) CompanyFacts(context.Context) (identity.CompanyFacts, error) {
 	return identity.CompanyFacts{
 		IncorporationDate: testDate(2020, time.January, 1),
 		YearEnd:           f.yearEnd,
+		IsVATRegistered:   f.isVATRegistered,
 	}, nil
 }
 
@@ -466,6 +468,7 @@ func (f fakeIdentity) Profile(context.Context) (identity.CompanyProfile, error) 
 		CompanyNumber:     "137792C",
 		IncorporationDate: testDate(2020, time.January, 1),
 		YearEnd:           f.yearEnd,
+		IsVATRegistered:   f.isVATRegistered,
 	}, nil
 }
 

@@ -97,11 +97,27 @@ type VATFigures struct {
 	NetPosition money.Money
 }
 
+// VATRegistrationStatus describes whether VAT return figures are applicable.
+type VATRegistrationStatus string
+
+const (
+	VATRegistrationRegistered    VATRegistrationStatus = "registered"
+	VATRegistrationNotRegistered VATRegistrationStatus = "not_registered"
+)
+
+// VATReport is the reports VAT endpoint read model.
+type VATReport struct {
+	Period  Period
+	Status  VATRegistrationStatus
+	Figures *VATFigures
+}
+
 // VATPosition is the current-quarter advisor fact. DueDate is populated from
 // REP-3 jurisdiction filing deadlines when company facts are available.
 type VATPosition struct {
 	Period  Period
-	Figures VATFigures
+	Status  VATRegistrationStatus
+	Figures *VATFigures
 	DueDate *time.Time
 }
 

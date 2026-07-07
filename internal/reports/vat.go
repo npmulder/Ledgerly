@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/npmulder/ledgerly/internal/identity"
 	"github.com/npmulder/ledgerly/internal/invoicing"
 	"github.com/npmulder/ledgerly/internal/jurisdiction"
 	"github.com/npmulder/ledgerly/internal/ledger"
@@ -86,23 +87,28 @@ func (s *Service) VATPosition(ctx context.Context) (VATPosition, error) {
 		clk = realVATClock{}
 	}
 	period := VATQuarterForDate(clk.Now())
-	figures, err := s.VATReturn(ctx, period)
-	if err != nil {
-		return VATPosition{}, err
-	}
-
 	position := VATPosition{
-		Period:  period,
-		Figures: figures,
+		Period: period,
+		Status: VATRegistrationRegistered,
 	}
 	facts, ok, err := s.vatPositionCompanyFacts(ctx)
 	if err != nil {
 		return VATPosition{}, err
 	}
+	if ok && !facts.IsVATRegistered {
+		position.Status = VATRegistrationNotRegistered
+		return position, nil
+	}
+
+	figures, err := s.VATReturn(ctx, period)
+	if err != nil {
+		return VATPosition{}, err
+	}
+	position.Figures = &figures
 	if !ok {
 		return position, nil
 	}
-	deadlines, err := jurisdiction.FilingDeadlinesWithClock(facts, fixedClock{now: period.To})
+	deadlines, err := jurisdiction.FilingDeadlinesWithClock(toJurisdictionFacts(facts), fixedClock{now: period.To})
 	if err != nil {
 		return VATPosition{}, fmt.Errorf("reports: VAT position filing deadlines: %w", err)
 	}
@@ -114,6 +120,33 @@ func (s *Service) VATPosition(ctx context.Context) (VATPosition, error) {
 		}
 	}
 	return position, nil
+}
+
+// VATReport returns VAT return figures only when the company is VAT registered.
+func (s *Service) VATReport(ctx context.Context, period Period) (VATReport, error) {
+	period, err := normalizeVATQuarter(period)
+	if err != nil {
+		return VATReport{}, err
+	}
+	report := VATReport{
+		Period: period,
+		Status: VATRegistrationRegistered,
+	}
+	registered, ok, err := s.vatRegistrationStatus(ctx)
+	if err != nil {
+		return VATReport{}, err
+	}
+	if ok && !registered {
+		report.Status = VATRegistrationNotRegistered
+		return report, nil
+	}
+	figures, err := s.VATReturn(ctx, period)
+	if err != nil {
+		return VATReport{}, err
+	}
+	report.Period = figures.Period
+	report.Figures = &figures
+	return report, nil
 }
 
 type realVATClock struct{}
@@ -131,15 +164,26 @@ func VATQuarterForDate(date time.Time) Period {
 	return Period{From: from, To: to}
 }
 
-func (s *Service) vatPositionCompanyFacts(ctx context.Context) (jurisdiction.CompanyFacts, bool, error) {
+func (s *Service) vatPositionCompanyFacts(ctx context.Context) (identity.CompanyFacts, bool, error) {
 	if s.facts == nil {
-		return jurisdiction.CompanyFacts{}, false, nil
+		return identity.CompanyFacts{}, false, nil
 	}
 	facts, err := s.facts.CompanyFacts(ctx)
 	if err != nil {
-		return jurisdiction.CompanyFacts{}, false, fmt.Errorf("reports: VAT position identity facts: %w", err)
+		return identity.CompanyFacts{}, false, fmt.Errorf("reports: VAT position identity facts: %w", err)
 	}
-	return toJurisdictionFacts(facts), true, nil
+	return facts, true, nil
+}
+
+func (s *Service) vatRegistrationStatus(ctx context.Context) (bool, bool, error) {
+	if s.facts == nil {
+		return true, false, nil
+	}
+	facts, err := s.facts.CompanyFacts(ctx)
+	if err != nil {
+		return false, false, fmt.Errorf("reports: VAT registration identity facts: %w", err)
+	}
+	return facts.IsVATRegistered, true, nil
 }
 
 func addEntryToVATFigures(ctx context.Context, figures *VATFigures, classifier *vatClassifier, entry ledger.JournalEntry) error {

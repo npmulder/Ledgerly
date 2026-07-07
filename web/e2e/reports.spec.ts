@@ -28,9 +28,39 @@ test("reports period switch refetches and seeded FX/CIT lines render", async ({
   expect(plRequests).toContain("/api/reports/pl?from=2026-01-01&to=2026-03-31");
 });
 
+test("reports shows neutral VAT note when not registered", async ({
+  page,
+}, testInfo) => {
+  const plRequests: string[] = [];
+  await mockReportsApi(page, plRequests, {
+    calendar: nonVATCalendarFixture(),
+    profile: identityProfile({ is_vat_registered: false }),
+    vat: notRegisteredVATFixture(),
+  });
+
+  await page.goto("/reports");
+
+  await expect(page.getByRole("heading", { name: "Reports" })).toBeVisible();
+  await expect(page.getByText("Not VAT registered.")).toBeVisible();
+  await expect(page.getByText("Box 1 · VAT due on sales")).toHaveCount(0);
+  await expect(page.getByText("Box 4 · VAT reclaimed")).toHaveCount(0);
+  await expect(page.getByText("Box 6 · Total sales ex-VAT")).toHaveCount(0);
+  await expect(page.getByLabel("VAT return due-soon 30 JUL")).toHaveCount(0);
+
+  await page.screenshot({
+    fullPage: true,
+    path: testInfo.outputPath("reports-not-vat-registered.png"),
+  });
+});
+
 async function mockReportsApi(
   page: Parameters<typeof test>[0]["page"],
   plRequests: string[],
+  overrides: {
+    readonly calendar?: unknown;
+    readonly profile?: unknown;
+    readonly vat?: unknown;
+  } = {},
 ) {
   await page.route("**/*", async (route) => {
     const request = route.request();
@@ -51,7 +81,7 @@ async function mockReportsApi(
       return;
     }
     if (path === "/api/identity/profile") {
-      await fulfillJson(route, identityProfile());
+      await fulfillJson(route, overrides.profile ?? identityProfile());
       return;
     }
     if (path === "/api/reports/pl") {
@@ -66,11 +96,11 @@ async function mockReportsApi(
       return;
     }
     if (path === "/api/reports/vat") {
-      await fulfillJson(route, vatFixture());
+      await fulfillJson(route, overrides.vat ?? vatFixture());
       return;
     }
     if (path === "/api/reports/calendar") {
-      await fulfillJson(route, calendarFixture());
+      await fulfillJson(route, overrides.calendar ?? calendarFixture());
       return;
     }
 
@@ -138,6 +168,14 @@ function vatFixture() {
     box6: money(1_510_310),
     net_position: money(-4_120),
     period: { from: "2026-04-01", to: "2026-06-30" },
+    status: "registered",
+  };
+}
+
+function notRegisteredVATFixture() {
+  return {
+    period: { from: "2026-04-01", to: "2026-06-30" },
+    status: "not_registered",
   };
 }
 
@@ -188,11 +226,20 @@ function filingFixture(overrides: Record<string, unknown>) {
   };
 }
 
-function identityProfile() {
+function nonVATCalendarFixture() {
+  return {
+    filings: calendarFixture().filings.filter(
+      (filing) => filing.key !== "vat_return",
+    ),
+  };
+}
+
+function identityProfile(overrides: Record<string, unknown> = {}) {
   return {
     bank_details: { bank_name: "", bic: "", iban: "" },
     company_number: "137792C",
     incorporation_date: "2020-07-14",
+    is_vat_registered: true,
     legal_name: "NPM Limited",
     logo_asset_id: null,
     logo_asset_url: null,
@@ -208,6 +255,7 @@ function identityProfile() {
     trading_name: "NPM Limited",
     vat_number: null,
     year_end: { day: 31, month: 3 },
+    ...overrides,
   };
 }
 
