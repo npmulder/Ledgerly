@@ -423,7 +423,7 @@ describe("Company settings", () => {
     });
   });
 
-  it("allows a missing company profile to be initialized by saving", async () => {
+  it("renders a creation form when the company profile is missing", async () => {
     const user = userEvent.setup();
     let profile: IdentityProfile | null = null;
     const fetchImpl = vi.fn(
@@ -480,6 +480,14 @@ describe("Company settings", () => {
 
     renderAt("/settings/company");
 
+    expect(
+      await screen.findByRole("button", { name: "Create company profile" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save changes" })).toBeNull();
+    expect(screen.queryByLabelText("Company logo file")).toBeNull();
+    expect(screen.queryByLabelText("VAT registered")).toBeNull();
+    expect(screen.queryByLabelText("VAT number")).toBeNull();
+
     await user.type(await screen.findByLabelText("Trading name"), "Keel Newco");
     await user.type(screen.getByLabelText("Legal name"), "Keel Newco Limited");
     await user.type(screen.getByLabelText("Company number"), "020263C");
@@ -493,17 +501,66 @@ describe("Company settings", () => {
     );
     await user.type(screen.getByLabelText("Registered office country"), "IM");
     await user.type(screen.getByLabelText("Incorporation date"), "2026-07-05");
-    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await user.click(
+      screen.getByRole("button", { name: "Create company profile" }),
+    );
 
     await waitFor(() => {
       expect(
         within(screen.getByRole("banner")).getByText("Keel Newco"),
       ).toBeInTheDocument();
     });
+    expect(
+      screen.getByRole("button", { name: "Save changes" }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Company logo file")).toBeInTheDocument();
+    expect(screen.getByLabelText("VAT registered")).toBeInTheDocument();
     expect(fetchImpl).toHaveBeenCalledWith(
       "/api/identity/profile",
       expect.objectContaining({ method: "PATCH" }),
     );
+  });
+
+  it("keeps non-404 company profile load failures in the error state", async () => {
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const path = pathFromRequest(input);
+      if (path === "/api/identity/me") {
+        return jsonResponse({
+          created_at: "2026-07-05T12:00:00Z",
+          email: "owner@example.com",
+          id: 1,
+          name: "N. Meyer",
+        });
+      }
+      if (path === "/api/identity/profile") {
+        return jsonResponse(
+          {
+            detail: "profile database is unavailable",
+            status: 503,
+            title: "Service unavailable",
+            type: "about:blank",
+          },
+          503,
+          "application/problem+json",
+        );
+      }
+      return jsonResponse(
+        { status: 404, title: "Not Found", type: "about:blank" },
+        404,
+        "application/problem+json",
+      );
+    });
+    vi.stubGlobal("fetch", fetchImpl);
+
+    renderAt("/settings/company");
+
+    expect(await screen.findByText("Service unavailable")).toBeInTheDocument();
+    expect(
+      screen.getByText("profile database is unavailable"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Create company profile" }),
+    ).toBeNull();
   });
 });
 
