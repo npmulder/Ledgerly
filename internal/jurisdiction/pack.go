@@ -81,10 +81,11 @@ type Wording struct {
 }
 
 type Filing struct {
-	Due                string `yaml:"due"`
-	Authority          string `yaml:"authority"`
-	Cadence            string `yaml:"cadence,omitempty"`
-	RequiredAtZeroRate bool   `yaml:"required_at_zero_rate,omitempty"`
+	Due                     string `yaml:"due"`
+	Authority               string `yaml:"authority"`
+	Cadence                 string `yaml:"cadence,omitempty"`
+	RequiredAtZeroRate      bool   `yaml:"required_at_zero_rate,omitempty"`
+	RequiresVATRegistration bool   `yaml:"requires_vat_registration,omitempty"`
 
 	dueExpression *deadlineExpression `yaml:"-"`
 }

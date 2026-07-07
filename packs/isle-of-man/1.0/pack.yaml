@@ -67,6 +67,7 @@ filings:
     due: quarter_end + 1 month
     cadence: quarterly
     authority: Isle of Man Customs & Excise
+    requires_vat_registration: true
 director_loans:
   s455_charge: false
   credit:

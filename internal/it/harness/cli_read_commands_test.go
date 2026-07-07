@@ -24,7 +24,7 @@ import (
 func TestCLIReadCommandsAgainstHarness(t *testing.T) {
 	ctx := context.Background()
 	h := harness.New(t, harness.Options{ClockStart: time.Date(2025, 5, 1, 12, 0, 0, 0, time.UTC)})
-	fixtures.Company(t, h)
+	fixtures.Company(t, h, fixtures.CompanyVATRegistered(true))
 	fixtures.Rates(t, h)
 
 	invoiceService := newInvoiceService(t, h)

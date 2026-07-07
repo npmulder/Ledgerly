@@ -11,6 +11,7 @@ import { DevApiScreen } from "@/screens/DevApiScreen";
 import { DevComponentsScreen } from "@/screens/DevComponentsScreen";
 import { DevTokensScreen } from "@/screens/DevTokensScreen";
 import { LoginScreen } from "@/screens/LoginScreen";
+import { RegisterScreen } from "@/screens/RegisterScreen";
 
 const DashboardScreen = lazy(() =>
   import("@/screens/DashboardScreen").then((module) => ({
@@ -98,6 +99,7 @@ export function App() {
       <Route path="/dev/components" element={<DevComponentsScreen />} />
       <Route path="/dev/tokens" element={<DevTokensScreen />} />
       <Route path="/login" element={<LoginScreen />} />
+      <Route path="/register" element={<RegisterScreen />} />
     </Routes>
   );
 }

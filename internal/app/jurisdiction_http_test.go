@@ -109,6 +109,30 @@ func TestJurisdictionDeadlinesEndpointUsesCompanyFacts(t *testing.T) {
 	}
 }
 
+func TestJurisdictionDeadlinesEndpointSkipsVATWhenUnregistered(t *testing.T) {
+	if err := jurisdiction.LoadActive(jurisdiction.DefaultSelector); err != nil {
+		t.Fatalf("LoadActive() error = %v", err)
+	}
+	facts := npmLimitedFacts
+	facts.IsVATRegistered = false
+	router := newJurisdictionTestRouter(t, facts, fixedJurisdictionClock{})
+
+	response := performJurisdictionRequest(router, nethttp.MethodGet, "/api/jurisdiction/deadlines", true)
+	if response.Code != nethttp.StatusOK {
+		t.Fatalf("deadlines status = %d, want %d; body=%s", response.Code, nethttp.StatusOK, response.Body.String())
+	}
+
+	var body jurisdictionFilingDeadlinesResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode deadlines response: %v; body=%s", err, response.Body.String())
+	}
+	for _, deadline := range body.Deadlines {
+		if deadline.Key == "vat_return" {
+			t.Fatalf("vat_return present for unregistered company: %+v", body.Deadlines)
+		}
+	}
+}
+
 func TestJurisdictionDeadlinesEndpointMapsMissingProfileToNotFound(t *testing.T) {
 	if err := jurisdiction.LoadActive(jurisdiction.DefaultSelector); err != nil {
 		t.Fatalf("LoadActive() error = %v", err)
@@ -246,6 +270,7 @@ func (fixedJurisdictionClock) Now() time.Time {
 var npmLimitedFacts = jurisdiction.CompanyFacts{
 	IncorporationDate: time.Date(2020, time.July, 14, 0, 0, 0, 0, time.UTC),
 	YearEnd:           jurisdiction.YearEnd{Month: time.March, Day: 31},
+	IsVATRegistered:   true,
 }
 
 type pingerFunc func(context.Context) error
