@@ -23,6 +23,21 @@ func OpenAPIFragment() httpserver.OpenAPIFragment {
 					},
 				},
 			},
+			"/api/identity/register-with-profile": map[string]any{
+				"post": map[string]any{
+					"tags":        []string{"identity"},
+					"summary":     "Register the first owner account and company profile",
+					"description": "Allowed only while no users and no company profile exist.",
+					"operationId": "identityRegisterWithProfile",
+					"requestBody": jsonRequestBodyRef("IdentityRegisterWithProfileRequest"),
+					"responses": map[string]any{
+						"201": jsonResponseRef("Owner and company profile created", "IdentityRegisterWithProfileResult"),
+						"400": validationProblemResponse("Invalid first-run registration request"),
+						"403": problemResponse("Registration is closed"),
+						"413": problemResponse("Registration request body is too large"),
+					},
+				},
+			},
 			"/api/identity/login": map[string]any{
 				"post": map[string]any{
 					"tags":        []string{"identity"},
@@ -293,6 +308,42 @@ func identityComponents() map[string]any {
 					"name":     map[string]any{"type": "string", "minLength": 1},
 				},
 				"additionalProperties": false,
+			},
+			"IdentityRegisterWithProfileRequest": map[string]any{
+				"type": "object",
+				"required": []string{
+					"email",
+					"password",
+					"name",
+					"trading_name",
+					"legal_name",
+					"company_number",
+					"registered_office",
+					"incorporation_date",
+					"year_end_month",
+					"year_end_day",
+				},
+				"properties": map[string]any{
+					"email":              map[string]any{"type": "string", "format": "email"},
+					"password":           map[string]any{"type": "string", "format": "password", "minLength": 1},
+					"name":               map[string]any{"type": "string", "minLength": 1},
+					"trading_name":       map[string]any{"type": "string", "minLength": 1},
+					"legal_name":         map[string]any{"type": "string", "minLength": 1},
+					"company_number":     map[string]any{"type": "string", "minLength": 1},
+					"registered_office":  map[string]any{"$ref": "#/components/schemas/RegisteredOffice"},
+					"incorporation_date": map[string]any{"type": "string", "format": "date"},
+					"year_end_month":     map[string]any{"type": "integer", "minimum": 1, "maximum": 12},
+					"year_end_day":       map[string]any{"type": "integer", "minimum": 1, "maximum": 31},
+				},
+				"additionalProperties": false,
+			},
+			"IdentityRegisterWithProfileResult": map[string]any{
+				"type":     "object",
+				"required": []string{"user", "profile"},
+				"properties": map[string]any{
+					"user":    map[string]any{"$ref": "#/components/schemas/IdentityUser"},
+					"profile": map[string]any{"$ref": "#/components/schemas/IdentityProfile"},
+				},
 			},
 			"IdentityLoginRequest": map[string]any{
 				"type":     "object",

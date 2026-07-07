@@ -180,7 +180,8 @@ type Config struct {
 	Clock clock.Clock
 }
 
-// Module is the read-only HTTP wiring surface for ledger browse/report APIs.
+// Module is the HTTP wiring surface for ledger browse/report APIs and controlled
+// chart-of-accounts management.
 type Module struct {
 	service *Service
 	clock   clock.Clock
@@ -220,6 +221,9 @@ var (
 
 	// ErrAccountConflict reports an AccountSpec that conflicts with an existing account.
 	ErrAccountConflict = errors.New("ledger: account spec conflicts with existing account")
+
+	// ErrAccountAlreadyExists reports account creation with a reused code.
+	ErrAccountAlreadyExists = errors.New("ledger: account already exists")
 
 	// ErrInvalidJournalEntry reports malformed journal entry input.
 	ErrInvalidJournalEntry = errors.New("ledger: invalid journal entry")
