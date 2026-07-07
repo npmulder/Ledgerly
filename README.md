@@ -124,6 +124,17 @@ task: Available tasks for this project:
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full development guide, including the module-boundary rules every PR is held to.
 
+### First run
+
+Start PostgreSQL, run `ledgerly migrate`, then start `ledgerly serve` with the
+required `LEDGERLY_*` runtime configuration. A blank production or staging
+database is intentionally left without tenant data by migrations; create the
+first owner account and company profile by opening `/register`.
+
+Local development can still opt into the NPM Limited convenience profile for
+fixtures and smoke flows by using the default local dev database or setting
+`LEDGERLY_DEV_SEED_DATA=true` when running migrations.
+
 ## Module directory convention
 
 Each module under `internal/<module>/` will use:

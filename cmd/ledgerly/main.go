@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -36,6 +37,7 @@ var fetchRatesRunner = runFetchRates
 
 const (
 	migrationsDirEnv = app.MigrationsDirEnv
+	devSeedDataEnv   = "LEDGERLY_DEV_SEED_DATA"
 	devSeedLogoPath  = "docs/design_handoff_keel/uploads/invoice_brand-1783009881094.png"
 )
 
@@ -127,10 +129,15 @@ func printVersion(stdout io.Writer) error {
 
 func runMigrate(ctx context.Context, stdout io.Writer) error {
 	databaseURL := strings.TrimSpace(os.Getenv("LEDGERLY_DATABASE_URL"))
+	usingDefaultDatabaseURL := databaseURL == ""
 	if databaseURL == "" {
 		databaseURL = db.DefaultDevDatabaseURL
 	}
 	migrationsDir, err := resolveMigrationsDir()
+	if err != nil {
+		return err
+	}
+	migrationOpts, err := migrationOptions(usingDefaultDatabaseURL)
 	if err != nil {
 		return err
 	}
@@ -144,13 +151,41 @@ func runMigrate(ctx context.Context, stdout io.Writer) error {
 	}
 	defer pool.Close()
 
-	applied, err := db.MigrateDir(ctx, pool, migrationsDir)
+	applied, err := db.MigrateDir(ctx, pool, migrationsDir, migrationOpts...)
 	if err != nil {
 		return err
 	}
 
 	_, err = fmt.Fprintf(stdout, "applied %d migrations\n", len(applied))
 	return err
+}
+
+func migrationOptions(usingDefaultDatabaseURL bool) ([]db.MigrationOption, error) {
+	if seed, ok, err := devSeedDataOverride(); ok || err != nil {
+		if err != nil {
+			return nil, err
+		}
+		if seed {
+			return []db.MigrationOption{db.WithDevSeedData()}, nil
+		}
+		return nil, nil
+	}
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("LEDGERLY_ENV")), string(config.EnvDev)) || usingDefaultDatabaseURL {
+		return []db.MigrationOption{db.WithDevSeedData()}, nil
+	}
+	return nil, nil
+}
+
+func devSeedDataOverride() (bool, bool, error) {
+	value, ok := os.LookupEnv(devSeedDataEnv)
+	if !ok {
+		return false, false, nil
+	}
+	seed, err := strconv.ParseBool(strings.TrimSpace(value))
+	if err != nil {
+		return false, true, fmt.Errorf("invalid %s %q: must be a boolean", devSeedDataEnv, value)
+	}
+	return seed, true, nil
 }
 
 func resolveMigrationsDir() (string, error) {

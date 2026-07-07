@@ -21,6 +21,7 @@ import (
 const (
 	migrationAdvisoryLockKey        int64 = 240247
 	clusterMigrationAdvisoryLockKey int64 = 0x6c65646765726c79
+	devSeedDataSetting                    = "ledgerly.seed_dev_data"
 )
 
 // AppliedMigration describes a migration applied by this run.
@@ -35,14 +36,35 @@ type migrationFile struct {
 	SQL string
 }
 
+type migrationConfig struct {
+	seedDevData bool
+}
+
+// MigrationOption customizes migration execution.
+type MigrationOption func(*migrationConfig)
+
+// WithDevSeedData enables development/test-only seed data in migrations.
+func WithDevSeedData() MigrationOption {
+	return func(cfg *migrationConfig) {
+		cfg.seedDevData = true
+	}
+}
+
 // MigrateDir applies migrations from a filesystem directory.
-func MigrateDir(ctx context.Context, pool *pgxpool.Pool, dir string) ([]AppliedMigration, error) {
-	return MigrateFS(ctx, pool, os.DirFS(dir))
+func MigrateDir(ctx context.Context, pool *pgxpool.Pool, dir string, opts ...MigrationOption) ([]AppliedMigration, error) {
+	return MigrateFS(ctx, pool, os.DirFS(dir), opts...)
 }
 
 // MigrateFS applies module migrations from fsys. The root must contain one
 // directory per Ledgerly database module.
-func MigrateFS(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) (applied []AppliedMigration, err error) {
+func MigrateFS(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS, opts ...MigrationOption) (applied []AppliedMigration, err error) {
+	cfg := migrationConfig{}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&cfg)
+		}
+	}
+
 	clusterLockConn, err := acquireClusterMigrationLock(ctx, pool)
 	if err != nil {
 		return nil, err
@@ -87,7 +109,7 @@ func MigrateFS(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) (applied []A
 	}
 
 	for _, migration := range plan {
-		didApply, err := applyMigration(ctx, conn, migration)
+		didApply, err := applyMigration(ctx, conn, migration, cfg)
 		if err != nil {
 			return nil, err
 		}
@@ -269,7 +291,7 @@ func readMigrationPlan(fsys fs.FS) ([]migrationFile, error) {
 	return plan, nil
 }
 
-func applyMigration(ctx context.Context, conn *pgxpool.Conn, migration migrationFile) (bool, error) {
+func applyMigration(ctx context.Context, conn *pgxpool.Conn, migration migrationFile, cfg migrationConfig) (bool, error) {
 	var existingChecksum string
 	err := conn.QueryRow(
 		ctx,
@@ -295,6 +317,9 @@ func applyMigration(ctx context.Context, conn *pgxpool.Conn, migration migration
 		_ = tx.Rollback(ctx)
 	}()
 
+	if _, err := tx.Exec(ctx, "SELECT set_config($1, $2, true)", devSeedDataSetting, migrationBool(cfg.seedDevData)); err != nil {
+		return false, fmt.Errorf("configure migration %s/%s dev seed setting: %w", migration.Module, migration.Filename, err)
+	}
 	if _, err := tx.Exec(ctx, migration.SQL); err != nil {
 		return false, fmt.Errorf("apply migration %s/%s: %w", migration.Module, migration.Filename, err)
 	}
@@ -312,4 +337,11 @@ func applyMigration(ctx context.Context, conn *pgxpool.Conn, migration migration
 	}
 
 	return true, nil
+}
+
+func migrationBool(value bool) string {
+	if value {
+		return "on"
+	}
+	return "off"
 }

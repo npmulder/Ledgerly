@@ -28,13 +28,9 @@ CREATE TABLE IF NOT EXISTS identity.company_profile (
 
 GRANT ALL PRIVILEGES ON TABLE identity.company_profile TO ledgerly_identity;
 
-DO $ledgerly_seed$
+DO $ledgerly_dev_seed$
 BEGIN
-	IF current_database() = 'ledgerly_dev'
-		OR current_database() = 'ledgerly_test'
-		OR current_database() LIKE 'ledgerly\_test\_%' ESCAPE '\'
-		OR current_database() LIKE '%\_test' ESCAPE '\'
-	THEN
+	IF current_setting('ledgerly.seed_dev_data', true) = 'on' THEN
 		INSERT INTO identity.company_profile (
 			id,
 			trading_name,
@@ -81,4 +77,4 @@ BEGIN
 		ON CONFLICT (id) DO NOTHING;
 	END IF;
 END
-$ledgerly_seed$;
+$ledgerly_dev_seed$;

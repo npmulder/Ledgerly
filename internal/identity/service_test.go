@@ -95,13 +95,47 @@ func TestSeedMigrationCreatesNPMFixture(t *testing.T) {
 	}
 }
 
+func TestMigrationWithoutDevSeedDataLeavesIdentityTenantTablesEmpty(t *testing.T) {
+	ctx, pool := temporaryMigratedDatabaseNamed(t, fmt.Sprintf("ledgerly_prod_empty_identity_%d", time.Now().UnixNano()))
+
+	for _, table := range []string{"identity.company_profile", "identity.assets"} {
+		var count int
+		if err := pool.QueryRow(ctx, "SELECT count(*) FROM "+table).Scan(&count); err != nil {
+			t.Fatalf("count %s: %v", table, err)
+		}
+		if count != 0 {
+			t.Fatalf("%s rows = %d, want 0 without dev seed data", table, count)
+		}
+	}
+}
+
+func TestSeedDevLogoAssetAllowsMissingProfile(t *testing.T) {
+	ctx, pool := temporaryMigratedDatabaseNamed(t, fmt.Sprintf("ledgerly_prod_logo_seed_%d", time.Now().UnixNano()))
+	dataDir := t.TempDir()
+	seedPath := filepath.Join(findRepoRoot(t), "docs", "design_handoff_keel", "uploads", "invoice_brand-1783009881094.png")
+
+	seedID, err := SeedDevLogoAsset(ctx, pool, dataDir, seedPath)
+	if err != nil {
+		t.Fatalf("SeedDevLogoAsset() without profile error = %v", err)
+	}
+	if seedID != DevSeedLogoAssetID {
+		t.Fatalf("SeedDevLogoAsset() id = %s, want %s", seedID, DevSeedLogoAssetID)
+	}
+	if _, err := New(pool, discardBus(), WithDataDir(dataDir)).Profile(ctx); !errors.Is(err, ErrProfileNotFound) {
+		t.Fatalf("Profile() after SeedDevLogoAsset without profile error = %v, want ErrProfileNotFound", err)
+	}
+	if _, err := New(pool, discardBus(), WithDataDir(dataDir)).Asset(ctx, seedID); err != nil {
+		t.Fatalf("Asset(seed) after SeedDevLogoAsset without profile error = %v", err)
+	}
+}
+
 func TestVATRegistrationMigrationBackfillsExistingVATNumbers(t *testing.T) {
 	ctx, pool := temporaryDatabaseNamed(t, fmt.Sprintf("ledgerly_vat_backfill_%d", time.Now().UnixNano()))
 
 	migratePoolFromDir(t, ctx, pool, identityMigrationSubsetDir(t,
 		"001_bootstrap.sql",
 		"003_company_profile.sql",
-	))
+	), db.WithDevSeedData())
 	if _, err := pool.Exec(ctx, `
 UPDATE identity.company_profile
 SET vat_number = 'IM1234567'
@@ -699,14 +733,20 @@ func migratedIdentityTx(t *testing.T) (context.Context, pgx.Tx) {
 func temporaryMigratedDatabase(t *testing.T) (context.Context, *pgxpool.Pool) {
 	t.Helper()
 
-	return temporaryMigratedDatabaseNamed(t, fmt.Sprintf("ledgerly_test_identity_%d", time.Now().UnixNano()))
+	return temporaryMigratedDatabaseNamedWithOptions(t, fmt.Sprintf("ledgerly_test_identity_%d", time.Now().UnixNano()), db.WithDevSeedData())
 }
 
 func temporaryMigratedDatabaseNamed(t *testing.T, dbName string) (context.Context, *pgxpool.Pool) {
 	t.Helper()
 
+	return temporaryMigratedDatabaseNamedWithOptions(t, dbName)
+}
+
+func temporaryMigratedDatabaseNamedWithOptions(t *testing.T, dbName string, opts ...db.MigrationOption) (context.Context, *pgxpool.Pool) {
+	t.Helper()
+
 	ctx, pool := temporaryDatabaseNamed(t, dbName)
-	migratePool(t, ctx, pool)
+	migratePool(t, ctx, pool, opts...)
 	return ctx, pool
 }
 
@@ -761,16 +801,16 @@ func migratedPool(t *testing.T, databaseURL string) (context.Context, *pgxpool.P
 	return ctx, pool
 }
 
-func migratePool(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+func migratePool(t *testing.T, ctx context.Context, pool *pgxpool.Pool, opts ...db.MigrationOption) {
 	t.Helper()
 
-	migratePoolFromDir(t, ctx, pool, filepath.Join(findRepoRoot(t), "db", "migrations"))
+	migratePoolFromDir(t, ctx, pool, filepath.Join(findRepoRoot(t), "db", "migrations"), opts...)
 }
 
-func migratePoolFromDir(t *testing.T, ctx context.Context, pool *pgxpool.Pool, dir string) {
+func migratePoolFromDir(t *testing.T, ctx context.Context, pool *pgxpool.Pool, dir string, opts ...db.MigrationOption) {
 	t.Helper()
 
-	if _, err := db.MigrateDir(ctx, pool, dir); err != nil {
+	if _, err := db.MigrateDir(ctx, pool, dir, opts...); err != nil {
 		t.Fatalf("MigrateDir() error = %v", err)
 	}
 }

@@ -39,6 +39,13 @@ lexical order. Applied file checksums are recorded in
 Bootstrap migrations create only module schemas and module roles. Business
 tables belong to module implementation tickets.
 
+Production and staging migrations must not create tenant data. Dev/test
+convenience seed data is opt-in through the migration runner's dev seed flag,
+which sets `ledgerly.seed_dev_data` transaction-locally while migrations run.
+Use `LEDGERLY_DEV_SEED_DATA=true` only for explicit local/dev fixtures; leave it
+unset or false for blank installs where `/register` creates the owner and
+company profile.
+
 Default dev passwords are assigned only when a missing module role is created;
 rerunning migrations does not reset an existing role's password.
 
