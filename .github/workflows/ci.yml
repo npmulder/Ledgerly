@@ -36,12 +36,6 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
@@ -58,11 +52,29 @@ jobs:
       - name: Prepare integration artifacts
         run: mkdir -p .task/integration-artifacts/golden
 
+      - name: Build deterministic integration image
+        run: docker build --target golden-test -t ledgerly-golden-test:ci .
+
       - name: Integration tests
         shell: bash
         run: |
           set -o pipefail
-          go test -tags=integration ./internal/it/... -count=1 -v 2>&1 | tee .task/integration-artifacts/harness.log
+          docker run --rm \
+            --network host \
+            --user "$(id -u):$(id -g)" \
+            -e CHROME_BIN=/headless-shell/headless-shell \
+            -e GOLDEN_REQUIRE_CHROME=1 \
+            -e GOLDEN_ARTIFACT_DIR=/src/.task/integration-artifacts/golden \
+            -e LEDGERLY_TEST_DB="${LEDGERLY_TEST_DB}" \
+            -e HOME=/tmp \
+            -e XDG_CACHE_HOME=/tmp/.cache \
+            -e XDG_CONFIG_HOME=/tmp/.config \
+            -e GOCACHE=/tmp/go-build \
+            -e GOMODCACHE=/tmp/go/pkg/mod \
+            -v "${PWD}:/src" \
+            -w /src \
+            ledgerly-golden-test:ci \
+            go test -tags=integration ./internal/it/... -count=1 -v 2>&1 | tee .task/integration-artifacts/harness.log
 
       - name: Upload integration failure artifacts
         if: failure()
