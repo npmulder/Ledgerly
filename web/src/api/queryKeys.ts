@@ -19,6 +19,20 @@ export const queryKeys = {
       { surface },
     ],
   },
+  banking: {
+    accounts: (): ApiQueryKey => ["banking", "accounts", {}],
+    feed: (accountId: number | null = null): ApiQueryKey => [
+      "banking",
+      "feed",
+      { accountId },
+    ],
+    recent: (limit = 10, accountId: number | null = null): ApiQueryKey => [
+      "banking",
+      "recent",
+      { accountId, limit },
+    ],
+    review: (): ApiQueryKey => ["banking", "review", {}],
+  },
   dashboard: {
     summary: (): ApiQueryKey => ["dashboard", "summary", {}],
   },

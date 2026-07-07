@@ -700,12 +700,22 @@ func TestFeedReviewQueueRecentlyReconciledAndCounts(t *testing.T) {
 		Amount:    money.Money{Amount: -1000, Currency: "EUR"},
 		Balance:   money.Money{Amount: -1000, Currency: "EUR"},
 	})
+	otherReconciled := importSingleBankingTxn(t, ctx, pool, service, otherAccount.ID, revolutTestTxn{
+		Date:      time.Date(2026, 8, 7, 9, 0, 0, 0, time.UTC),
+		ID:        "queue-other-reconciled",
+		Payee:     "EUR Client",
+		Reference: "eur-client",
+		Amount:    money.Money{Amount: 2000, Currency: "EUR"},
+		Balance:   money.Money{Amount: 1000, Currency: "EUR"},
+	})
 
 	mustRecordSuggestion(t, ctx, service, invoiceTxn, SuggestionKindInvoiceMatch, 0.982, "inv-1002", "98% match - amount + payee + date")
 	mustRecordSuggestion(t, ctx, service, dlaTxn, SuggestionKindDLA, 0.750, "director-loan", "75% match - director payee")
 	mustRecordSuggestion(t, ctx, service, ruleTxn, SuggestionKindPayeeRule, 0.910, "6200-software", "91% match - recurring payee rule")
+	mustRecordSuggestion(t, ctx, service, otherReconciled, SuggestionKindInvoiceMatch, 0.950, "eur-invoice", "95% match - other account")
 	mustTransition(t, ctx, service, excludedTxn, TransactionStateExcluded, "reviewer")
 	mustTransition(t, ctx, service, invoiceTxn, TransactionStateReconciled, "reviewer")
+	mustTransition(t, ctx, service, otherReconciled, TransactionStateReconciled, "reviewer")
 
 	queue, err := service.ReviewQueue(ctx)
 	if err != nil {
@@ -763,12 +773,19 @@ func TestFeedReviewQueueRecentlyReconciledAndCounts(t *testing.T) {
 		t.Fatalf("Feed(cursor) IDs = %v, want DLA then reconciled invoice after cursor", transactionIDs(cursorFeed))
 	}
 
-	recent, err := service.RecentlyReconciled(ctx, 5)
+	recent, err := service.RecentlyReconciled(ctx, 0, 5)
 	if err != nil {
 		t.Fatalf("RecentlyReconciled() error = %v", err)
 	}
-	if len(recent) != 1 || recent[0].Transaction.ID != invoiceTxn || recent[0].Actor != "reviewer" || recent[0].ReconciledAt.IsZero() {
-		t.Fatalf("RecentlyReconciled() = %#v, want reconciled invoice with actor/timestamp", recent)
+	if len(recent) != 2 || !hasRecentTransaction(recent, invoiceTxn) || !hasRecentTransaction(recent, otherReconciled) {
+		t.Fatalf("RecentlyReconciled() = %#v, want both reconciled account transactions", recent)
+	}
+	recentForAccount, err := service.RecentlyReconciled(ctx, account.ID, 5)
+	if err != nil {
+		t.Fatalf("RecentlyReconciled(account) error = %v", err)
+	}
+	if len(recentForAccount) != 1 || recentForAccount[0].Transaction.ID != invoiceTxn || recentForAccount[0].Actor != "reviewer" || recentForAccount[0].ReconciledAt.IsZero() {
+		t.Fatalf("RecentlyReconciled(account) = %#v, want invoice transaction only", recentForAccount)
 	}
 
 	assertStoredTransactionState(t, ctx, pool, unreconciledTxn, TransactionStateUnreconciled)
@@ -985,6 +1002,15 @@ WHERE id = $1`, int64(txnID)).Scan(&got); err != nil {
 	if TransactionState(got) != want {
 		t.Fatalf("transaction %d state = %q, want %q", txnID, got, want)
 	}
+}
+
+func hasRecentTransaction(recent []ReconciledTransaction, txnID TransactionID) bool {
+	for _, item := range recent {
+		if item.Transaction.ID == txnID {
+			return true
+		}
+	}
+	return false
 }
 
 func transactionIDs(txns []Transaction) []TransactionID {

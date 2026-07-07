@@ -2488,6 +2488,8 @@ export interface operations {
     bankingGetRecent: {
         parameters: {
             query?: {
+                /** @description Filter by bank account ID. */
+                account?: number;
                 /** @description Maximum recently reconciled rows. */
                 limit?: number;
             };

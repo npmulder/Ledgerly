@@ -686,17 +686,18 @@ ORDER BY s.kind, s.confidence DESC, t.date DESC, t.id DESC`)
 	return queue, nil
 }
 
-func (Store) RecentlyReconciled(ctx context.Context, tx db.Tx, limit int) ([]ReconciledTransaction, error) {
+func (Store) RecentlyReconciled(ctx context.Context, tx db.Tx, accountID AccountID, limit int) ([]ReconciledTransaction, error) {
 	rows, err := tx.Query(ctx, `
-SELECT `+transactionColumns("t")+`,
-	c.changed_at,
-	c.actor
-FROM transaction_state_changes c
-JOIN transactions t ON t.id = c.txn_id
-WHERE c.to_state = 'reconciled'
-	AND t.state = 'reconciled'
-ORDER BY c.changed_at DESC, c.id DESC
-LIMIT $1`, limit)
+	SELECT `+transactionColumns("t")+`,
+		c.changed_at,
+		c.actor
+	FROM transaction_state_changes c
+	JOIN transactions t ON t.id = c.txn_id
+	WHERE c.to_state = 'reconciled'
+		AND t.state = 'reconciled'
+		AND ($1::bigint = 0 OR t.account_id = $1)
+	ORDER BY c.changed_at DESC, c.id DESC
+	LIMIT $2`, int64(accountID), limit)
 	if err != nil {
 		return nil, fmt.Errorf("banking: recently reconciled: %w", err)
 	}
