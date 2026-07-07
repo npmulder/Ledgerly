@@ -371,13 +371,6 @@ func newReconciliationFixture(t *testing.T, clockStart time.Time, rates ...fixtu
 	ledgerService := ledger.New(h.LedgerPool, h.Bus)
 	moneyFXService := moneyfx.NewService(moneyfx.NewStore(testdb.AsModule(t, moneyfx.ModuleName)), h.Clock)
 	dlaService := dla.NewWithBusAndClock(h.DLAPool, h.Bus, h.Clock, ledgerService)
-	names := make([]string, 0, len(company.Shareholders))
-	for _, shareholder := range company.Shareholders {
-		if name := strings.TrimSpace(shareholder.Name); name != "" {
-			names = append(names, name)
-		}
-	}
-
 	f := &reconciliationFixture{
 		ctx:           ctx,
 		h:             h,
@@ -385,7 +378,7 @@ func newReconciliationFixture(t *testing.T, clockStart time.Time, rates ...fixtu
 		ledger:        ledgerService,
 		moneyFX:       moneyFXService,
 		dla:           dlaService,
-		directorNames: names,
+		directorNames: company.DirectorNames(),
 	}
 	f.banking = f.bankingService()
 	return f

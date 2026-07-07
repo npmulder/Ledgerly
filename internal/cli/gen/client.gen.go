@@ -1055,6 +1055,7 @@ type IdentityPATScope string
 type IdentityProfile struct {
 	BankDetails       BankDetails         `json:"bank_details"`
 	CompanyNumber     string              `json:"company_number"`
+	Directors         []Director          `json:"directors"`
 	IncorporationDate openapi_types.Date  `json:"incorporation_date"`
 	IsVatRegistered   bool                `json:"is_vat_registered"`
 	LegalName         string              `json:"legal_name"`
@@ -1071,6 +1072,7 @@ type IdentityProfile struct {
 type IdentityProfilePatch struct {
 	BankDetails       *BankDetails        `json:"bank_details,omitempty"`
 	CompanyNumber     *string             `json:"company_number,omitempty"`
+	Directors         *[]Director         `json:"directors,omitempty"`
 	IncorporationDate *openapi_types.Date `json:"incorporation_date,omitempty"`
 	IsVatRegistered   *bool               `json:"is_vat_registered,omitempty"`
 	LegalName         *string             `json:"legal_name,omitempty"`
@@ -1092,6 +1094,7 @@ type IdentityRegisterRequest struct {
 // IdentityRegisterWithProfileRequest defines model for IdentityRegisterWithProfileRequest.
 type IdentityRegisterWithProfileRequest struct {
 	CompanyNumber     string              `json:"company_number"`
+	Directors         *[]Director         `json:"directors,omitempty"`
 	Email             openapi_types.Email `json:"email"`
 	IncorporationDate openapi_types.Date  `json:"incorporation_date"`
 	LegalName         string              `json:"legal_name"`
@@ -1693,6 +1696,13 @@ type ReportsVATResponse struct {
 
 // ReportsVATResponseStatus defines model for ReportsVATResponse.Status.
 type ReportsVATResponseStatus string
+
+// Director defines model for Director.
+type Director struct {
+	AppointedDate *openapi_types.Date `json:"appointed_date,omitempty"`
+	IsChair       *bool               `json:"is_chair,omitempty"`
+	Name          string              `json:"name"`
+}
 
 // Shareholder defines model for Shareholder.
 type Shareholder struct {

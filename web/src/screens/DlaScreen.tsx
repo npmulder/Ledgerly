@@ -163,7 +163,7 @@ export function DlaScreen() {
     [ledgerQuery.data],
   );
   const directorName =
-    profileQuery.data?.shareholders?.[0]?.name?.trim() || "Director";
+    profileQuery.data?.directors?.[0]?.name?.trim() || "Director";
   const currentBalanceText = balance
     ? formatBalance(
         balance.balance,

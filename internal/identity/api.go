@@ -53,6 +53,7 @@ type CompanyProfile struct {
 	VATNumber         *string
 	BankDetails       BankDetails
 	Shareholders      []Shareholder
+	Directors         []Director
 	LogoAssetID       *AssetID
 }
 
@@ -78,6 +79,13 @@ type Shareholder struct {
 	Name   string `json:"name"`
 	Shares int64  `json:"shares"`
 	Class  string `json:"class"`
+}
+
+// Director describes a company director recorded on the identity profile.
+type Director struct {
+	Name          string  `json:"name"`
+	AppointedDate *string `json:"appointed_date,omitempty"`
+	IsChair       bool    `json:"is_chair,omitempty"`
 }
 
 // AssetID is the opaque identifier for a logo asset.
@@ -116,6 +124,7 @@ type CompanyFacts struct {
 	IncorporationDate time.Time
 	YearEnd           YearEnd
 	IsVATRegistered   bool
+	Directors         []Director
 }
 
 // UpdateProfilePatch is a partial company-profile update.
@@ -130,6 +139,7 @@ type UpdateProfilePatch struct {
 	VATNumber         *string
 	BankDetails       *BankDetails
 	Shareholders      *[]Shareholder
+	Directors         *[]Director
 	LogoAssetID       *AssetID
 }
 

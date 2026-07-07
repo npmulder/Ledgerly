@@ -792,7 +792,7 @@ func (d identityDirectorNames) DirectorNames(ctx context.Context) ([]string, err
 		}
 		return nil, err
 	}
-	return identityProfileDirectorNames(profile), nil
+	return profile.DirectorNames(), nil
 }
 
 func subscribeBankingIdentityProfileRefresh(eventBus *bus.Bus, profile identity.Identity, opts []identity.ProfileOption, bankingService *banking.Service) {
@@ -812,7 +812,7 @@ func subscribeBankingIdentityProfileRefresh(eventBus *bus.Bus, profile identity.
 			}
 			return err
 		}
-		_, err = bankingService.RefreshDirectorNameSuggestionsTx(ctx, tx, identityProfileDirectorNames(updated))
+		_, err = bankingService.RefreshDirectorNameSuggestionsTx(ctx, tx, updated.DirectorNames())
 		return err
 	})
 }
@@ -822,16 +822,6 @@ func identityProfileForBankingRefresh(ctx context.Context, tx db.Tx, eventBus *b
 		return profile.Profile(ctx)
 	}
 	return identity.NewProfileService(tx, eventBus, opts...).Profile(ctx)
-}
-
-func identityProfileDirectorNames(profile identity.CompanyProfile) []string {
-	names := make([]string, 0, len(profile.Shareholders))
-	for _, shareholder := range profile.Shareholders {
-		if name := strings.TrimSpace(shareholder.Name); name != "" {
-			names = append(names, name)
-		}
-	}
-	return names
 }
 
 func subscribeAdvisorTriggers(eventBus *bus.Bus, service *advisor.Service) {

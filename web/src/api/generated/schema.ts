@@ -1873,6 +1873,7 @@ export interface components {
         IdentityProfile: {
             bank_details: components["schemas"]["BankDetails"];
             company_number: string;
+            directors: components["schemas"]["Director"][];
             /** Format: date */
             incorporation_date: string;
             is_vat_registered: boolean;
@@ -1890,6 +1891,7 @@ export interface components {
         IdentityProfilePatch: {
             bank_details?: components["schemas"]["BankDetails"];
             company_number?: string;
+            directors?: components["schemas"]["Director"][];
             /** Format: date */
             incorporation_date?: string;
             is_vat_registered?: boolean;
@@ -1911,6 +1913,7 @@ export interface components {
         };
         IdentityRegisterWithProfileRequest: {
             company_number: string;
+            directors?: components["schemas"]["Director"][];
             /** Format: email */
             email: string;
             /** Format: date */
@@ -1923,6 +1926,12 @@ export interface components {
             trading_name: string;
             year_end_day: number;
             year_end_month: number;
+        };
+        Director: {
+            /** Format: date */
+            appointed_date?: string;
+            is_chair?: boolean;
+            name: string;
         };
         IdentityRegisterWithProfileResult: {
             profile: components["schemas"]["IdentityProfile"];

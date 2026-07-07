@@ -104,6 +104,7 @@ type registerWithProfileRequest struct {
 	IncorporationDate string           `json:"incorporation_date"`
 	YearEndMonth      int              `json:"year_end_month"`
 	YearEndDay        int              `json:"year_end_day"`
+	Directors         []Director       `json:"directors"`
 }
 
 type loginRequest struct {
@@ -131,6 +132,7 @@ type profileResponse struct {
 	VATNumber         *string          `json:"vat_number"`
 	BankDetails       BankDetails      `json:"bank_details"`
 	Shareholders      []Shareholder    `json:"shareholders"`
+	Directors         []Director       `json:"directors"`
 	LogoAssetID       *AssetID         `json:"logo_asset_id"`
 	LogoAssetURL      *string          `json:"logo_asset_url"`
 }
@@ -581,6 +583,7 @@ func decodeRegisterWithProfileRequest(w nethttp.ResponseWriter, r *nethttp.Reque
 	request.YearEndMonth = requiredInt(raw, "year_end_month", &fieldErrs)
 	request.YearEndDay = requiredInt(raw, "year_end_day", &fieldErrs)
 	request.RegisteredOffice = requiredRegisteredOffice(raw, &fieldErrs)
+	request.Directors = optionalDirectors(raw, &fieldErrs)
 	if len(fieldErrs) > 0 {
 		return request, fieldErrs, nil
 	}
@@ -599,7 +602,8 @@ func registerWithProfileFieldAllowed(field string) bool {
 		"registered_office",
 		"incorporation_date",
 		"year_end_month",
-		"year_end_day":
+		"year_end_day",
+		"directors":
 		return true
 	default:
 		return false
@@ -665,6 +669,23 @@ func requiredRegisteredOffice(raw map[string]json.RawMessage, fieldErrs *[]field
 		}
 	}
 	return office
+}
+
+func optionalDirectors(raw map[string]json.RawMessage, fieldErrs *[]fieldError) []Director {
+	const pointer = "/directors"
+	value, ok := raw["directors"]
+	if !ok {
+		return nil
+	}
+	if rejectJSONNull(value, pointer, "must be an array of directors", fieldErrs) {
+		return nil
+	}
+	var directors []Director
+	if err := decodeStrict(value, &directors); err != nil {
+		*fieldErrs = append(*fieldErrs, fieldError{Pointer: pointer, Detail: "must be an array of directors"})
+		return nil
+	}
+	return directors
 }
 
 func requiredRegisteredOfficeString(raw map[string]json.RawMessage, field string, fieldErrs *[]fieldError) string {
@@ -742,6 +763,7 @@ func (request registerWithProfileRequest) companyProfile() (CompanyProfile, erro
 		},
 		BankDetails:  BankDetails{},
 		Shareholders: []Shareholder{},
+		Directors:    append([]Director{}, request.Directors...),
 	}, nil
 }
 
@@ -823,6 +845,16 @@ func decodeProfilePatch(w nethttp.ResponseWriter, r *nethttp.Request) (UpdatePro
 				continue
 			}
 			patch.Shareholders = &shareholders
+		case "directors":
+			if rejectJSONNull(value, "/directors", "must be an array of directors", &fieldErrors) {
+				continue
+			}
+			var directors []Director
+			if err := decodeStrict(value, &directors); err != nil {
+				fieldErrors = append(fieldErrors, fieldError{Pointer: "/directors", Detail: "must be an array of directors"})
+				continue
+			}
+			patch.Directors = &directors
 		case "logo_asset_id":
 			if isJSONNull(value) {
 				logoAssetID := AssetID("")
@@ -1046,6 +1078,8 @@ func registerWithProfileFieldErrorsFromError(err error) []fieldError {
 		return []fieldError{{Pointer: "/year_end_month", Detail: detail}}
 	case strings.Contains(detail, "year-end day"):
 		return []fieldError{{Pointer: "/year_end_day", Detail: detail}}
+	case strings.Contains(detail, "director"):
+		return []fieldError{{Pointer: "/directors", Detail: detail}}
 	default:
 		return nil
 	}
@@ -1068,6 +1102,8 @@ func profileFieldErrorsFromError(err error) []fieldError {
 		return []fieldError{{Pointer: "/year_end/day", Detail: detail}}
 	case strings.Contains(detail, "asset id"):
 		return []fieldError{{Pointer: "/logo_asset_id", Detail: detail}}
+	case strings.Contains(detail, "director"):
+		return []fieldError{{Pointer: "/directors", Detail: detail}}
 	default:
 		return nil
 	}
@@ -1142,6 +1178,7 @@ func profileToResponse(profile CompanyProfile) profileResponse {
 		VATNumber:       cloneStringPointer(profile.VATNumber),
 		BankDetails:     profile.BankDetails,
 		Shareholders:    append([]Shareholder{}, profile.Shareholders...),
+		Directors:       append([]Director{}, profile.Directors...),
 	}
 	if profile.LogoAssetID != nil {
 		id := *profile.LogoAssetID

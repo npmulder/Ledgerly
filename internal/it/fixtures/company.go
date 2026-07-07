@@ -118,13 +118,6 @@ func CompanyIncorporationDate(date time.Time) CompanyOverride {
 	}
 }
 
-// CompanyVATRegistered overrides whether VAT return reporting applies.
-func CompanyVATRegistered(registered bool) CompanyOverride {
-	return func(profile *identity.CompanyProfile) {
-		profile.IsVATRegistered = registered
-	}
-}
-
 func npmCompanyProfile() identity.CompanyProfile {
 	return identity.CompanyProfile{
 		TradingName:   "NPM Limited",
@@ -148,6 +141,10 @@ func npmCompanyProfile() identity.CompanyProfile {
 		},
 		Shareholders: []identity.Shareholder{
 			{Name: "N. Meyer", Shares: 100, Class: "ordinary \u00a31"},
+		},
+		Directors: []identity.Director{
+			{Name: "N. Meyer", IsChair: true},
+			{Name: "A. Patel"},
 		},
 	}
 }
@@ -176,6 +173,7 @@ func patchCompanyProfile(t testing.TB, h *harness.Harness, profile identity.Comp
 		"vat_number":        profile.VATNumber,
 		"bank_details":      profile.BankDetails,
 		"shareholders":      profile.Shareholders,
+		"directors":         profile.Directors,
 	}
 
 	responseBody, err := doJSONResult(t, h, nethttp.MethodPatch, "/api/identity/profile", body, nethttp.StatusOK)
@@ -226,6 +224,7 @@ type companyProfileResponse struct {
 	VATNumber         *string                   `json:"vat_number"`
 	BankDetails       identity.BankDetails      `json:"bank_details"`
 	Shareholders      []identity.Shareholder    `json:"shareholders"`
+	Directors         []identity.Director       `json:"directors"`
 }
 
 type yearEndResponse struct {
@@ -256,5 +255,6 @@ func decodeCompanyProfile(body []byte) (identity.CompanyProfile, error) {
 		VATNumber:       response.VATNumber,
 		BankDetails:     response.BankDetails,
 		Shareholders:    response.Shareholders,
+		Directors:       response.Directors,
 	}, nil
 }
