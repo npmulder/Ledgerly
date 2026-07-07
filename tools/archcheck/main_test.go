@@ -70,6 +70,27 @@ func TestBoundaryDeclaredDependenciesPass(t *testing.T) {
 	}
 }
 
+func TestBoundaryMCPBelongsToCLIInterfaceModule(t *testing.T) {
+	findings := checkPackageBoundaries([]goPackage{
+		{
+			ImportPath: testModulePath + "/internal/cli",
+			Imports: []string{
+				testModulePath + "/internal/mcp",
+			},
+		},
+		{
+			ImportPath: testModulePath + "/internal/mcp",
+			Imports: []string{
+				testModulePath + "/internal/cli/gen",
+			},
+		},
+	}, testModulePath)
+
+	if len(findings) != 0 {
+		t.Fatalf("expected MCP/CLI split package imports to pass, got %#v", findings)
+	}
+}
+
 func TestBoundaryMoneyFXMayImportInvoicingRootOnly(t *testing.T) {
 	findings := checkPackageBoundaries([]goPackage{
 		{
