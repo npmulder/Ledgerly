@@ -36,8 +36,25 @@ type migrationFile struct {
 	SQL string
 }
 
+type migrationKey struct {
+	module   string
+	filename string
+}
+
 type migrationConfig struct {
 	seedDevData bool
+}
+
+var historicalMigrationChecksums = map[migrationKey]map[string]struct{}{
+	// CV-338 rewrites dev-only seed blocks to use explicit migration runner
+	// state. Databases that already applied the old files can safely keep their
+	// recorded checksums; fresh installs apply the new SQL.
+	{module: "identity", filename: "003_company_profile.sql"}: {
+		"8feff29291685754dc96a2955b89167fe25d73b198a091fbbcb5a11a0fa3af6a": {},
+	},
+	{module: "identity", filename: "004_assets.sql"}: {
+		"b23a5221da9deea627b01e30433a6fdf19d3ae4af05088b262df7829eea74c87": {},
+	},
 }
 
 // MigrationOption customizes migration execution.
@@ -300,7 +317,7 @@ func applyMigration(ctx context.Context, conn *pgxpool.Conn, migration migration
 		migration.Filename,
 	).Scan(&existingChecksum)
 	if err == nil {
-		if existingChecksum != migration.Checksum {
+		if existingChecksum != migration.Checksum && !isHistoricalMigrationChecksum(migration, existingChecksum) {
 			return false, fmt.Errorf("migration checksum changed for %s/%s", migration.Module, migration.Filename)
 		}
 		return false, nil
@@ -337,6 +354,18 @@ func applyMigration(ctx context.Context, conn *pgxpool.Conn, migration migration
 	}
 
 	return true, nil
+}
+
+func isHistoricalMigrationChecksum(migration migrationFile, checksum string) bool {
+	accepted := historicalMigrationChecksums[migrationKey{
+		module:   migration.Module,
+		filename: migration.Filename,
+	}]
+	if accepted == nil {
+		return false
+	}
+	_, ok := accepted[checksum]
+	return ok
 }
 
 func migrationBool(value bool) string {
