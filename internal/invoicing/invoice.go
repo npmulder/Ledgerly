@@ -88,6 +88,7 @@ type Invoice struct {
 	SendLedgerEntryID   *int64            `json:"-"`
 	SentAt              *time.Time        `json:"sent_at,omitempty"`
 	VATTreatment        VATTreatment      `json:"vat_treatment"`
+	VATRegistered       bool              `json:"vat_registered"`
 	VATRegisteredAtSend *bool             `json:"-"`
 	SettlementTxnRef    *string           `json:"settlement_txn_ref"`
 	SettledDate         *time.Time        `json:"settled_date"`
@@ -109,8 +110,9 @@ type InvoiceReminder struct {
 
 // InvoiceVATContext is the narrow sent-invoice tax context consumed by reports.
 type InvoiceVATContext struct {
-	InvoiceID    string
-	VATTreatment VATTreatment
+	InvoiceID           string
+	VATTreatment        VATTreatment
+	VATRegisteredAtSend bool
 }
 
 // InvoiceLine is an ordered invoice row. LineTotal is computed from quantity

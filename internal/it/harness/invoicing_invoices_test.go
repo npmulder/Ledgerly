@@ -366,6 +366,7 @@ func TestInvoicingDomesticVATUsesCompanyRegistrationSnapshot(t *testing.T) {
 	service := newInvoiceService(t, h, invoicing.WithIdentity(profile))
 	ctx := context.Background()
 	fabrikam := fixtures.Fabrikam(t, h)
+	contoso := fixtures.Contoso(t, h)
 
 	setTestVATRegistered(t, profile, false)
 	draftedWhileUnregistered, err := service.CreateDraft(ctx, fabrikam.ID)
@@ -421,6 +422,42 @@ func TestInvoicingDomesticVATUsesCompanyRegistrationSnapshot(t *testing.T) {
 	}
 	if !registeredSnapshotPayload.VATRegistered {
 		t.Fatal("registered snapshot payload VATRegistered = false, want true")
+	}
+	if registeredSnapshotPayload.Identity.VATNumber == nil {
+		t.Fatal("registered snapshot payload VATNumber = nil, want send-time VAT number")
+	}
+
+	setTestVATRegistered(t, profile, true)
+	reverseChargeDraft, err := service.CreateDraft(ctx, contoso.ID)
+	if err != nil {
+		t.Fatalf("CreateDraft(reverse charge) error = %v", err)
+	}
+	reverseChargeLines := []invoicing.InvoiceLineInput{{
+		Description: "Reverse-charge support",
+		Qty:         invoicing.MustQuantity("1"),
+		UnitPrice:   invoicing.Money{Amount: 50_000, Currency: string(invoicing.CurrencyEUR)},
+	}}
+	reverseChargeDraft, err = service.UpdateDraft(ctx, reverseChargeDraft.ID, invoicing.DraftPatch{Lines: &reverseChargeLines})
+	if err != nil {
+		t.Fatalf("UpdateDraft(reverse charge lines) error = %v", err)
+	}
+	sentReverseCharge, err := service.Send(ctx, reverseChargeDraft.ID)
+	if err != nil {
+		t.Fatalf("Send(reverse charge) error = %v", err)
+	}
+	setTestVATRegistered(t, profile, false)
+	reverseChargeSnapshotPayload, err := service.InvoicePrintPayload(ctx, sentReverseCharge.ID, false)
+	if err != nil {
+		t.Fatalf("InvoicePrintPayload(reverse charge registered snapshot) error = %v", err)
+	}
+	if !reverseChargeSnapshotPayload.VATRegistered {
+		t.Fatal("reverse-charge snapshot payload VATRegistered = false, want true")
+	}
+	if reverseChargeSnapshotPayload.Identity.VATNumber == nil {
+		t.Fatal("reverse-charge snapshot payload VATNumber = nil, want send-time VAT number")
+	}
+	if reverseChargeSnapshotPayload.ReverseChargeNote == nil {
+		t.Fatal("reverse-charge snapshot payload ReverseChargeNote = nil, want wording")
 	}
 
 	setTestVATRegistered(t, profile, true)

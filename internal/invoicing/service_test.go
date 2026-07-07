@@ -124,6 +124,45 @@ func TestComputeTotalsDomesticVATRequiresCompanyRegistration(t *testing.T) {
 	}
 }
 
+func TestComputeTotalsUsesCapturedVATRegistrationSnapshot(t *testing.T) {
+	if err := jurisdiction.LoadActive(jurisdiction.DefaultSelector); err != nil {
+		t.Fatalf("LoadActive(%q) error = %v", jurisdiction.DefaultSelector, err)
+	}
+	service := &Service{
+		identity: vatRegistrationIdentity{registered: true},
+	}
+	vatRegisteredAtSend := false
+	invoice := Invoice{
+		ID:                  "invoice_snapshot_domestic",
+		ClientID:            "client_domestic",
+		Status:              InvoiceStatusDraft,
+		IssueDate:           time.Date(2025, 5, 1, 0, 0, 0, 0, time.UTC),
+		DueDate:             time.Date(2025, 5, 31, 0, 0, 0, 0, time.UTC),
+		Currency:            CurrencyGBP,
+		VATTreatment:        VATTreatmentDomestic,
+		VATRegisteredAtSend: &vatRegisteredAtSend,
+		Lines: []InvoiceLine{{
+			ID:          "line_1",
+			InvoiceID:   "invoice_snapshot_domestic",
+			Position:    1,
+			Description: "Consulting",
+			Qty:         MustQuantity("1"),
+			UnitPrice:   Money{Amount: 100_000, Currency: string(CurrencyGBP)},
+		}},
+	}
+
+	computed, err := service.computeTotals(context.Background(), invoice, false)
+	if err != nil {
+		t.Fatalf("computeTotals() error = %v", err)
+	}
+	if computed.VATRegistered {
+		t.Fatal("VATRegistered = true, want captured false snapshot")
+	}
+	if computed.Totals.VAT.Amount != 0 {
+		t.Fatalf("VAT = %v, want zero from captured false snapshot", computed.Totals.VAT)
+	}
+}
+
 func TestNormalizeClientNormalizesOptionalEmail(t *testing.T) {
 	email := " Accounts@Example.COM "
 	client := validContosoClient()

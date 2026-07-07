@@ -437,11 +437,12 @@ func (s *Service) Send(ctx context.Context, id string) (_ Invoice, err error) {
 	if err := validateSendableDraft(draft); err != nil {
 		return Invoice{}, err
 	}
-	vatRegisteredAtSend, err := s.invoiceVATRegisteredForTotals(ctx, draft)
+	vatRegisteredAtSend, err := s.invoiceCompanyVATRegistered(ctx, draft)
 	if err != nil {
 		return Invoice{}, err
 	}
 	draft.VATRegisteredAtSend = &vatRegisteredAtSend
+	draft.VATRegistered = vatRegisteredAtSend
 	draft, err = s.computeTotals(ctx, draft, false)
 	if err != nil {
 		return Invoice{}, err
@@ -483,6 +484,7 @@ func (s *Service) Send(ctx context.Context, id string) (_ Invoice, err error) {
 	}
 	sent.Lines = draft.Lines
 	sent.Totals = draft.Totals
+	sent.VATRegistered = vatRegisteredAtSend
 	sent.sendRateLock = &lock
 	if err := s.publish(ctx, tx, InvoiceSent{
 		InvoiceID: sent.ID,
@@ -759,6 +761,7 @@ func (s *Service) MarkSettled(ctx context.Context, tx db.Tx, id string, txnRef s
 	}
 	settled.Lines = invoice.Lines
 	settled.Totals = invoice.Totals
+	settled.VATRegistered = invoice.VATRegistered
 
 	if err := s.publish(ctx, tx, InvoiceSettled{
 		InvoiceID:      invoice.ID,
@@ -1292,23 +1295,23 @@ func (s *Service) computeTotals(ctx context.Context, invoice Invoice, includeDra
 		}
 	}
 
+	vatRegistered, err := s.invoiceCompanyVATRegistered(ctx, invoice)
+	if err != nil {
+		return Invoice{}, err
+	}
+	invoice.VATRegistered = vatRegistered
+
 	vat := Money{Currency: string(invoice.Currency)}
-	if !subtotal.IsZero() && invoice.VATTreatment == VATTreatmentDomestic {
-		vatRegistered, err := s.invoiceVATRegisteredForTotals(ctx, invoice)
+	if !subtotal.IsZero() && invoice.VATTreatment == VATTreatmentDomestic && vatRegistered {
+		vatRate, _, err := jurisdiction.VATStandardRateForDate(invoice.IssueDate)
+		if err != nil {
+			return Invoice{}, fmt.Errorf("invoicing: VAT rate: %w", err)
+		}
+		rat, err := rateRat(vatRate.String())
 		if err != nil {
 			return Invoice{}, err
 		}
-		if vatRegistered {
-			vatRate, _, err := jurisdiction.VATStandardRateForDate(invoice.IssueDate)
-			if err != nil {
-				return Invoice{}, fmt.Errorf("invoicing: VAT rate: %w", err)
-			}
-			rat, err := rateRat(vatRate.String())
-			if err != nil {
-				return Invoice{}, err
-			}
-			vat = subtotal.MulRat(rat)
-		}
+		vat = subtotal.MulRat(rat)
 	}
 	total, err := subtotal.Add(vat)
 	if err != nil {
@@ -1331,9 +1334,9 @@ func (s *Service) computeTotals(ctx context.Context, invoice Invoice, includeDra
 	return invoice, nil
 }
 
-func (s *Service) invoiceVATRegisteredForTotals(ctx context.Context, invoice Invoice) (bool, error) {
-	if invoice.VATTreatment != VATTreatmentDomestic {
-		return false, nil
+func (s *Service) invoiceCompanyVATRegistered(ctx context.Context, invoice Invoice) (bool, error) {
+	if invoice.VATRegisteredAtSend != nil {
+		return *invoice.VATRegisteredAtSend, nil
 	}
 	if invoice.Status != InvoiceStatusDraft {
 		return sentInvoiceVATRegistered(invoice), nil
@@ -1352,7 +1355,7 @@ func (s *Service) invoiceVATRegisteredForTotals(ctx context.Context, invoice Inv
 }
 
 func invoiceVATRegisteredForPrint(invoice Invoice, currentProfileRegistered bool) bool {
-	if invoice.VATTreatment == VATTreatmentDomestic && invoice.Status != InvoiceStatusDraft {
+	if invoice.Status != InvoiceStatusDraft {
 		return sentInvoiceVATRegistered(invoice)
 	}
 	return currentProfileRegistered

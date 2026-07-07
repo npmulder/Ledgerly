@@ -353,11 +353,12 @@ func (s Store) Invoice(ctx context.Context, tx db.Tx, id string) (Invoice, error
 func (Store) InvoiceVATContextBySendEntryID(ctx context.Context, tx db.Tx, entryID int64) (InvoiceVATContext, error) {
 	var context InvoiceVATContext
 	err := tx.QueryRow(ctx, `
-SELECT invoice_id, vat_treatment
+SELECT invoice_id, vat_treatment, vat_registered_at_send
 FROM invoicing.invoice_send_vat_context
 WHERE send_ledger_entry_id = $1`, entryID).Scan(
 		&context.InvoiceID,
 		&context.VATTreatment,
+		&context.VATRegisteredAtSend,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return InvoiceVATContext{}, ErrInvoiceNotFound
@@ -640,7 +641,7 @@ func (s Store) SetInvoiceSent(ctx context.Context, tx db.Tx, id string, number s
 	if err != nil {
 		return updated, err
 	}
-	if err := s.InsertInvoiceSendVATContext(ctx, tx, updated.ID, sendLedgerEntryID, updated.VATTreatment); err != nil {
+	if err := s.InsertInvoiceSendVATContext(ctx, tx, updated.ID, sendLedgerEntryID, updated.VATTreatment, vatRegisteredAtSend); err != nil {
 		return Invoice{}, err
 	}
 	return updated, nil
@@ -699,20 +700,23 @@ ORDER BY issue_date ASC, id ASC`, dateOnly(from), dateOnly(to))
 	return invoices, nil
 }
 
-func (Store) InsertInvoiceSendVATContext(ctx context.Context, tx db.Tx, invoiceID string, sendLedgerEntryID int64, treatment VATTreatment) error {
+func (Store) InsertInvoiceSendVATContext(ctx context.Context, tx db.Tx, invoiceID string, sendLedgerEntryID int64, treatment VATTreatment, vatRegisteredAtSend bool) error {
 	_, err := tx.Exec(ctx, `
 INSERT INTO invoicing.invoice_send_vat_context (
 	send_ledger_entry_id,
 	invoice_id,
-	vat_treatment
+	vat_treatment,
+	vat_registered_at_send
 ) VALUES (
 	$1,
 	$2,
-	$3
+	$3,
+	$4
 )`,
 		sendLedgerEntryID,
 		invoiceID,
 		string(treatment),
+		vatRegisteredAtSend,
 	)
 	if err != nil {
 		return fmt.Errorf("invoicing: insert invoice send VAT context: %w", err)

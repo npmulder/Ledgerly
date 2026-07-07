@@ -2047,6 +2047,7 @@ export interface components {
             totals: components["schemas"]["InvoicingInvoiceTotals"];
             /** Format: date-time */
             updated_at: string;
+            vat_registered: boolean;
             /** @enum {string} */
             vat_treatment: "domestic" | "reverse-charge-eu-b2b";
         };

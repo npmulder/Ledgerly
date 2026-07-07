@@ -1245,6 +1245,7 @@ type InvoicingInvoice struct {
 	Status           InvoicingInvoiceStatus       `json:"status"`
 	Totals           InvoicingInvoiceTotals       `json:"totals"`
 	UpdatedAt        time.Time                    `json:"updated_at"`
+	VatRegistered    bool                         `json:"vat_registered"`
 	VatTreatment     InvoicingInvoiceVatTreatment `json:"vat_treatment"`
 }
 

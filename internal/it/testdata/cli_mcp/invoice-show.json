@@ -46,5 +46,6 @@
     }
   },
   "updated_at": "string",
+  "vat_registered": "boolean",
   "vat_treatment": "string"
 }

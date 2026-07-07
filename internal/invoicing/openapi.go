@@ -583,6 +583,7 @@ func invoicingComponents() map[string]any {
 					"currency",
 					"lock_id",
 					"vat_treatment",
+					"vat_registered",
 					"settlement_txn_ref",
 					"settled_date",
 					"settled_amount",
@@ -793,6 +794,7 @@ func invoiceProperties() map[string]any {
 		"lock_id":            map[string]any{"type": "string", "nullable": true},
 		"sent_at":            map[string]any{"type": "string", "format": "date-time", "nullable": true},
 		"vat_treatment":      vatTreatmentSchema(),
+		"vat_registered":     map[string]any{"type": "boolean"},
 		"settlement_txn_ref": map[string]any{"type": "string", "nullable": true},
 		"settled_date":       map[string]any{"type": "string", "format": "date-time", "nullable": true},
 		"settled_amount": map[string]any{

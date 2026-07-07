@@ -226,6 +226,11 @@ func (c *vatClassifier) semanticsForEntry(ctx context.Context, entry ledger.Jour
 		}
 		return jurisdiction.VATTreatmentSemantics{}, err
 	}
+	if !invoiceContext.VATRegisteredAtSend {
+		semantics := jurisdiction.VATTreatmentSemantics{}
+		c.cache[lookupID] = semantics
+		return semantics, nil
+	}
 	semantics, err := jurisdiction.VATSemanticsForTreatment(string(invoiceContext.VATTreatment))
 	if err != nil {
 		return jurisdiction.VATTreatmentSemantics{}, fmt.Errorf("reports: VAT semantics for treatment %q: %w", invoiceContext.VATTreatment, err)

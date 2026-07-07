@@ -199,8 +199,9 @@ func (reportsHTTPInvoicing) InvoiceVATContextBySendEntryID(_ context.Context, en
 		return invoicing.InvoiceVATContext{}, invoicing.ErrInvoiceNotFound
 	}
 	return invoicing.InvoiceVATContext{
-		InvoiceID:    "inv_contoso_q2",
-		VATTreatment: invoicing.VATTreatmentReverseChargeEUB2B,
+		InvoiceID:           "inv_contoso_q2",
+		VATTreatment:        invoicing.VATTreatmentReverseChargeEUB2B,
+		VATRegisteredAtSend: true,
 	}, nil
 }
 
