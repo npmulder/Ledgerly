@@ -1,0 +1,86 @@
+meta:
+  id: cit10
+  version: "1.0"
+  name: CIT 10 Test Pack
+  currency: GBP
+tax:
+  year_end:
+    month: 4
+    day: 5
+  corporate_income:
+    "2025-26":
+      standard_rate: "0.10"
+    "2026-27":
+      standard_rate: "0.10"
+  personal_income:
+    "2025-26":
+      personal_allowance_minor_units: 1475000
+      bands:
+        - upto_minor_units: 650000
+          rate: "0.10"
+        - rate: "0.21"
+    "2026-27":
+      personal_allowance_minor_units: 1475000
+      bands:
+        - upto_minor_units: 650000
+          rate: "0.10"
+        - rate: "0.21"
+  dividends:
+    "2025-26":
+      withholding: none
+      personal_tax_set_aside_template: 'set aside personally {{ estimate }}'
+    "2026-27":
+      withholding: none
+      personal_tax_set_aside_template: 'set aside personally {{ estimate }}'
+  vat:
+    regime: uk-shared
+    authority: Isle of Man Customs & Excise
+    "2025-26":
+      standard_rate: "0.20"
+    "2026-27":
+      standard_rate: "0.20"
+    treatments:
+      domestic:
+        output_vat: true
+        vat_return_net_sales: true
+      reverse-charge-eu-b2b:
+        output_vat: false
+        vat_return_net_sales: true
+        reverse_charge_kind: b2b_services_eu
+    reverse_charge:
+      b2b_services_eu:
+        article: Article 196, Directive 2006/112/EC
+        invoice_wording: 'VAT reverse charge applies: VAT to be accounted for by the recipient under Article 196, Council Directive 2006/112/EC. Supplier is established in the Isle of Man.'
+filings:
+  annual_return:
+    due: incorporation_anniversary + 1 month
+    authority: IoM Companies Registry
+  company_tax_return:
+    due: accounting_year_end + 12 months + 1 day
+    required_at_zero_rate: true
+  personal_tax_return:
+    due: tax_year_end + 6 months + 1 day
+    authority: IoM Income Tax Division
+  vat_return:
+    due: quarter_end + 1 month
+    cadence: quarterly
+    authority: Isle of Man Customs & Excise
+director_loans:
+  s455_charge: false
+  credit:
+    status_text: In credit - tax-free to withdraw
+    explainer_template: You can repay yourself up to {{ balance }} at any time with no tax consequence.
+  overdrawn:
+    warn: benefit_in_kind_interest_free
+    warning_template: 'Your loan account is {{ balance }} overdrawn. The Isle of Man has no UK-style s455 charge, but an interest-free loan can create a taxable benefit in kind - charge interest at the official rate or clear it with a dividend.'
+    remedy: clear_with_dividend
+advisor_rules:
+  - id: filing_deadline_window
+    severity: amber
+    surfaces: [dashboard, reports]
+    fact_query: [authority, due_date, filing_name]
+    condition: due_date - today <= 30
+    text_template: '{{ filing_name }} due {{ due_date }} - file with {{ authority }}.'
+    cta:
+      label: Open filing calendar
+      action: reports.openFilingCalendar
