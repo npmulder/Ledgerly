@@ -114,15 +114,6 @@ func (m *Module) RunRecurringInvoices(ctx context.Context) error {
 	return m.service.RunRecurringInvoices(ctx)
 }
 
-func normalizeRecurringStatus(value RecurringTemplateStatus) RecurringTemplateStatus {
-	switch RecurringTemplateStatus(strings.TrimSpace(string(value))) {
-	case RecurringTemplateStatusCanceled:
-		return RecurringTemplateStatusCanceled
-	default:
-		return RecurringTemplateStatusActive
-	}
-}
-
 func normalizeRecurringCadence(value RecurringCadence) RecurringCadence {
 	return RecurringCadence(strings.ToLower(strings.TrimSpace(string(value))))
 }
