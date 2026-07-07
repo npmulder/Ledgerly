@@ -7,6 +7,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/npmulder/ledgerly/internal/moneyfx/money"
@@ -88,6 +89,56 @@ func (s *Service) Reverse(ctx context.Context, tx db.Tx, id EntryID, reason stri
 		Postings:     postings,
 	}
 	return s.post(ctx, tx, reversal, &id)
+}
+
+// ReadSnapshot opens a read-only repeatable-read snapshot for multi-query
+// derived reads, then closes it when fn returns.
+func (s *Service) ReadSnapshot(ctx context.Context, fn ReadSnapshotFunc) error {
+	if s.pool == nil {
+		return fmt.Errorf("ledger: read snapshot requires pool")
+	}
+	if fn == nil {
+		return fmt.Errorf("ledger: read snapshot callback is required")
+	}
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{
+		IsoLevel:   pgx.RepeatableRead,
+		AccessMode: pgx.ReadOnly,
+	})
+	if err != nil {
+		return fmt.Errorf("ledger: begin read snapshot: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback(context.Background())
+	}()
+
+	if err := fn(ctx, readSnapshot{service: s, tx: tx}); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("ledger: commit read snapshot: %w", err)
+	}
+	return nil
+}
+
+type readSnapshot struct {
+	service *Service
+	tx      db.Tx
+}
+
+func (s readSnapshot) AccountBalance(ctx context.Context, code AccountCode, asOf time.Time) (AccountBalance, error) {
+	return s.service.AccountBalanceInTx(ctx, s.tx, code, asOf)
+}
+
+func (s readSnapshot) BalancesByType(ctx context.Context, from time.Time, to time.Time) ([]AccountBalance, error) {
+	return s.service.BalancesByTypeInTx(ctx, s.tx, from, to)
+}
+
+func (s readSnapshot) Entries(ctx context.Context, filter EntryFilter) ([]JournalEntry, error) {
+	return s.service.EntriesInTx(ctx, s.tx, filter)
+}
+
+func (s readSnapshot) Accounts(ctx context.Context) ([]Account, error) {
+	return s.service.AccountsInTx(ctx, s.tx)
 }
 
 // AccountBalance returns the account's native balances grouped by currency and
