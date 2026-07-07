@@ -151,8 +151,7 @@ func TestDirectorsMigrationBackfillsFirstShareholder(t *testing.T) {
 	))
 	if _, err := pool.Exec(ctx, `
 UPDATE identity.company_profile
-SET shareholders = '[{"name":"Legacy Director","shares":100,"class":"ordinary £1"}]'::jsonb,
-	directors = '[]'::jsonb
+SET shareholders = '[{"name":"Legacy Director","shares":100,"class":"ordinary £1"}]'::jsonb
 WHERE id = 1`); err != nil {
 		t.Fatalf("seed legacy shareholder-only profile: %v", err)
 	}

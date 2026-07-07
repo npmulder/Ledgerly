@@ -200,6 +200,23 @@ func TestRegisterWithProfileValidationErrorsUseFieldPointers(t *testing.T) {
 	}
 }
 
+func TestRegisterWithProfileDirectorValidationUsesDirectorsPointer(t *testing.T) {
+	router, _, _ := newTestRouter(t, LoginRateLimit{Capacity: 100, RefillEvery: time.Hour})
+	payload := firstRunProfilePayload()
+	payload["directors"] = []map[string]any{
+		{"name": " "},
+	}
+
+	response := performJSON(router, nethttp.MethodPost, "/api/identity/register-with-profile", payload, nil)
+	if response.Code != nethttp.StatusBadRequest {
+		t.Fatalf("invalid register-with-profile directors status = %d, want %d; body=%s", response.Code, nethttp.StatusBadRequest, response.Body.String())
+	}
+	problem := decodeValidationProblem(t, response)
+	if len(problem.Errors) != 1 || problem.Errors[0].Pointer != "/directors" {
+		t.Fatalf("problem errors = %+v, want pointer /directors", problem.Errors)
+	}
+}
+
 func TestRegisterWithProfileRequiresRegisteredOfficeFields(t *testing.T) {
 	router, _, _ := newTestRouter(t, LoginRateLimit{Capacity: 100, RefillEvery: time.Hour})
 	tests := []struct {
@@ -664,6 +681,28 @@ func TestInvalidProfilePatchReturnsFieldPointers(t *testing.T) {
 	}
 	if len(problem.Errors) != 1 || problem.Errors[0].Pointer != "/trading_name" {
 		t.Fatalf("problem errors = %+v, want pointer /trading_name", problem.Errors)
+	}
+}
+
+func TestProfilePatchDirectorValidationUsesDirectorsPointer(t *testing.T) {
+	router, _, _, _ := newTestRouterWithProfile(t, LoginRateLimit{Capacity: 100, RefillEvery: time.Hour})
+	registerOwner(t, router)
+	cookie := loginOwner(t, router)
+
+	response := performJSON(router, nethttp.MethodPatch, "/api/identity/profile", map[string]any{
+		"directors": []map[string]any{
+			{
+				"name":           "N. Meyer",
+				"appointed_date": "not-a-date",
+			},
+		},
+	}, cookie)
+	if response.Code != nethttp.StatusUnprocessableEntity {
+		t.Fatalf("invalid profile directors status = %d, want %d; body=%s", response.Code, nethttp.StatusUnprocessableEntity, response.Body.String())
+	}
+	problem := decodeValidationProblem(t, response)
+	if len(problem.Errors) != 1 || problem.Errors[0].Pointer != "/directors" {
+		t.Fatalf("problem errors = %+v, want pointer /directors", problem.Errors)
 	}
 }
 

@@ -1064,6 +1064,8 @@ func registerWithProfileFieldErrorsFromError(err error) []fieldError {
 		return []fieldError{{Pointer: "/email", Detail: detail}}
 	case strings.Contains(detail, "password"):
 		return []fieldError{{Pointer: "/password", Detail: detail}}
+	case strings.Contains(detail, "director"):
+		return []fieldError{{Pointer: "/directors", Detail: detail}}
 	case strings.Contains(detail, "name is required"):
 		return []fieldError{{Pointer: "/name", Detail: detail}}
 	case strings.Contains(detail, "trading name"):
@@ -1078,8 +1080,6 @@ func registerWithProfileFieldErrorsFromError(err error) []fieldError {
 		return []fieldError{{Pointer: "/year_end_month", Detail: detail}}
 	case strings.Contains(detail, "year-end day"):
 		return []fieldError{{Pointer: "/year_end_day", Detail: detail}}
-	case strings.Contains(detail, "director"):
-		return []fieldError{{Pointer: "/directors", Detail: detail}}
 	default:
 		return nil
 	}
@@ -1094,6 +1094,8 @@ func profileFieldErrorsFromError(err error) []fieldError {
 		return []fieldError{{Pointer: "/legal_name", Detail: detail}}
 	case strings.Contains(detail, "company number"):
 		return []fieldError{{Pointer: "/company_number", Detail: detail}}
+	case strings.Contains(detail, "director"):
+		return []fieldError{{Pointer: "/directors", Detail: detail}}
 	case strings.Contains(detail, "incorporation date") || strings.Contains(detail, "parse date") || strings.Contains(detail, "date is required"):
 		return []fieldError{{Pointer: "/incorporation_date", Detail: detail}}
 	case strings.Contains(detail, "year-end month"):
@@ -1102,8 +1104,6 @@ func profileFieldErrorsFromError(err error) []fieldError {
 		return []fieldError{{Pointer: "/year_end/day", Detail: detail}}
 	case strings.Contains(detail, "asset id"):
 		return []fieldError{{Pointer: "/logo_asset_id", Detail: detail}}
-	case strings.Contains(detail, "director"):
-		return []fieldError{{Pointer: "/directors", Detail: detail}}
 	default:
 		return nil
 	}

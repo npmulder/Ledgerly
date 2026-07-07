@@ -10,7 +10,6 @@ CREATE TABLE IF NOT EXISTS identity.company_profile (
 	vat_number text,
 	bank_details jsonb NOT NULL DEFAULT '{}'::jsonb,
 	shareholders jsonb NOT NULL DEFAULT '[]'::jsonb,
-	directors jsonb NOT NULL DEFAULT '[]'::jsonb,
 	logo_asset_id uuid,
 	created_at timestamptz NOT NULL DEFAULT now(),
 	updated_at timestamptz NOT NULL DEFAULT now(),
@@ -19,7 +18,6 @@ CREATE TABLE IF NOT EXISTS identity.company_profile (
 	CONSTRAINT company_profile_registered_office_object CHECK (jsonb_typeof(registered_office) = 'object'),
 	CONSTRAINT company_profile_bank_details_object CHECK (jsonb_typeof(bank_details) = 'object'),
 	CONSTRAINT company_profile_shareholders_array CHECK (jsonb_typeof(shareholders) = 'array'),
-	CONSTRAINT company_profile_directors_array CHECK (jsonb_typeof(directors) = 'array'),
 	CONSTRAINT company_profile_year_end_month_check CHECK (year_end_month BETWEEN 1 AND 12),
 	CONSTRAINT company_profile_year_end_day_check CHECK (
 		(year_end_month IN (1, 3, 5, 7, 8, 10, 12) AND year_end_day BETWEEN 1 AND 31)
@@ -48,8 +46,7 @@ BEGIN
 			year_end_day,
 			vat_number,
 			bank_details,
-			shareholders,
-			directors
+			shareholders
 		)
 		VALUES (
 			1,
@@ -78,17 +75,6 @@ BEGIN
 					'name', 'N. Meyer',
 					'shares', 100,
 					'class', 'ordinary £1'
-				)
-			),
-			jsonb_build_array(
-				jsonb_build_object(
-					'name', 'N. Meyer',
-					'appointed_date', '2020-07-14',
-					'is_chair', true
-				),
-				jsonb_build_object(
-					'name', 'A. Patel',
-					'appointed_date', '2020-07-14'
 				)
 			)
 		)

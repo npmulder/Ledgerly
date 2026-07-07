@@ -14,6 +14,45 @@ WHERE jsonb_typeof(directors) = 'array'
 	AND jsonb_array_length(shareholders) > 0
 	AND NULLIF(btrim(shareholders->0->>'name'), '') IS NOT NULL;
 
+UPDATE identity.company_profile
+SET directors = jsonb_build_array(
+	jsonb_build_object(
+		'name', 'N. Meyer',
+		'appointed_date', '2020-07-14',
+		'is_chair', true
+	),
+	jsonb_build_object(
+		'name', 'A. Patel',
+		'appointed_date', '2020-07-14'
+	)
+)
+WHERE id = 1
+	AND (
+		current_database() = 'ledgerly_dev'
+		OR current_database() = 'ledgerly_test'
+		OR current_database() LIKE 'ledgerly\_test\_%' ESCAPE '\'
+		OR current_database() LIKE '%\_test' ESCAPE '\'
+	)
+	AND trading_name = 'NPM Limited'
+	AND legal_name = 'NPM Limited'
+	AND company_number = '137792C'
+	AND incorporation_date = DATE '2020-07-14'
+	AND jsonb_typeof(shareholders) = 'array'
+	AND shareholders = jsonb_build_array(
+		jsonb_build_object(
+			'name', 'N. Meyer',
+			'shares', 100,
+			'class', 'ordinary £1'
+		)
+	)
+	AND jsonb_typeof(directors) = 'array'
+	AND directors = jsonb_build_array(
+		jsonb_build_object(
+			'name', 'N. Meyer',
+			'is_chair', true
+		)
+	);
+
 DO $ledgerly_directors_constraint$
 BEGIN
 	IF NOT EXISTS (
