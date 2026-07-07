@@ -438,7 +438,7 @@ function DividendDocumentHeader({
   kind: string;
   company: DividendCompanySnapshot;
 }) {
-  const logoSrc = company.logo_asset_url ?? null;
+  const logoSrc = company.logo_data_uri ?? company.logo_asset_url ?? null;
 
   return (
     <header className="dividend-print__header">

@@ -399,6 +399,7 @@ func dividendsComponents() map[string]any {
 					"director_name":     map[string]any{"type": "string"},
 					"logo_asset_id":     map[string]any{"type": "string", "nullable": true},
 					"logo_asset_url":    map[string]any{"type": "string", "nullable": true},
+					"logo_data_uri":     map[string]any{"type": "string", "nullable": true},
 				},
 				"additionalProperties": false,
 			},

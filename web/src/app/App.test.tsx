@@ -10,6 +10,8 @@ const originalLocalStorage = Object.getOwnPropertyDescriptor(
   window,
   "localStorage",
 );
+const dividendSnapshotLogoDataURI =
+  "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciLz4=";
 
 afterEach(() => {
   cleanup();
@@ -184,7 +186,7 @@ describe("App routing shell", () => {
     expect(screen.getByText(/withholding: none/)).toBeInTheDocument();
     expect(document.querySelector(".dividend-print__brand img")).toHaveAttribute(
       "src",
-      "/api/identity/assets/logo-snapshot",
+      dividendSnapshotLogoDataURI,
     );
     expect(
       document.querySelector(".app-shell__header"),
@@ -446,6 +448,7 @@ function dividendDocumentPayload() {
         legal_name: "NPM Limited",
         logo_asset_id: "logo-snapshot",
         logo_asset_url: "/api/identity/assets/logo-snapshot",
+        logo_data_uri: dividendSnapshotLogoDataURI,
         registered_office: {
           country: "IM",
           line1: "18 Athol St",

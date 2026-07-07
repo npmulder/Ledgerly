@@ -511,6 +511,14 @@ func normalizeCompanySnapshot(snapshot *CompanySnapshot) (*CompanySnapshot, erro
 			normalized.LogoAssetURL = &logoURL
 		}
 	}
+	if normalized.LogoDataURI != nil {
+		logoDataURI := strings.TrimSpace(*normalized.LogoDataURI)
+		if logoDataURI == "" {
+			normalized.LogoDataURI = nil
+		} else {
+			normalized.LogoDataURI = &logoDataURI
+		}
+	}
 	if normalized.LegalName == "" {
 		return nil, fmt.Errorf("dividends: company snapshot legal name is required: %w", ErrInvalidDeclaration)
 	}

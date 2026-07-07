@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -59,6 +60,7 @@ func TestIdentityPropagation(t *testing.T) {
 
 	oldLogo := putIdentityPropagationLogo(t, h, "old-logo.png", identityPropagationPNG(t, color.RGBA{R: 19, G: 67, B: 116, A: 255}))
 	oldLogoBytes, oldLogoHeader := getIdentityPropagationAsset(t, h, oldLogo.AssetURL)
+	oldLogoDataURI := identityPropagationLogoDataURI(oldLogoBytes)
 	assertIdentityPropagationCacheHeaders(t, oldLogoHeader)
 
 	oldInvoice := sendIdentityPropagationInvoice(t, ctx, invoiceService, contoso.ID, "old-retainer", 450_000)
@@ -85,7 +87,9 @@ func TestIdentityPropagation(t *testing.T) {
 	if patchedProfile.TradingName != newTradingName {
 		t.Fatalf("PATCH profile trading_name = %q, want %q", patchedProfile.TradingName, newTradingName)
 	}
-	newLogo := putIdentityPropagationLogo(t, h, "new-logo.png", identityPropagationPNG(t, color.RGBA{R: 24, G: 140, B: 96, A: 255}))
+	newLogoBytes := identityPropagationPNG(t, color.RGBA{R: 24, G: 140, B: 96, A: 255})
+	newLogoDataURI := identityPropagationLogoDataURI(newLogoBytes)
+	newLogo := putIdentityPropagationLogo(t, h, "new-logo.png", newLogoBytes)
 	assertIdentityPropagationProfileUpdatedEvents(t, profileUpdated, 2)
 	if newLogo.AssetURL == oldLogo.AssetURL {
 		t.Fatalf("new logo asset URL = old URL %s, want replacement asset", newLogo.AssetURL)
@@ -112,8 +116,8 @@ func TestIdentityPropagation(t *testing.T) {
 	newDeclaration = waitForIdentityPropagationDividendAssets(t, ctx, dividendService, newDeclaration.ID)
 	newVoucherBytes, _ := getIdentityPropagationAsset(t, h, identityPropagationAssetURL(*newDeclaration.VoucherAsset))
 	newMinutesBytes, _ := getIdentityPropagationAsset(t, h, identityPropagationAssetURL(*newDeclaration.MinutesAsset))
-	assertIdentityPropagationPDFText(t, newVoucherBytes, "new dividend voucher", newTradingName, newLogo.AssetURL)
-	assertIdentityPropagationPDFText(t, newMinutesBytes, "new board minutes", newTradingName, newLogo.AssetURL)
+	assertIdentityPropagationPDFText(t, newVoucherBytes, "new dividend voucher", newTradingName, newLogo.AssetURL, newLogoDataURI)
+	assertIdentityPropagationPDFText(t, newMinutesBytes, "new board minutes", newTradingName, newLogo.AssetURL, newLogoDataURI)
 
 	assertIdentityPropagationAssetHash(t, h, *oldInvoice.PDFAsset, beforeHashes["invoice_pdf"], "old invoice PDF")
 	assertIdentityPropagationAssetHash(t, h, identityPropagationAssetURL(*oldDeclaration.VoucherAsset), beforeHashes["voucher"], "old dividend voucher")
@@ -129,6 +133,9 @@ func TestIdentityPropagation(t *testing.T) {
 	}
 	if oldCompany.LogoAssetURL == nil || *oldCompany.LogoAssetURL != oldLogo.AssetURL {
 		t.Fatalf("old declaration preview logo_asset_url = %v, want %s", oldCompany.LogoAssetURL, oldLogo.AssetURL)
+	}
+	if oldCompany.LogoDataURI == nil || *oldCompany.LogoDataURI != oldLogoDataURI {
+		t.Fatalf("old declaration preview logo_data_uri = %v, want declaration-time old logo data URI", oldCompany.LogoDataURI)
 	}
 
 	assertIdentityPropagationNoCopies(t, ctx, h)
@@ -239,6 +246,9 @@ func identityPropagationDividendPDF(kind string, payload dividends.DividendDocum
 	}
 	if company.LogoAssetURL != nil {
 		lines = append(lines, "logo_asset_url="+*company.LogoAssetURL)
+	}
+	if company.LogoDataURI != nil {
+		lines = append(lines, "logo_data_uri="+*company.LogoDataURI)
 	}
 	return identityPropagationPDF(lines...), nil
 }
@@ -737,6 +747,10 @@ func identityPropagationPNG(t testing.TB, fill color.RGBA) []byte {
 		t.Fatalf("encode test PNG: %v", err)
 	}
 	return buf.Bytes()
+}
+
+func identityPropagationLogoDataURI(data []byte) string {
+	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(data)
 }
 
 func identityPropagationMoney(amount int64) money.Money {
