@@ -2047,6 +2047,7 @@ export interface components {
             totals: components["schemas"]["InvoicingInvoiceTotals"];
             /** Format: date-time */
             updated_at: string;
+            vat_registered: boolean;
             /** @enum {string} */
             vat_treatment: "domestic" | "reverse-charge-eu-b2b";
         };
@@ -2118,6 +2119,7 @@ export interface components {
             locked_rate?: components["schemas"]["InvoicingLockedRate"] | null;
             reverse_charge_note?: string | null;
             vat_rate: string;
+            vat_registered: boolean;
             vat_tax_year: string;
         };
         InvoicingInvoiceStatusCount: {

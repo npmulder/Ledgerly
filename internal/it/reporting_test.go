@@ -46,7 +46,7 @@ func TestReportingSuite(t *testing.T) {
 		financialYear := reports.Period{From: reportingDay(2025, time.April, 1), To: reportingDay(2026, time.March, 31)}
 
 		h := harness.New(t, harness.Options{ClockStart: issueDate.Add(9 * time.Hour)})
-		fixtures.Company(t, h, fixtures.CompanyYearEnd(time.March, 31))
+		fixtures.Company(t, h, fixtures.CompanyYearEnd(time.March, 31), fixtures.CompanyVATRegistered(true))
 		fixtures.Rates(t, h, fixtures.RatesStep(map[time.Time]string{
 			issueDate:  "0.8500",
 			settleDate: "0.8600",
@@ -176,7 +176,7 @@ func TestReportingSuite(t *testing.T) {
 	t.Run("quarter boundaries", func(t *testing.T) {
 		ctx := context.Background()
 		h := harness.New(t, harness.Options{ClockStart: reportingDay(2025, time.June, 30).Add(9 * time.Hour)})
-		fixtures.Company(t, h, fixtures.CompanyYearEnd(time.March, 31))
+		fixtures.Company(t, h, fixtures.CompanyYearEnd(time.March, 31), fixtures.CompanyVATRegistered(true))
 		invoices := newReportingInvoiceService(t, h)
 		reportService := newReportingReportsService(t, h, invoices, newReportingArchiveStore())
 		fabrikam := fixtures.Fabrikam(t, h)

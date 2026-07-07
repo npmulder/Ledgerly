@@ -20,9 +20,12 @@ var (
 	ErrUnauthenticated    = errors.New("unauthenticated")
 	ErrForbidden          = errors.New("forbidden")
 	ErrUserNotFound       = errors.New("user not found")
-	ErrAssetNotFound      = errors.New("identity: asset not found")
-	ErrAssetTooLarge      = errors.New("identity: asset exceeds maximum size")
-	ErrUnsupportedAsset   = errors.New("identity: unsupported asset MIME type")
+	// ErrProfileNotFound is returned when the single profile row has not been
+	// initialised yet.
+	ErrProfileNotFound  = errors.New("identity: company profile not found")
+	ErrAssetNotFound    = errors.New("identity: asset not found")
+	ErrAssetTooLarge    = errors.New("identity: asset exceeds maximum size")
+	ErrUnsupportedAsset = errors.New("identity: unsupported asset MIME type")
 )
 
 // Identity is the company-profile API exposed to other modules.

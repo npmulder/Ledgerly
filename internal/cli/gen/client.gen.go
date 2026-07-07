@@ -1251,6 +1251,7 @@ type InvoicingInvoice struct {
 	Status           InvoicingInvoiceStatus       `json:"status"`
 	Totals           InvoicingInvoiceTotals       `json:"totals"`
 	UpdatedAt        time.Time                    `json:"updated_at"`
+	VatRegistered    bool                         `json:"vat_registered"`
 	VatTreatment     InvoicingInvoiceVatTreatment `json:"vat_treatment"`
 }
 
@@ -1343,6 +1344,7 @@ type InvoicingInvoicePrintPayload struct {
 	LockedRate        *InvoicingLockedRate          `json:"locked_rate"`
 	ReverseChargeNote *string                       `json:"reverse_charge_note"`
 	VatRate           string                        `json:"vat_rate"`
+	VatRegistered     bool                          `json:"vat_registered"`
 	VatTaxYear        string                        `json:"vat_tax_year"`
 }
 

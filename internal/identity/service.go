@@ -21,10 +21,6 @@ import (
 
 const dateLayout = "2006-01-02"
 
-// ErrProfileNotFound is returned when the single profile row has not been
-// initialised yet.
-var ErrProfileNotFound = errors.New("identity: company profile not found")
-
 const patTokenPrefix = "lgy_"
 
 type storedUser struct {
