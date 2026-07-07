@@ -243,7 +243,11 @@ function DividendVoucherDocument({
       className="dividend-print dividend-print--voucher"
       data-ledgerly-print-ready="true"
     >
-      <DividendDocumentHeader kind="Dividend voucher" company={company} />
+      <DividendDocumentHeader
+        company={company}
+        kind="Dividend voucher"
+        showRegisteredOffice
+      />
 
       <dl className="dividend-print__grid" aria-label="Dividend details">
         <DocumentFact
@@ -434,35 +438,39 @@ function ReportsPLDocument({ payload }: { payload: ReportsPLPrintPayload }) {
 function DividendDocumentHeader({
   kind,
   company,
+  showRegisteredOffice = false,
 }: {
   kind: string;
   company: DividendCompanySnapshot;
+  showRegisteredOffice?: boolean;
 }) {
   const logoSrc = company.logo_data_uri ?? company.logo_asset_url ?? null;
+  const heading = (
+    <>
+      <p className="dividend-print__eyebrow">{kind}</p>
+      <h1>{company.legal_name}</h1>
+      {company.trading_name !== company.legal_name ? (
+        <p>Trading as {company.trading_name}</p>
+      ) : null}
+      <p>Company no. {company.company_number}</p>
+      {showRegisteredOffice ? (
+        <p>
+          Registered office: {addressLines(company.registered_office).join(", ")}
+        </p>
+      ) : null}
+    </>
+  );
 
   return (
     <header className="dividend-print__header">
-      <div className="dividend-print__brand">
-        {logoSrc ? (
-          <img alt={company.trading_name} src={logoSrc} />
-        ) : (
-          <div className="dividend-print__brand-mark">
-            {initials(company.trading_name)}
-          </div>
-        )}
-        <div>
-          <p className="dividend-print__eyebrow">{kind}</p>
-          <h1>{company.legal_name}</h1>
-          {company.trading_name !== company.legal_name ? (
-            <p>Trading as {company.trading_name}</p>
-          ) : null}
-          <p>Company no. {company.company_number}</p>
-          <p>
-            Registered office:{" "}
-            {addressLines(company.registered_office).join(", ")}
-          </p>
+      {logoSrc ? (
+        <div className="dividend-print__brand">
+          <img alt="" aria-hidden="true" src={logoSrc} />
+          <div>{heading}</div>
         </div>
-      </div>
+      ) : (
+        heading
+      )}
     </header>
   );
 }
