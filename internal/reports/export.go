@@ -159,7 +159,7 @@ func (s *Service) ShareExportPack(ctx context.Context, request ShareRequest) (Sh
 type exportPackData struct {
 	period      Period
 	pl          PL
-	vat         VATFigures
+	vat         *VATFigures
 	journal     []ledger.JournalEntry
 	dlaRows     []dla.Entry
 	invoices    []StoredDocument
@@ -174,10 +174,6 @@ type exportPackData struct {
 
 func (s *Service) exportPackData(ctx context.Context, period Period) (exportPackData, error) {
 	pl, err := s.ProfitAndLoss(ctx, period)
-	if err != nil {
-		return exportPackData{}, err
-	}
-	vat, err := s.VATReturn(ctx, period)
 	if err != nil {
 		return exportPackData{}, err
 	}
@@ -196,6 +192,14 @@ func (s *Service) exportPackData(ctx context.Context, period Period) (exportPack
 	facts, err := s.identity.CompanyFacts(ctx)
 	if err != nil {
 		return exportPackData{}, err
+	}
+	var vat *VATFigures
+	if facts.IsVATRegistered {
+		figures, err := s.VATReturn(ctx, period)
+		if err != nil {
+			return exportPackData{}, err
+		}
+		vat = &figures
 	}
 	invoiceDocs, err := s.invoiceDocuments(ctx, period)
 	if err != nil {
@@ -323,9 +327,11 @@ func buildExportArchive(data exportPackData) ([]byte, error) {
 	files := []archiveFile{
 		{Name: "pl.csv", Bytes: mustBuildCSV(plCSVRows(data.pl))},
 		{Name: "pl.pdf", Bytes: data.plPDF},
-		{Name: "vat.csv", Bytes: mustBuildCSV(vatCSVRows(data.vat))},
 		{Name: "journal.csv", Bytes: mustBuildCSV(journalCSVRows(data.journal))},
 		{Name: "dla.csv", Bytes: mustBuildCSV(dlaCSVRows(data.dlaRows))},
+	}
+	if data.vat != nil {
+		files = append(files, archiveFile{Name: "vat.csv", Bytes: mustBuildCSV(vatCSVRows(*data.vat))})
 	}
 	files = append(files, documentsToArchiveFiles(data.invoices)...)
 	files = append(files, documentsToArchiveFiles(data.dividends)...)
@@ -563,11 +569,16 @@ type manifestFile struct {
 }
 
 func exportPackDataVersion(data exportPackData, appVersion string) (string, error) {
+	var vat *vatResponse
+	if data.vat != nil {
+		response := vatToResponse(*data.vat)
+		vat = &response
+	}
 	payload := struct {
 		Period    periodResponse        `json:"period"`
 		App       string                `json:"app_version"`
 		PL        plResponse            `json:"pl"`
-		VAT       vatResponse           `json:"vat"`
+		VAT       *vatResponse          `json:"vat,omitempty"`
 		Journal   []ledger.JournalEntry `json:"journal"`
 		DLA       []dla.Entry           `json:"dla"`
 		Invoices  []documentDigest      `json:"invoices"`
@@ -580,7 +591,7 @@ func exportPackDataVersion(data exportPackData, appVersion string) (string, erro
 		},
 		App:     appVersion,
 		PL:      plToResponse(data.pl),
-		VAT:     vatToResponse(data.vat),
+		VAT:     vat,
 		Journal: data.journal,
 		DLA:     data.dlaRows,
 		Company: manifestCompany{

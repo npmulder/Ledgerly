@@ -207,6 +207,7 @@ func invoicePayloadBase(issueDate time.Time, clientID string, clientName string)
 			TermsDays:       30,
 			CreatedAt:       issueDate,
 		},
+		VATRegistered: true,
 		Identity: invoicing.InvoicePrintIdentity{
 			TradingName:   "Ledgerly Consulting",
 			LegalName:     "Ledgerly Consulting Limited",

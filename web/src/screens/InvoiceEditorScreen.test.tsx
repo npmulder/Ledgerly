@@ -86,6 +86,26 @@ describe("InvoiceEditorScreen", () => {
     expect(totalRow("Total")).toHaveTextContent("€1,000.00");
   });
 
+  it("keeps domestic totals VAT-free when the company is not VAT registered", async () => {
+    const user = userEvent.setup();
+    const api = editorApi({ invoice: draftInvoice({ vat_registered: false }) });
+    vi.stubGlobal("fetch", api.fetch);
+    renderEditor();
+
+    await screen.findByText("Contoso GmbH");
+    expect(totalRow("VAT")).toHaveTextContent("€0.00");
+    expect(totalRow("Total")).toHaveTextContent("€1,000.00");
+
+    await user.selectOptions(
+      screen.getByLabelText("VAT treatment"),
+      "reverse-charge-eu-b2b",
+    );
+    await user.selectOptions(screen.getByLabelText("VAT treatment"), "domestic");
+
+    expect(totalRow("VAT")).toHaveTextContent("€0.00");
+    expect(totalRow("Total")).toHaveTextContent("€1,000.00");
+  });
+
   it("shows draft indicative FX rate and sent locked rate source", async () => {
     const user = userEvent.setup();
     const api = editorApi();
@@ -268,7 +288,9 @@ function applyPatch(
     }) ?? invoice.lines;
   const subtotal = lines.reduce((sum, line) => sum + line.line_total.amount, 0);
   const vat =
-    vatTreatment === "domestic" ? Math.round(subtotal * 0.2) : 0;
+    vatTreatment === "domestic" && invoice.vat_registered
+      ? Math.round(subtotal * 0.2)
+      : 0;
   return {
     ...invoice,
     client_id: patch.client_id ?? invoice.client_id,
@@ -317,7 +339,10 @@ function draftInvoice(
 ): InvoicingInvoice {
   const currency = overrides.currency ?? "EUR";
   const subtotal = 100000;
-  const vat = overrides.vat_treatment === "reverse-charge-eu-b2b" ? 0 : 20000;
+  const vatTreatment = overrides.vat_treatment ?? "domestic";
+  const vatRegistered = overrides.vat_registered ?? true;
+  const vat =
+    vatTreatment === "domestic" && vatRegistered ? 20000 : 0;
   return {
     client_id: "client_contoso",
     created_at: "2026-07-06T10:00:00Z",
@@ -347,7 +372,8 @@ function draftInvoice(
     status: "draft",
     totals: totals(currency, subtotal, vat),
     updated_at: "2026-07-06T10:00:00Z",
-    vat_treatment: "domestic",
+    vat_registered: vatRegistered,
+    vat_treatment: vatTreatment,
     ...overrides,
   };
 }

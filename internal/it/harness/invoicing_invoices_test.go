@@ -359,6 +359,149 @@ func TestInvoicingInvoicePrintPayloadDomesticVATFromPack(t *testing.T) {
 	}
 }
 
+func TestInvoicingDomesticVATUsesCompanyRegistrationSnapshot(t *testing.T) {
+	h := harness.New(t, harness.Options{ClockStart: time.Date(2025, 5, 1, 9, 0, 0, 0, time.UTC)})
+	fixtures.Rates(t, h)
+	profile := testIdentityProfile(t, h)
+	service := newInvoiceService(t, h, invoicing.WithIdentity(profile))
+	ctx := context.Background()
+	fabrikam := fixtures.Fabrikam(t, h)
+	contoso := fixtures.Contoso(t, h)
+
+	setTestVATRegistered(t, profile, false)
+	draftedWhileUnregistered, err := service.CreateDraft(ctx, fabrikam.ID)
+	if err != nil {
+		t.Fatalf("CreateDraft(unregistered) error = %v", err)
+	}
+	unregisteredLines := []invoicing.InvoiceLineInput{{
+		Description: "Unregistered domestic support",
+		Qty:         invoicing.MustQuantity("1"),
+		UnitPrice:   invoicing.Money{Amount: 100_000, Currency: string(invoicing.CurrencyGBP)},
+	}}
+	draftedWhileUnregistered, err = service.UpdateDraft(ctx, draftedWhileUnregistered.ID, invoicing.DraftPatch{Lines: &unregisteredLines})
+	if err != nil {
+		t.Fatalf("UpdateDraft(unregistered lines) error = %v", err)
+	}
+	assertMoney(t, draftedWhileUnregistered.Totals.VAT, 0, "GBP")
+	assertMoney(t, draftedWhileUnregistered.Totals.Total, 100_000, "GBP")
+	if draftedWhileUnregistered.VATTreatment != invoicing.VATTreatmentDomestic {
+		t.Fatalf("unregistered draft VATTreatment = %q, want domestic", draftedWhileUnregistered.VATTreatment)
+	}
+	unregisteredDraftPayload, err := service.InvoicePrintPayload(ctx, draftedWhileUnregistered.ID, true)
+	if err != nil {
+		t.Fatalf("InvoicePrintPayload(unregistered draft) error = %v", err)
+	}
+	if unregisteredDraftPayload.VATRegistered {
+		t.Fatal("unregistered draft payload VATRegistered = true, want false")
+	}
+	if unregisteredDraftPayload.Identity.VATNumber != nil {
+		t.Fatalf("unregistered draft payload VATNumber = %v, want nil", *unregisteredDraftPayload.Identity.VATNumber)
+	}
+
+	setTestVATRegistered(t, profile, true)
+	recomputedBeforeSend, err := service.Invoice(ctx, draftedWhileUnregistered.ID)
+	if err != nil {
+		t.Fatalf("Invoice(recomputed before send) error = %v", err)
+	}
+	assertMoney(t, recomputedBeforeSend.Totals.VAT, 20_000, "GBP")
+	sentAfterRegistration, err := service.Send(ctx, draftedWhileUnregistered.ID)
+	if err != nil {
+		t.Fatalf("Send(after registration) error = %v", err)
+	}
+	assertMoney(t, sentAfterRegistration.Totals.VAT, 20_000, "GBP")
+
+	setTestVATRegistered(t, profile, false)
+	stillVATInvoice, err := service.Invoice(ctx, sentAfterRegistration.ID)
+	if err != nil {
+		t.Fatalf("Invoice(sent after registration) error = %v", err)
+	}
+	assertMoney(t, stillVATInvoice.Totals.VAT, 20_000, "GBP")
+	registeredSnapshotPayload, err := service.InvoicePrintPayload(ctx, sentAfterRegistration.ID, false)
+	if err != nil {
+		t.Fatalf("InvoicePrintPayload(registered snapshot) error = %v", err)
+	}
+	if !registeredSnapshotPayload.VATRegistered {
+		t.Fatal("registered snapshot payload VATRegistered = false, want true")
+	}
+	if registeredSnapshotPayload.Identity.VATNumber == nil {
+		t.Fatal("registered snapshot payload VATNumber = nil, want send-time VAT number")
+	}
+
+	setTestVATRegistered(t, profile, true)
+	reverseChargeDraft, err := service.CreateDraft(ctx, contoso.ID)
+	if err != nil {
+		t.Fatalf("CreateDraft(reverse charge) error = %v", err)
+	}
+	reverseChargeLines := []invoicing.InvoiceLineInput{{
+		Description: "Reverse-charge support",
+		Qty:         invoicing.MustQuantity("1"),
+		UnitPrice:   invoicing.Money{Amount: 50_000, Currency: string(invoicing.CurrencyEUR)},
+	}}
+	reverseChargeDraft, err = service.UpdateDraft(ctx, reverseChargeDraft.ID, invoicing.DraftPatch{Lines: &reverseChargeLines})
+	if err != nil {
+		t.Fatalf("UpdateDraft(reverse charge lines) error = %v", err)
+	}
+	sentReverseCharge, err := service.Send(ctx, reverseChargeDraft.ID)
+	if err != nil {
+		t.Fatalf("Send(reverse charge) error = %v", err)
+	}
+	setTestVATRegistered(t, profile, false)
+	reverseChargeSnapshotPayload, err := service.InvoicePrintPayload(ctx, sentReverseCharge.ID, false)
+	if err != nil {
+		t.Fatalf("InvoicePrintPayload(reverse charge registered snapshot) error = %v", err)
+	}
+	if !reverseChargeSnapshotPayload.VATRegistered {
+		t.Fatal("reverse-charge snapshot payload VATRegistered = false, want true")
+	}
+	if reverseChargeSnapshotPayload.Identity.VATNumber == nil {
+		t.Fatal("reverse-charge snapshot payload VATNumber = nil, want send-time VAT number")
+	}
+	if reverseChargeSnapshotPayload.ReverseChargeNote == nil {
+		t.Fatal("reverse-charge snapshot payload ReverseChargeNote = nil, want wording")
+	}
+
+	setTestVATRegistered(t, profile, true)
+	draftedWhileRegistered, err := service.CreateDraft(ctx, fabrikam.ID)
+	if err != nil {
+		t.Fatalf("CreateDraft(registered) error = %v", err)
+	}
+	registeredLines := []invoicing.InvoiceLineInput{{
+		Description: "Registered domestic support",
+		Qty:         invoicing.MustQuantity("1"),
+		UnitPrice:   invoicing.Money{Amount: 200_000, Currency: string(invoicing.CurrencyGBP)},
+	}}
+	draftedWhileRegistered, err = service.UpdateDraft(ctx, draftedWhileRegistered.ID, invoicing.DraftPatch{Lines: &registeredLines})
+	if err != nil {
+		t.Fatalf("UpdateDraft(registered lines) error = %v", err)
+	}
+	assertMoney(t, draftedWhileRegistered.Totals.VAT, 40_000, "GBP")
+
+	setTestVATRegistered(t, profile, false)
+	sentAfterDeregistration, err := service.Send(ctx, draftedWhileRegistered.ID)
+	if err != nil {
+		t.Fatalf("Send(after deregistration) error = %v", err)
+	}
+	assertMoney(t, sentAfterDeregistration.Totals.VAT, 0, "GBP")
+	assertMoney(t, sentAfterDeregistration.Totals.Total, 200_000, "GBP")
+
+	setTestVATRegistered(t, profile, true)
+	stillZeroVATInvoice, err := service.Invoice(ctx, sentAfterDeregistration.ID)
+	if err != nil {
+		t.Fatalf("Invoice(sent after deregistration) error = %v", err)
+	}
+	assertMoney(t, stillZeroVATInvoice.Totals.VAT, 0, "GBP")
+	zeroSnapshotPayload, err := service.InvoicePrintPayload(ctx, sentAfterDeregistration.ID, false)
+	if err != nil {
+		t.Fatalf("InvoicePrintPayload(unregistered snapshot) error = %v", err)
+	}
+	if zeroSnapshotPayload.VATRegistered {
+		t.Fatal("unregistered snapshot payload VATRegistered = true, want false")
+	}
+	if zeroSnapshotPayload.Identity.VATNumber != nil {
+		t.Fatalf("unregistered snapshot payload VATNumber = %v, want nil", *zeroSnapshotPayload.Identity.VATNumber)
+	}
+}
+
 func TestInvoicingOverdueReadQueriesSweepFactsAndTotals(t *testing.T) {
 	h := harness.New(t, harness.Options{ClockStart: time.Date(2025, 5, 1, 9, 0, 0, 0, time.UTC)})
 	fixtures.Rates(t, h)
@@ -954,6 +1097,13 @@ func testIdentityProfile(t testing.TB, h *harness.Harness) *identity.Transaction
 		t.Fatalf("UpdateProfile(seed) error = %v", err)
 	}
 	return profile
+}
+
+func setTestVATRegistered(t testing.TB, profile *identity.TransactionalProfileService, registered bool) {
+	t.Helper()
+	if err := profile.UpdateProfile(context.Background(), identity.UpdateProfilePatch{IsVATRegistered: &registered}); err != nil {
+		t.Fatalf("UpdateProfile(IsVATRegistered=%v) error = %v", registered, err)
+	}
 }
 
 func stringPtrForTest(value string) *string {

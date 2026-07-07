@@ -182,6 +182,25 @@ describe("App routing shell", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("omits invoice print VAT artifacts when the company is not VAT registered", async () => {
+    installInvoicePrintPayload(
+      "INV-2026-08",
+      unregisteredDomesticPrintPayload(),
+    );
+
+    renderAt("/print/invoice/INV-2026-08");
+
+    expect(
+      await screen.findByRole("heading", {
+        level: 1,
+        name: "INV-2026-08",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("20% VAT")).not.toBeInTheDocument();
+    expect(screen.queryByText("VAT no. GB123456789")).not.toBeInTheDocument();
+    expect(screen.getAllByText("€1,000.00").length).toBeGreaterThan(0);
+  });
+
   it("renders dividend voucher print routes outside the app shell", async () => {
     installDividendPrintPayload(
       "dividend-2026-07",
@@ -196,10 +215,9 @@ describe("App routing shell", () => {
     expect(screen.getByText("£30.00")).toBeInTheDocument();
     expect(screen.getByText("£3,000.00")).toBeInTheDocument();
     expect(screen.getByText(/withholding: none/)).toBeInTheDocument();
-    expect(document.querySelector(".dividend-print__brand img")).toHaveAttribute(
-      "src",
-      dividendSnapshotLogoDataURI,
-    );
+    expect(
+      document.querySelector(".dividend-print__brand img"),
+    ).toHaveAttribute("src", dividendSnapshotLogoDataURI);
     expect(
       document.querySelector(".app-shell__header"),
     ).not.toBeInTheDocument();
@@ -400,8 +418,53 @@ function printPayload() {
     locked_rate: { id: 42, rate: "0.850000000000000000" },
     reverse_charge_note:
       "Reverse charge: customer to account for VAT under Article 196 of Council Directive 2006/112/EC.",
+    vat_registered: true,
     vat_rate: "0.2",
     vat_tax_year: "2026",
+  };
+}
+
+function unregisteredDomesticPrintPayload() {
+  const payload = printPayload();
+  return {
+    ...payload,
+    client: {
+      ...payload.client,
+      name: "Fabrikam Limited",
+      vat_number: null,
+      vat_treatment: "domestic",
+    },
+    identity: {
+      ...payload.identity,
+      vat_number: "GB123456789",
+    },
+    invoice: {
+      ...payload.invoice,
+      client_id: "client-1",
+      currency: "EUR",
+      id: "INV-2026-08",
+      lines: [
+        {
+          description: "Domestic consulting services",
+          id: "line-1",
+          invoice_id: "INV-2026-08",
+          line_total: { amount: 100000, currency: "EUR" },
+          position: 1,
+          qty: "1",
+          unit_price: { amount: 100000, currency: "EUR" },
+        },
+      ],
+      number: "INV-2026-08",
+      totals: {
+        subtotal: { amount: 100000, currency: "EUR" },
+        total: { amount: 100000, currency: "EUR" },
+        vat: { amount: 0, currency: "EUR" },
+      },
+      vat_treatment: "domestic",
+    },
+    locked_rate: null,
+    reverse_charge_note: null,
+    vat_registered: false,
   };
 }
 

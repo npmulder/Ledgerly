@@ -138,7 +138,8 @@ func TestReportsFactProviderMapsVATAndFilings(t *testing.T) {
 	dueDate := time.Date(2026, 7, 30, 0, 0, 0, 0, time.UTC)
 	provider := NewReportsFactProvider(fakeReportsReadAPI{
 		position: reports.VATPosition{
-			Figures: reports.VATFigures{
+			Status: reports.VATRegistrationRegistered,
+			Figures: &reports.VATFigures{
 				NetPosition: money.Money{Amount: 42000, Currency: "GBP"},
 			},
 			DueDate: &dueDate,
@@ -158,7 +159,11 @@ func TestReportsFactProviderMapsVATAndFilings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Gather() error = %v", err)
 	}
-	if got := facts[FactVATPosition].(reports.VATPosition).Figures.NetPosition; got != (money.Money{Amount: 42000, Currency: "GBP"}) {
+	position := facts[FactVATPosition].(reports.VATPosition)
+	if position.Figures == nil {
+		t.Fatal("vat.position figures = nil, want registered VAT figures")
+	}
+	if got := position.Figures.NetPosition; got != (money.Money{Amount: 42000, Currency: "GBP"}) {
 		t.Fatalf("vat.position net = %#v", got)
 	}
 	if got := facts[FactVATDueDate]; got != dueDate {

@@ -2047,6 +2047,7 @@ export interface components {
             totals: components["schemas"]["InvoicingInvoiceTotals"];
             /** Format: date-time */
             updated_at: string;
+            vat_registered: boolean;
             /** @enum {string} */
             vat_treatment: "domestic" | "reverse-charge-eu-b2b";
         };
@@ -2118,6 +2119,7 @@ export interface components {
             locked_rate?: components["schemas"]["InvoicingLockedRate"] | null;
             reverse_charge_note?: string | null;
             vat_rate: string;
+            vat_registered: boolean;
             vat_tax_year: string;
         };
         InvoicingInvoiceStatusCount: {
@@ -2383,11 +2385,13 @@ export interface components {
             tax_year: string;
         };
         ReportsVATResponse: {
-            box1: components["schemas"]["ReportsMoney"];
-            box4: components["schemas"]["ReportsMoney"];
-            box6: components["schemas"]["ReportsMoney"];
-            net_position: components["schemas"]["ReportsMoney"];
+            box1?: components["schemas"]["ReportsMoney"];
+            box4?: components["schemas"]["ReportsMoney"];
+            box6?: components["schemas"]["ReportsMoney"];
+            net_position?: components["schemas"]["ReportsMoney"];
             period: components["schemas"]["ReportsPeriod"];
+            /** @enum {string} */
+            status: "registered" | "not_registered";
         };
         Shareholder: {
             class: string;

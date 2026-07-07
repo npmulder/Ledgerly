@@ -265,6 +265,8 @@ func normalizeClient(client Client) (Client, error) {
 
 	switch client.VATTreatment {
 	case VATTreatmentDomestic:
+		// Domestic is the client's VAT treatment classification. Company VAT
+		// registration controls whether domestic invoices charge VAT.
 	case VATTreatmentReverseChargeEUB2B:
 		if client.VATNumber == nil {
 			fields = append(fields, FieldError{Pointer: "/vat_number", Detail: "is required for reverse-charge EU B2B clients"})

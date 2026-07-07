@@ -120,6 +120,26 @@ func TestFilingCalendarStatusTransitionsUsePackWindow(t *testing.T) {
 	}
 }
 
+func TestFilingCalendarOmitsVATReturnWhenNotRegistered(t *testing.T) {
+	loadIsleOfManPack(t)
+
+	facts := npmFacts()
+	facts.IsVATRegistered = false
+	service := newTestService(t, facts, clock.NewFake(testDate(2026, time.July, 5)))
+
+	calendar, err := service.FilingCalendar()
+	if err != nil {
+		t.Fatalf("FilingCalendar() error = %v", err)
+	}
+
+	if _, ok := filingByKey(calendar, "vat_return"); ok {
+		t.Fatalf("vat_return present for non-registered company: %+v", calendar)
+	}
+	if _, ok := filingByKey(calendar, "annual_return"); !ok {
+		t.Fatalf("annual_return missing from %+v", calendar)
+	}
+}
+
 func TestFilingCalendarDaysUntilAcrossYearSweep(t *testing.T) {
 	loadIsleOfManPack(t)
 
@@ -215,6 +235,7 @@ func npmFacts() identity.CompanyFacts {
 	return identity.CompanyFacts{
 		IncorporationDate: testDate(2020, time.July, 14),
 		YearEnd:           identity.YearEnd{Month: time.March, Day: 31},
+		IsVATRegistered:   true,
 	}
 }
 
