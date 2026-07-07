@@ -234,6 +234,38 @@ func (s *Service) EnsureAccount(ctx context.Context, tx db.Tx, spec AccountSpec)
 	return s.store.EnsureAccount(ctx, tx, spec)
 }
 
+// CreateExpenseAccount creates a user-managed expense account with a unique code.
+func (s *Service) CreateExpenseAccount(ctx context.Context, spec AccountSpec) (_ Account, err error) {
+	if s.pool == nil {
+		return Account{}, fmt.Errorf("ledger: create expense account requires pool")
+	}
+	spec.Type = AccountTypeExpense
+	spec.Currency = nil
+	normalized, err := normalizeAccountSpec(spec)
+	if err != nil {
+		return Account{}, err
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Account{}, fmt.Errorf("ledger: begin expense account transaction: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback(context.Background())
+		}
+	}()
+
+	account, err := s.store.CreateAccount(ctx, tx, normalized)
+	if err != nil {
+		return Account{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return Account{}, fmt.Errorf("ledger: commit expense account transaction: %w", err)
+	}
+	return account, nil
+}
+
 // Accounts lists the chart of accounts ordered by code.
 func (s *Service) Accounts(ctx context.Context) ([]Account, error) {
 	if s.pool == nil {

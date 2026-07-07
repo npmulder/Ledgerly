@@ -70,8 +70,14 @@ const (
 
 // Defines values for BankingPayeeRuleMatchMode.
 const (
-	Contains BankingPayeeRuleMatchMode = "contains"
-	Exact    BankingPayeeRuleMatchMode = "exact"
+	BankingPayeeRuleMatchModeContains BankingPayeeRuleMatchMode = "contains"
+	BankingPayeeRuleMatchModeExact    BankingPayeeRuleMatchMode = "exact"
+)
+
+// Defines values for BankingPayeeRuleRequestMatchMode.
+const (
+	BankingPayeeRuleRequestMatchModeContains BankingPayeeRuleRequestMatchMode = "contains"
+	BankingPayeeRuleRequestMatchModeExact    BankingPayeeRuleRequestMatchMode = "exact"
 )
 
 // Defines values for BankingReviewCardKind.
@@ -291,11 +297,16 @@ const (
 
 // Defines values for LedgerAccountType.
 const (
-	Asset     LedgerAccountType = "asset"
-	Equity    LedgerAccountType = "equity"
-	Expense   LedgerAccountType = "expense"
-	Income    LedgerAccountType = "income"
-	Liability LedgerAccountType = "liability"
+	LedgerAccountTypeAsset     LedgerAccountType = "asset"
+	LedgerAccountTypeEquity    LedgerAccountType = "equity"
+	LedgerAccountTypeExpense   LedgerAccountType = "expense"
+	LedgerAccountTypeIncome    LedgerAccountType = "income"
+	LedgerAccountTypeLiability LedgerAccountType = "liability"
+)
+
+// Defines values for LedgerCreateExpenseAccountRequestType.
+const (
+	LedgerCreateExpenseAccountRequestTypeExpense LedgerCreateExpenseAccountRequestType = "expense"
 )
 
 // Defines values for LedgerTrialBalanceStatus.
@@ -347,6 +358,15 @@ const (
 	InvoicingListInvoicesParamsStatusOverdue InvoicingListInvoicesParamsStatus = "overdue"
 	InvoicingListInvoicesParamsStatusPaid    InvoicingListInvoicesParamsStatus = "paid"
 	InvoicingListInvoicesParamsStatusSent    InvoicingListInvoicesParamsStatus = "sent"
+)
+
+// Defines values for LedgerListAccountsParamsType.
+const (
+	Asset     LedgerListAccountsParamsType = "asset"
+	Equity    LedgerListAccountsParamsType = "equity"
+	Expense   LedgerListAccountsParamsType = "expense"
+	Income    LedgerListAccountsParamsType = "income"
+	Liability LedgerListAccountsParamsType = "liability"
 )
 
 // AdvisorCTA defines model for AdvisorCTA.
@@ -496,6 +516,21 @@ type BankingPayeeRuleCreatedFrom string
 
 // BankingPayeeRuleMatchMode defines model for BankingPayeeRule.MatchMode.
 type BankingPayeeRuleMatchMode string
+
+// BankingPayeeRuleRequest defines model for BankingPayeeRuleRequest.
+type BankingPayeeRuleRequest struct {
+	AccountCode string                           `json:"account_code"`
+	MatchMode   BankingPayeeRuleRequestMatchMode `json:"match_mode"`
+	Matcher     string                           `json:"matcher"`
+}
+
+// BankingPayeeRuleRequestMatchMode defines model for BankingPayeeRuleRequest.MatchMode.
+type BankingPayeeRuleRequestMatchMode string
+
+// BankingPayeeRulesResponse defines model for BankingPayeeRulesResponse.
+type BankingPayeeRulesResponse struct {
+	Rules []BankingPayeeRule `json:"rules"`
+}
 
 // BankingReasonRequest defines model for BankingReasonRequest.
 type BankingReasonRequest struct {
@@ -1048,6 +1083,26 @@ type IdentityRegisterRequest struct {
 	Password string              `json:"password"`
 }
 
+// IdentityRegisterWithProfileRequest defines model for IdentityRegisterWithProfileRequest.
+type IdentityRegisterWithProfileRequest struct {
+	CompanyNumber     string              `json:"company_number"`
+	Email             openapi_types.Email `json:"email"`
+	IncorporationDate openapi_types.Date  `json:"incorporation_date"`
+	LegalName         string              `json:"legal_name"`
+	Name              string              `json:"name"`
+	Password          string              `json:"password"`
+	RegisteredOffice  RegisteredOffice    `json:"registered_office"`
+	TradingName       string              `json:"trading_name"`
+	YearEndDay        int                 `json:"year_end_day"`
+	YearEndMonth      int                 `json:"year_end_month"`
+}
+
+// IdentityRegisterWithProfileResult defines model for IdentityRegisterWithProfileResult.
+type IdentityRegisterWithProfileResult struct {
+	Profile IdentityProfile `json:"profile"`
+	User    IdentityUser    `json:"user"`
+}
+
 // IdentityUser defines model for IdentityUser.
 type IdentityUser struct {
 	CreatedAt  time.Time           `json:"created_at"`
@@ -1424,6 +1479,19 @@ type LedgerAccountsResponse struct {
 	Accounts []LedgerAccount `json:"accounts"`
 }
 
+// LedgerCreateExpenseAccountRequest defines model for LedgerCreateExpenseAccountRequest.
+type LedgerCreateExpenseAccountRequest struct {
+	// Code Unique ledger account code in ####-slug form.
+	Code string `json:"code"`
+	Name string `json:"name"`
+
+	// Type Optional guard value; when present it must be expense.
+	Type *LedgerCreateExpenseAccountRequestType `json:"type,omitempty"`
+}
+
+// LedgerCreateExpenseAccountRequestType Optional guard value; when present it must be expense.
+type LedgerCreateExpenseAccountRequestType string
+
 // LedgerEntriesResponse defines model for LedgerEntriesResponse.
 type LedgerEntriesResponse struct {
 	Entries    []LedgerEntry `json:"entries"`
@@ -1719,6 +1787,15 @@ type InvoicingGetInvoicePrintPayloadParams struct {
 	Draft *bool `form:"draft,omitempty" json:"draft,omitempty"`
 }
 
+// LedgerListAccountsParams defines parameters for LedgerListAccounts.
+type LedgerListAccountsParams struct {
+	// Type Optionally filter accounts by ledger account type. Use type=expense for recode/category pickers.
+	Type *LedgerListAccountsParamsType `form:"type,omitempty" json:"type,omitempty"`
+}
+
+// LedgerListAccountsParamsType defines parameters for LedgerListAccounts.
+type LedgerListAccountsParamsType string
+
 // LedgerListEntriesParams defines parameters for LedgerListEntries.
 type LedgerListEntriesParams struct {
 	// From Inclusive entry date lower bound.
@@ -1787,6 +1864,12 @@ type BankingCreateAccountJSONRequestBody = BankingCreateAccountRequest
 // BankingImportAccountCSVMultipartRequestBody defines body for BankingImportAccountCSV for multipart/form-data ContentType.
 type BankingImportAccountCSVMultipartRequestBody BankingImportAccountCSVMultipartBody
 
+// BankingCreatePayeeRuleJSONRequestBody defines body for BankingCreatePayeeRule for application/json ContentType.
+type BankingCreatePayeeRuleJSONRequestBody = BankingPayeeRuleRequest
+
+// BankingUpdatePayeeRuleJSONRequestBody defines body for BankingUpdatePayeeRule for application/json ContentType.
+type BankingUpdatePayeeRuleJSONRequestBody = BankingPayeeRuleRequest
+
 // BankingExcludeTransactionJSONRequestBody defines body for BankingExcludeTransaction for application/json ContentType.
 type BankingExcludeTransactionJSONRequestBody = BankingReasonRequest
 
@@ -1820,6 +1903,9 @@ type IdentityPatchProfileJSONRequestBody = IdentityProfilePatch
 // IdentityRegisterJSONRequestBody defines body for IdentityRegister for application/json ContentType.
 type IdentityRegisterJSONRequestBody = IdentityRegisterRequest
 
+// IdentityRegisterWithProfileJSONRequestBody defines body for IdentityRegisterWithProfile for application/json ContentType.
+type IdentityRegisterWithProfileJSONRequestBody = IdentityRegisterWithProfileRequest
+
 // InvoicingCreateClientJSONRequestBody defines body for InvoicingCreateClient for application/json ContentType.
 type InvoicingCreateClientJSONRequestBody = InvoicingClientRequest
 
@@ -1831,6 +1917,9 @@ type InvoicingCreateDraftInvoiceJSONRequestBody = InvoicingCreateDraftInvoiceReq
 
 // InvoicingPatchInvoiceJSONRequestBody defines body for InvoicingPatchInvoice for application/json ContentType.
 type InvoicingPatchInvoiceJSONRequestBody = InvoicingInvoicePatch
+
+// LedgerCreateExpenseAccountJSONRequestBody defines body for LedgerCreateExpenseAccount for application/json ContentType.
+type LedgerCreateExpenseAccountJSONRequestBody = LedgerCreateExpenseAccountRequest
 
 // ReportsShareExportPackJSONRequestBody defines body for ReportsShareExportPack for application/json ContentType.
 type ReportsShareExportPackJSONRequestBody = ReportsShareRequest
@@ -2625,6 +2714,22 @@ type ClientInterface interface {
 	// BankingGetFeed request
 	BankingGetFeed(ctx context.Context, params *BankingGetFeedParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// BankingListPayeeRules request
+	BankingListPayeeRules(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// BankingCreatePayeeRuleWithBody request with any body
+	BankingCreatePayeeRuleWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	BankingCreatePayeeRule(ctx context.Context, body BankingCreatePayeeRuleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// BankingDeletePayeeRule request
+	BankingDeletePayeeRule(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// BankingUpdatePayeeRuleWithBody request with any body
+	BankingUpdatePayeeRuleWithBody(ctx context.Context, id int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	BankingUpdatePayeeRule(ctx context.Context, id int64, body BankingUpdatePayeeRuleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// BankingGetRecent request
 	BankingGetRecent(ctx context.Context, params *BankingGetRecentParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -2741,6 +2846,11 @@ type ClientInterface interface {
 
 	IdentityRegister(ctx context.Context, body IdentityRegisterJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// IdentityRegisterWithProfileWithBody request with any body
+	IdentityRegisterWithProfileWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	IdentityRegisterWithProfile(ctx context.Context, body IdentityRegisterWithProfileJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// InvoicingListClients request
 	InvoicingListClients(ctx context.Context, params *InvoicingListClientsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -2804,7 +2914,12 @@ type ClientInterface interface {
 	JurisdictionGetPack(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// LedgerListAccounts request
-	LedgerListAccounts(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+	LedgerListAccounts(ctx context.Context, params *LedgerListAccountsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// LedgerCreateExpenseAccountWithBody request with any body
+	LedgerCreateExpenseAccountWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	LedgerCreateExpenseAccount(ctx context.Context, body LedgerCreateExpenseAccountJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// LedgerListEntries request
 	LedgerListEntries(ctx context.Context, params *LedgerListEntriesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2931,6 +3046,78 @@ func (c *Client) BankingImportAccountCSVWithBody(ctx context.Context, id int64, 
 
 func (c *Client) BankingGetFeed(ctx context.Context, params *BankingGetFeedParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewBankingGetFeedRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) BankingListPayeeRules(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBankingListPayeeRulesRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) BankingCreatePayeeRuleWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBankingCreatePayeeRuleRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) BankingCreatePayeeRule(ctx context.Context, body BankingCreatePayeeRuleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBankingCreatePayeeRuleRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) BankingDeletePayeeRule(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBankingDeletePayeeRuleRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) BankingUpdatePayeeRuleWithBody(ctx context.Context, id int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBankingUpdatePayeeRuleRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) BankingUpdatePayeeRule(ctx context.Context, id int64, body BankingUpdatePayeeRuleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBankingUpdatePayeeRuleRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3445,6 +3632,30 @@ func (c *Client) IdentityRegister(ctx context.Context, body IdentityRegisterJSON
 	return c.Client.Do(req)
 }
 
+func (c *Client) IdentityRegisterWithProfileWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIdentityRegisterWithProfileRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) IdentityRegisterWithProfile(ctx context.Context, body IdentityRegisterWithProfileJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIdentityRegisterWithProfileRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) InvoicingListClients(ctx context.Context, params *InvoicingListClientsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewInvoicingListClientsRequest(c.Server, params)
 	if err != nil {
@@ -3709,8 +3920,32 @@ func (c *Client) JurisdictionGetPack(ctx context.Context, reqEditors ...RequestE
 	return c.Client.Do(req)
 }
 
-func (c *Client) LedgerListAccounts(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewLedgerListAccountsRequest(c.Server)
+func (c *Client) LedgerListAccounts(ctx context.Context, params *LedgerListAccountsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewLedgerListAccountsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) LedgerCreateExpenseAccountWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewLedgerCreateExpenseAccountRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) LedgerCreateExpenseAccount(ctx context.Context, body LedgerCreateExpenseAccountJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewLedgerCreateExpenseAccountRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -4167,6 +4402,154 @@ func NewBankingGetFeedRequest(server string, params *BankingGetFeedParams) (*htt
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewBankingListPayeeRulesRequest generates requests for BankingListPayeeRules
+func NewBankingListPayeeRulesRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/banking/payee-rules")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewBankingCreatePayeeRuleRequest calls the generic BankingCreatePayeeRule builder with application/json body
+func NewBankingCreatePayeeRuleRequest(server string, body BankingCreatePayeeRuleJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewBankingCreatePayeeRuleRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewBankingCreatePayeeRuleRequestWithBody generates requests for BankingCreatePayeeRule with any type of body
+func NewBankingCreatePayeeRuleRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/banking/payee-rules")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewBankingDeletePayeeRuleRequest generates requests for BankingDeletePayeeRule
+func NewBankingDeletePayeeRuleRequest(server string, id int64) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/banking/payee-rules/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewBankingUpdatePayeeRuleRequest calls the generic BankingUpdatePayeeRule builder with application/json body
+func NewBankingUpdatePayeeRuleRequest(server string, id int64, body BankingUpdatePayeeRuleJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewBankingUpdatePayeeRuleRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewBankingUpdatePayeeRuleRequestWithBody generates requests for BankingUpdatePayeeRule with any type of body
+func NewBankingUpdatePayeeRuleRequestWithBody(server string, id int64, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/banking/payee-rules/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PUT", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -5350,6 +5733,46 @@ func NewIdentityRegisterRequestWithBody(server string, contentType string, body 
 	return req, nil
 }
 
+// NewIdentityRegisterWithProfileRequest calls the generic IdentityRegisterWithProfile builder with application/json body
+func NewIdentityRegisterWithProfileRequest(server string, body IdentityRegisterWithProfileJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewIdentityRegisterWithProfileRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewIdentityRegisterWithProfileRequestWithBody generates requests for IdentityRegisterWithProfile with any type of body
+func NewIdentityRegisterWithProfileRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/identity/register-with-profile")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewInvoicingListClientsRequest generates requests for InvoicingListClients
 func NewInvoicingListClientsRequest(server string, params *InvoicingListClientsParams) (*http.Request, error) {
 	var err error
@@ -6087,7 +6510,7 @@ func NewJurisdictionGetPackRequest(server string) (*http.Request, error) {
 }
 
 // NewLedgerListAccountsRequest generates requests for LedgerListAccounts
-func NewLedgerListAccountsRequest(server string) (*http.Request, error) {
+func NewLedgerListAccountsRequest(server string, params *LedgerListAccountsParams) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -6105,10 +6528,72 @@ func NewLedgerListAccountsRequest(server string) (*http.Request, error) {
 		return nil, err
 	}
 
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Type != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "type", runtime.ParamLocationQuery, *params.Type); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
 	req, err := http.NewRequest("GET", queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewLedgerCreateExpenseAccountRequest calls the generic LedgerCreateExpenseAccount builder with application/json body
+func NewLedgerCreateExpenseAccountRequest(server string, body LedgerCreateExpenseAccountJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewLedgerCreateExpenseAccountRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewLedgerCreateExpenseAccountRequestWithBody generates requests for LedgerCreateExpenseAccount with any type of body
+func NewLedgerCreateExpenseAccountRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/ledger/accounts")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -6770,6 +7255,22 @@ type ClientWithResponsesInterface interface {
 	// BankingGetFeedWithResponse request
 	BankingGetFeedWithResponse(ctx context.Context, params *BankingGetFeedParams, reqEditors ...RequestEditorFn) (*BankingGetFeedResponse, error)
 
+	// BankingListPayeeRulesWithResponse request
+	BankingListPayeeRulesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*BankingListPayeeRulesResponse, error)
+
+	// BankingCreatePayeeRuleWithBodyWithResponse request with any body
+	BankingCreatePayeeRuleWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*BankingCreatePayeeRuleResponse, error)
+
+	BankingCreatePayeeRuleWithResponse(ctx context.Context, body BankingCreatePayeeRuleJSONRequestBody, reqEditors ...RequestEditorFn) (*BankingCreatePayeeRuleResponse, error)
+
+	// BankingDeletePayeeRuleWithResponse request
+	BankingDeletePayeeRuleWithResponse(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*BankingDeletePayeeRuleResponse, error)
+
+	// BankingUpdatePayeeRuleWithBodyWithResponse request with any body
+	BankingUpdatePayeeRuleWithBodyWithResponse(ctx context.Context, id int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*BankingUpdatePayeeRuleResponse, error)
+
+	BankingUpdatePayeeRuleWithResponse(ctx context.Context, id int64, body BankingUpdatePayeeRuleJSONRequestBody, reqEditors ...RequestEditorFn) (*BankingUpdatePayeeRuleResponse, error)
+
 	// BankingGetRecentWithResponse request
 	BankingGetRecentWithResponse(ctx context.Context, params *BankingGetRecentParams, reqEditors ...RequestEditorFn) (*BankingGetRecentResponse, error)
 
@@ -6886,6 +7387,11 @@ type ClientWithResponsesInterface interface {
 
 	IdentityRegisterWithResponse(ctx context.Context, body IdentityRegisterJSONRequestBody, reqEditors ...RequestEditorFn) (*IdentityRegisterResponse, error)
 
+	// IdentityRegisterWithProfileWithBodyWithResponse request with any body
+	IdentityRegisterWithProfileWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IdentityRegisterWithProfileResponse, error)
+
+	IdentityRegisterWithProfileWithResponse(ctx context.Context, body IdentityRegisterWithProfileJSONRequestBody, reqEditors ...RequestEditorFn) (*IdentityRegisterWithProfileResponse, error)
+
 	// InvoicingListClientsWithResponse request
 	InvoicingListClientsWithResponse(ctx context.Context, params *InvoicingListClientsParams, reqEditors ...RequestEditorFn) (*InvoicingListClientsResponse, error)
 
@@ -6949,7 +7455,12 @@ type ClientWithResponsesInterface interface {
 	JurisdictionGetPackWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*JurisdictionGetPackResponse, error)
 
 	// LedgerListAccountsWithResponse request
-	LedgerListAccountsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*LedgerListAccountsResponse, error)
+	LedgerListAccountsWithResponse(ctx context.Context, params *LedgerListAccountsParams, reqEditors ...RequestEditorFn) (*LedgerListAccountsResponse, error)
+
+	// LedgerCreateExpenseAccountWithBodyWithResponse request with any body
+	LedgerCreateExpenseAccountWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*LedgerCreateExpenseAccountResponse, error)
+
+	LedgerCreateExpenseAccountWithResponse(ctx context.Context, body LedgerCreateExpenseAccountJSONRequestBody, reqEditors ...RequestEditorFn) (*LedgerCreateExpenseAccountResponse, error)
 
 	// LedgerListEntriesWithResponse request
 	LedgerListEntriesWithResponse(ctx context.Context, params *LedgerListEntriesParams, reqEditors ...RequestEditorFn) (*LedgerListEntriesResponse, error)
@@ -7156,6 +7667,106 @@ func (r BankingGetFeedResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r BankingGetFeedResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type BankingListPayeeRulesResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON200                   *BankingPayeeRulesResponse
+	ApplicationproblemJSON401 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r BankingListPayeeRulesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r BankingListPayeeRulesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type BankingCreatePayeeRuleResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON201                   *BankingPayeeRule
+	ApplicationproblemJSON400 *Problem
+	ApplicationproblemJSON401 *Problem
+	ApplicationproblemJSON413 *Problem
+	ApplicationproblemJSON422 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r BankingCreatePayeeRuleResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r BankingCreatePayeeRuleResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type BankingDeletePayeeRuleResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	ApplicationproblemJSON400 *Problem
+	ApplicationproblemJSON401 *Problem
+	ApplicationproblemJSON404 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r BankingDeletePayeeRuleResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r BankingDeletePayeeRuleResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type BankingUpdatePayeeRuleResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON200                   *BankingPayeeRule
+	ApplicationproblemJSON400 *Problem
+	ApplicationproblemJSON401 *Problem
+	ApplicationproblemJSON404 *Problem
+	ApplicationproblemJSON413 *Problem
+	ApplicationproblemJSON422 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r BankingUpdatePayeeRuleResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r BankingUpdatePayeeRuleResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -7956,6 +8567,31 @@ func (r IdentityRegisterResponse) StatusCode() int {
 	return 0
 }
 
+type IdentityRegisterWithProfileResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON201                   *IdentityRegisterWithProfileResult
+	ApplicationproblemJSON400 *ValidationProblem
+	ApplicationproblemJSON403 *Problem
+	ApplicationproblemJSON413 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r IdentityRegisterWithProfileResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r IdentityRegisterWithProfileResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type InvoicingListClientsResponse struct {
 	Body                      []byte
 	HTTPResponse              *http.Response
@@ -8406,6 +9042,7 @@ type LedgerListAccountsResponse struct {
 	Body                      []byte
 	HTTPResponse              *http.Response
 	JSON200                   *LedgerAccountsResponse
+	ApplicationproblemJSON400 *Problem
 	ApplicationproblemJSON401 *Problem
 }
 
@@ -8419,6 +9056,34 @@ func (r LedgerListAccountsResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r LedgerListAccountsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type LedgerCreateExpenseAccountResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON201                   *LedgerAccount
+	ApplicationproblemJSON400 *Problem
+	ApplicationproblemJSON401 *Problem
+	ApplicationproblemJSON409 *Problem
+	ApplicationproblemJSON413 *Problem
+	ApplicationproblemJSON415 *Problem
+	ApplicationproblemJSON422 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r LedgerCreateExpenseAccountResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r LedgerCreateExpenseAccountResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -8783,6 +9448,58 @@ func (c *ClientWithResponses) BankingGetFeedWithResponse(ctx context.Context, pa
 		return nil, err
 	}
 	return ParseBankingGetFeedResponse(rsp)
+}
+
+// BankingListPayeeRulesWithResponse request returning *BankingListPayeeRulesResponse
+func (c *ClientWithResponses) BankingListPayeeRulesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*BankingListPayeeRulesResponse, error) {
+	rsp, err := c.BankingListPayeeRules(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseBankingListPayeeRulesResponse(rsp)
+}
+
+// BankingCreatePayeeRuleWithBodyWithResponse request with arbitrary body returning *BankingCreatePayeeRuleResponse
+func (c *ClientWithResponses) BankingCreatePayeeRuleWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*BankingCreatePayeeRuleResponse, error) {
+	rsp, err := c.BankingCreatePayeeRuleWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseBankingCreatePayeeRuleResponse(rsp)
+}
+
+func (c *ClientWithResponses) BankingCreatePayeeRuleWithResponse(ctx context.Context, body BankingCreatePayeeRuleJSONRequestBody, reqEditors ...RequestEditorFn) (*BankingCreatePayeeRuleResponse, error) {
+	rsp, err := c.BankingCreatePayeeRule(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseBankingCreatePayeeRuleResponse(rsp)
+}
+
+// BankingDeletePayeeRuleWithResponse request returning *BankingDeletePayeeRuleResponse
+func (c *ClientWithResponses) BankingDeletePayeeRuleWithResponse(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*BankingDeletePayeeRuleResponse, error) {
+	rsp, err := c.BankingDeletePayeeRule(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseBankingDeletePayeeRuleResponse(rsp)
+}
+
+// BankingUpdatePayeeRuleWithBodyWithResponse request with arbitrary body returning *BankingUpdatePayeeRuleResponse
+func (c *ClientWithResponses) BankingUpdatePayeeRuleWithBodyWithResponse(ctx context.Context, id int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*BankingUpdatePayeeRuleResponse, error) {
+	rsp, err := c.BankingUpdatePayeeRuleWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseBankingUpdatePayeeRuleResponse(rsp)
+}
+
+func (c *ClientWithResponses) BankingUpdatePayeeRuleWithResponse(ctx context.Context, id int64, body BankingUpdatePayeeRuleJSONRequestBody, reqEditors ...RequestEditorFn) (*BankingUpdatePayeeRuleResponse, error) {
+	rsp, err := c.BankingUpdatePayeeRule(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseBankingUpdatePayeeRuleResponse(rsp)
 }
 
 // BankingGetRecentWithResponse request returning *BankingGetRecentResponse
@@ -9153,6 +9870,23 @@ func (c *ClientWithResponses) IdentityRegisterWithResponse(ctx context.Context, 
 	return ParseIdentityRegisterResponse(rsp)
 }
 
+// IdentityRegisterWithProfileWithBodyWithResponse request with arbitrary body returning *IdentityRegisterWithProfileResponse
+func (c *ClientWithResponses) IdentityRegisterWithProfileWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IdentityRegisterWithProfileResponse, error) {
+	rsp, err := c.IdentityRegisterWithProfileWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseIdentityRegisterWithProfileResponse(rsp)
+}
+
+func (c *ClientWithResponses) IdentityRegisterWithProfileWithResponse(ctx context.Context, body IdentityRegisterWithProfileJSONRequestBody, reqEditors ...RequestEditorFn) (*IdentityRegisterWithProfileResponse, error) {
+	rsp, err := c.IdentityRegisterWithProfile(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseIdentityRegisterWithProfileResponse(rsp)
+}
+
 // InvoicingListClientsWithResponse request returning *InvoicingListClientsResponse
 func (c *ClientWithResponses) InvoicingListClientsWithResponse(ctx context.Context, params *InvoicingListClientsParams, reqEditors ...RequestEditorFn) (*InvoicingListClientsResponse, error) {
 	rsp, err := c.InvoicingListClients(ctx, params, reqEditors...)
@@ -9348,12 +10082,29 @@ func (c *ClientWithResponses) JurisdictionGetPackWithResponse(ctx context.Contex
 }
 
 // LedgerListAccountsWithResponse request returning *LedgerListAccountsResponse
-func (c *ClientWithResponses) LedgerListAccountsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*LedgerListAccountsResponse, error) {
-	rsp, err := c.LedgerListAccounts(ctx, reqEditors...)
+func (c *ClientWithResponses) LedgerListAccountsWithResponse(ctx context.Context, params *LedgerListAccountsParams, reqEditors ...RequestEditorFn) (*LedgerListAccountsResponse, error) {
+	rsp, err := c.LedgerListAccounts(ctx, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseLedgerListAccountsResponse(rsp)
+}
+
+// LedgerCreateExpenseAccountWithBodyWithResponse request with arbitrary body returning *LedgerCreateExpenseAccountResponse
+func (c *ClientWithResponses) LedgerCreateExpenseAccountWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*LedgerCreateExpenseAccountResponse, error) {
+	rsp, err := c.LedgerCreateExpenseAccountWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseLedgerCreateExpenseAccountResponse(rsp)
+}
+
+func (c *ClientWithResponses) LedgerCreateExpenseAccountWithResponse(ctx context.Context, body LedgerCreateExpenseAccountJSONRequestBody, reqEditors ...RequestEditorFn) (*LedgerCreateExpenseAccountResponse, error) {
+	rsp, err := c.LedgerCreateExpenseAccount(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseLedgerCreateExpenseAccountResponse(rsp)
 }
 
 // LedgerListEntriesWithResponse request returning *LedgerListEntriesResponse
@@ -9774,6 +10525,194 @@ func ParseBankingGetFeedResponse(rsp *http.Response) (*BankingGetFeedResponse, e
 			return nil, err
 		}
 		response.ApplicationproblemJSON401 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseBankingListPayeeRulesResponse parses an HTTP response from a BankingListPayeeRulesWithResponse call
+func ParseBankingListPayeeRulesResponse(rsp *http.Response) (*BankingListPayeeRulesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &BankingListPayeeRulesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest BankingPayeeRulesResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseBankingCreatePayeeRuleResponse parses an HTTP response from a BankingCreatePayeeRuleWithResponse call
+func ParseBankingCreatePayeeRuleResponse(rsp *http.Response) (*BankingCreatePayeeRuleResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &BankingCreatePayeeRuleResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest BankingPayeeRule
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseBankingDeletePayeeRuleResponse parses an HTTP response from a BankingDeletePayeeRuleWithResponse call
+func ParseBankingDeletePayeeRuleResponse(rsp *http.Response) (*BankingDeletePayeeRuleResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &BankingDeletePayeeRuleResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseBankingUpdatePayeeRuleResponse parses an HTTP response from a BankingUpdatePayeeRuleWithResponse call
+func ParseBankingUpdatePayeeRuleResponse(rsp *http.Response) (*BankingUpdatePayeeRuleResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &BankingUpdatePayeeRuleResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest BankingPayeeRule
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
 
 	}
 
@@ -11242,6 +12181,53 @@ func ParseIdentityRegisterResponse(rsp *http.Response) (*IdentityRegisterRespons
 	return response, nil
 }
 
+// ParseIdentityRegisterWithProfileResponse parses an HTTP response from a IdentityRegisterWithProfileWithResponse call
+func ParseIdentityRegisterWithProfileResponse(rsp *http.Response) (*IdentityRegisterWithProfileResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &IdentityRegisterWithProfileResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest IdentityRegisterWithProfileResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ValidationProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON413 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseInvoicingListClientsResponse parses an HTTP response from a InvoicingListClientsWithResponse call
 func ParseInvoicingListClientsResponse(rsp *http.Response) (*InvoicingListClientsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -12081,12 +13067,87 @@ func ParseLedgerListAccountsResponse(rsp *http.Response) (*LedgerListAccountsRes
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Problem
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.ApplicationproblemJSON401 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseLedgerCreateExpenseAccountResponse parses an HTTP response from a LedgerCreateExpenseAccountWithResponse call
+func ParseLedgerCreateExpenseAccountResponse(rsp *http.Response) (*LedgerCreateExpenseAccountResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &LedgerCreateExpenseAccountResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest LedgerAccount
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON415 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
 
 	}
 
