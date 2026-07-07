@@ -176,6 +176,62 @@ func TestProfitAndLossUsesOneLedgerSnapshotDuringInterleavedLedgerWrite(t *testi
 	assertReportMoney(t, pl.Income[0].Amount, 100_000)
 }
 
+func TestProfitAndLossReleasesLedgerSnapshotBeforeInvoiceAttribution(t *testing.T) {
+	loadReportsPack(t, "")
+	ctx := context.Background()
+	sourceRef := "invoice:INV-2025-0001:send"
+	fakeLedger := newFakeLedger(
+		fakeEntry(1, "2025-05-01", invoicing.ModuleName, sourceRef, fakePosting("4000-sales", -100_000)),
+	)
+	var invoiceLookupDuringSnapshot bool
+	service := New(
+		fakeLedger,
+		fakeIdentity{yearEnd: identity.YearEnd{Month: time.March, Day: 31}},
+		fakeInvoicing{
+			invoiceByNumber: func(_ context.Context, number string) (invoicing.Invoice, error) {
+				if number != "INV-2025-0001" {
+					t.Fatalf("InvoiceByNumber(%q), want INV-2025-0001", number)
+				}
+				invoiceLookupDuringSnapshot = fakeLedger.snapshotOpen
+				return invoicing.Invoice{
+					ID:       "invoice-1",
+					Number:   &number,
+					ClientID: "client-1",
+					Currency: invoicing.CurrencyGBP,
+				}, nil
+			},
+			client: func(_ context.Context, id string) (invoicing.Client, error) {
+				if id != "client-1" {
+					t.Fatalf("Client(%q), want client-1", id)
+				}
+				return invoicing.Client{
+					ID:              "client-1",
+					Name:            "Acme Ltd",
+					DefaultCurrency: invoicing.CurrencyGBP,
+				}, nil
+			},
+		},
+	)
+
+	pl, err := service.ProfitAndLoss(ctx, Period{
+		From: time.Date(2025, time.May, 1, 0, 0, 0, 0, time.UTC),
+		To:   time.Date(2025, time.May, 31, 0, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("ProfitAndLoss() error = %v", err)
+	}
+	if invoiceLookupDuringSnapshot {
+		t.Fatal("invoice attribution ran while the ledger snapshot was open")
+	}
+	if len(pl.Income) != 1 {
+		t.Fatalf("Income = %#v, want one attributed invoice line", pl.Income)
+	}
+	if pl.Income[0].ClientName != "Acme Ltd" {
+		t.Fatalf("Income[0].ClientName = %q, want Acme Ltd", pl.Income[0].ClientName)
+	}
+	assertReportMoney(t, pl.Income[0].Amount, 100_000)
+}
+
 func loadReportsPack(t *testing.T, corporateRateLine string) {
 	t.Helper()
 
@@ -202,6 +258,7 @@ type fakeLedger struct {
 	lastBalancesFrom time.Time
 	lastBalancesTo   time.Time
 	snapshotCalls    int
+	snapshotOpen     bool
 }
 
 func newFakeLedger(entries ...ledger.JournalEntry) *fakeLedger {
@@ -221,6 +278,10 @@ func newFakeLedger(entries ...ledger.JournalEntry) *fakeLedger {
 
 func (f *fakeLedger) ReadSnapshot(ctx context.Context, fn ledger.ReadSnapshotFunc) error {
 	f.snapshotCalls++
+	f.snapshotOpen = true
+	defer func() {
+		f.snapshotOpen = false
+	}()
 	snapshot := fakeLedgerSnapshot{
 		accounts: cloneFakeAccounts(f.accounts),
 		entries:  cloneFakeEntries(f.entries),
@@ -408,13 +469,23 @@ func (f fakeIdentity) Profile(context.Context) (identity.CompanyProfile, error) 
 	}, nil
 }
 
-type fakeInvoicing struct{}
+type fakeInvoicing struct {
+	invoice         func(context.Context, string) (invoicing.Invoice, error)
+	invoiceByNumber func(context.Context, string) (invoicing.Invoice, error)
+	client          func(context.Context, string) (invoicing.Client, error)
+}
 
-func (fakeInvoicing) Invoice(context.Context, string) (invoicing.Invoice, error) {
+func (f fakeInvoicing) Invoice(ctx context.Context, ref string) (invoicing.Invoice, error) {
+	if f.invoice != nil {
+		return f.invoice(ctx, ref)
+	}
 	return invoicing.Invoice{}, invoicing.ErrInvoiceNotFound
 }
 
-func (fakeInvoicing) InvoiceByNumber(context.Context, string) (invoicing.Invoice, error) {
+func (f fakeInvoicing) InvoiceByNumber(ctx context.Context, number string) (invoicing.Invoice, error) {
+	if f.invoiceByNumber != nil {
+		return f.invoiceByNumber(ctx, number)
+	}
 	return invoicing.Invoice{}, invoicing.ErrInvoiceNotFound
 }
 
@@ -426,7 +497,10 @@ func (fakeInvoicing) InvoiceVATContextBySendEntryID(context.Context, ledger.Entr
 	return invoicing.InvoiceVATContext{}, invoicing.ErrInvoiceNotFound
 }
 
-func (fakeInvoicing) Client(context.Context, string) (invoicing.Client, error) {
+func (f fakeInvoicing) Client(ctx context.Context, id string) (invoicing.Client, error) {
+	if f.client != nil {
+		return f.client(ctx, id)
+	}
 	return invoicing.Client{}, errors.New("unexpected client lookup")
 }
 

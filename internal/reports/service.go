@@ -162,15 +162,15 @@ func (s *Service) ProfitAndLoss(ctx context.Context, period Period) (PL, error) 
 	if err != nil {
 		return PL{}, err
 	}
-	var pl PL
+	var data profitAndLossLedgerData
 	if err := s.ledger.ReadSnapshot(ctx, func(ctx context.Context, snapshot ledger.ReadSnapshot) error {
 		var err error
-		pl, err = s.profitAndLoss(ctx, normalized, snapshot)
+		data, err = s.readProfitAndLossLedger(ctx, normalized, snapshot)
 		return err
 	}); err != nil {
 		return PL{}, err
 	}
-	return pl, nil
+	return s.profitAndLossFromLedgerData(ctx, normalized, data)
 }
 
 // ProfitYTD returns net profit for the company financial year identified by
@@ -219,7 +219,11 @@ func (s *Service) ProfitYTDInTx(ctx context.Context, tx db.Tx, taxYear string) (
 	if err != nil {
 		return money.Money{}, err
 	}
-	pl, err := s.profitAndLoss(ctx, period, txLedgerView{tx: tx, ledger: ledgerInTx})
+	data, err := s.readProfitAndLossLedger(ctx, period, txLedgerView{tx: tx, ledger: ledgerInTx})
+	if err != nil {
+		return money.Money{}, err
+	}
+	pl, err := s.profitAndLossFromLedgerData(ctx, period, data)
 	if err != nil {
 		return money.Money{}, err
 	}
@@ -255,35 +259,56 @@ func (v txLedgerView) Entries(ctx context.Context, filter ledger.EntryFilter) ([
 	return v.ledger.EntriesInTx(ctx, v.tx, filter)
 }
 
-func (s *Service) profitAndLoss(ctx context.Context, period Period, ledgerView ledgerReader) (PL, error) {
+type profitAndLossLedgerData struct {
+	incomeTotal  money.Money
+	expenseTotal money.Money
+	breakdown    entryBreakdown
+}
+
+func (s *Service) readProfitAndLossLedger(ctx context.Context, period Period, ledgerView ledgerReader) (profitAndLossLedgerData, error) {
 	accounts, err := ledgerView.Accounts(ctx)
 	if err != nil {
-		return PL{}, err
+		return profitAndLossLedgerData{}, err
 	}
 	accountByCode := accountsByCode(accounts)
 
 	balances, err := ledgerView.BalancesByType(ctx, period.From, period.To)
 	if err != nil {
-		return PL{}, err
+		return profitAndLossLedgerData{}, err
 	}
 	incomeTotal, err := incomeTotalFromBalances(balances)
 	if err != nil {
-		return PL{}, err
+		return profitAndLossLedgerData{}, err
 	}
 	expenseTotal := balanceForType(balances, ledger.AccountTypeExpense)
 
 	breakdown, err := s.entryBreakdown(ctx, period, accountByCode, ledgerView)
 	if err != nil {
+		return profitAndLossLedgerData{}, err
+	}
+	return profitAndLossLedgerData{
+		incomeTotal:  incomeTotal,
+		expenseTotal: expenseTotal,
+		breakdown:    breakdown,
+	}, nil
+}
+
+func (s *Service) profitAndLossFromLedgerData(ctx context.Context, period Period, data profitAndLossLedgerData) (PL, error) {
+	invoiceCache := map[string]invoiceAttribution{}
+	if err := s.addInvoiceIncomeLines(ctx, data.breakdown.invoiceIncome, data.breakdown.income, invoiceCache, &data.breakdown); err != nil {
 		return PL{}, err
 	}
-	if err := verifyIncomeBreakdown(incomeTotal, breakdown); err != nil {
+	data.breakdown.Income = sortedIncomeLines(data.breakdown.income)
+	data.breakdown.Expenses = sortedExpenseLines(data.breakdown.expenses)
+
+	if err := verifyIncomeBreakdown(data.incomeTotal, data.breakdown); err != nil {
 		return PL{}, err
 	}
-	if err := verifyExpenseBreakdown(expenseTotal, breakdown.ExpenseTotal); err != nil {
+	if err := verifyExpenseBreakdown(data.expenseTotal, data.breakdown.ExpenseTotal); err != nil {
 		return PL{}, err
 	}
 
-	profitBeforeTax, err := incomeTotal.Sub(expenseTotal)
+	profitBeforeTax, err := data.incomeTotal.Sub(data.expenseTotal)
 	if err != nil {
 		return PL{}, err
 	}
@@ -307,11 +332,11 @@ func (s *Service) profitAndLoss(ctx context.Context, period Period, ledgerView l
 	return PL{
 		Period:          period,
 		TaxYear:         taxYear,
-		Income:          breakdown.Income,
-		IncomeTotal:     incomeTotal,
-		RealisedFXGains: LineItem{Label: realisedFXLabel, Amount: breakdown.RealisedFXGains},
-		Expenses:        breakdown.Expenses,
-		ExpenseTotal:    expenseTotal,
+		Income:          data.breakdown.Income,
+		IncomeTotal:     data.incomeTotal,
+		RealisedFXGains: LineItem{Label: realisedFXLabel, Amount: data.breakdown.RealisedFXGains},
+		Expenses:        data.breakdown.Expenses,
+		ExpenseTotal:    data.expenseTotal,
 		ProfitBeforeTax: profitBeforeTax,
 		CorporateTax: TaxLine{
 			Label:   "IoM income tax at " + formatRatePercent(rate),
@@ -329,6 +354,9 @@ type entryBreakdown struct {
 	RealisedFXGains money.Money
 	Expenses        []ExpenseLine
 	ExpenseTotal    money.Money
+	income          map[incomeKey]IncomeLine
+	expenses        map[ledger.AccountCode]ExpenseLine
+	invoiceIncome   map[string]money.Money
 }
 
 type incomeKey struct {
@@ -338,15 +366,13 @@ type incomeKey struct {
 }
 
 func (s *Service) entryBreakdown(ctx context.Context, period Period, accounts map[ledger.AccountCode]ledger.Account, ledgerView ledgerReader) (entryBreakdown, error) {
-	income := map[incomeKey]IncomeLine{}
-	expenses := map[ledger.AccountCode]ExpenseLine{}
-	invoiceIncome := map[string]money.Money{}
-	invoiceCache := map[string]invoiceAttribution{}
-
 	breakdown := entryBreakdown{
 		IncomeTotal:     money.Zero(gbpCurrency),
 		RealisedFXGains: money.Zero(gbpCurrency),
 		ExpenseTotal:    money.Zero(gbpCurrency),
+		income:          map[incomeKey]IncomeLine{},
+		expenses:        map[ledger.AccountCode]ExpenseLine{},
+		invoiceIncome:   map[string]money.Money{},
 	}
 	var cursor *ledger.EntryCursor
 	for {
@@ -360,7 +386,7 @@ func (s *Service) entryBreakdown(ctx context.Context, period Period, accounts ma
 			return entryBreakdown{}, err
 		}
 		for _, entry := range entries {
-			if err := s.addEntryToBreakdown(entry, accounts, income, expenses, invoiceIncome, &breakdown); err != nil {
+			if err := s.addEntryToBreakdown(entry, accounts, breakdown.income, breakdown.expenses, breakdown.invoiceIncome, &breakdown); err != nil {
 				return entryBreakdown{}, err
 			}
 		}
@@ -371,11 +397,6 @@ func (s *Service) entryBreakdown(ctx context.Context, period Period, accounts ma
 		cursor = &ledger.EntryCursor{Date: last.Date, ID: last.ID}
 	}
 
-	if err := s.addInvoiceIncomeLines(ctx, invoiceIncome, income, invoiceCache, &breakdown); err != nil {
-		return entryBreakdown{}, err
-	}
-	breakdown.Income = sortedIncomeLines(income)
-	breakdown.Expenses = sortedExpenseLines(expenses)
 	return breakdown, nil
 }
 
