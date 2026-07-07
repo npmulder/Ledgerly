@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/jackc/pgx/v5"
-
 	"github.com/npmulder/ledgerly/internal/invoicing"
 	"github.com/npmulder/ledgerly/internal/platform/bus"
 	"github.com/npmulder/ledgerly/internal/platform/db"
@@ -20,7 +18,7 @@ func (s *Service) SubscribeEvents(eventBus *bus.Bus) {
 		return
 	}
 	eventBus.Subscribe(invoicing.InvoiceSentName, func(ctx context.Context, tx db.Tx, evt bus.Event) error {
-		sent, err := invoiceSentEvent(evt)
+		sent, err := invoicing.InvoiceSentFromEvent(evt)
 		if err != nil {
 			return err
 		}
@@ -37,7 +35,7 @@ func (s *Service) handleInvoiceSentTx(ctx context.Context, tx db.Tx, evt invoici
 	if tx == nil {
 		return s.HandleInvoiceSent(ctx, evt)
 	}
-	restoreScope, err := scopeTransactionToModule(ctx, tx, ModuleName)
+	restoreScope, err := db.ScopeTransactionToModule(ctx, tx, ModuleName)
 	if err != nil {
 		return MatchEngineRun{}, err
 	}
@@ -192,47 +190,6 @@ func normalizeMatchEngineTrigger(trigger MatchEngineTrigger) (MatchEngineTrigger
 
 func matchEngineCreatedBy(id MatchEngineRunID) string {
 	return fmt.Sprintf("%s%d", matchEngineCreatedByPrefix, id)
-}
-
-func scopeTransactionToModule(ctx context.Context, tx db.Tx, module string) (func(context.Context) error, error) {
-	role, err := db.RoleForModule(module)
-	if err != nil {
-		return nil, err
-	}
-	var previousRole string
-	var previousSearchPath string
-	if err := tx.QueryRow(ctx, "SELECT current_role, current_setting('search_path')").Scan(&previousRole, &previousSearchPath); err != nil {
-		return nil, fmt.Errorf("banking: read transaction module scope: %w", err)
-	}
-	if _, err := tx.Exec(ctx, "SET LOCAL ROLE "+pgx.Identifier{role}.Sanitize()); err != nil {
-		return nil, fmt.Errorf("banking: set transaction role %s: %w", role, err)
-	}
-	if _, err := tx.Exec(ctx, "SELECT set_config('search_path', $1, true)", module); err != nil {
-		return nil, fmt.Errorf("banking: set transaction search_path %s: %w", module, err)
-	}
-	return func(ctx context.Context) error {
-		if _, err := tx.Exec(ctx, "SET LOCAL ROLE "+pgx.Identifier{previousRole}.Sanitize()); err != nil {
-			return fmt.Errorf("banking: restore transaction role %s: %w", previousRole, err)
-		}
-		if _, err := tx.Exec(ctx, "SELECT set_config('search_path', $1, true)", previousSearchPath); err != nil {
-			return fmt.Errorf("banking: restore transaction search_path %s: %w", previousSearchPath, err)
-		}
-		return nil
-	}, nil
-}
-
-func invoiceSentEvent(evt bus.Event) (invoicing.InvoiceSent, error) {
-	switch e := evt.(type) {
-	case invoicing.InvoiceSent:
-		return e, nil
-	case *invoicing.InvoiceSent:
-		if e == nil {
-			return invoicing.InvoiceSent{}, fmt.Errorf("banking: nil InvoiceSent event")
-		}
-		return *e, nil
-	default:
-		return invoicing.InvoiceSent{}, fmt.Errorf("banking: got %T, want invoicing.InvoiceSent", evt)
-	}
 }
 
 func normalizeMatchEngineTxnIDs(ids []TransactionID) []TransactionID {

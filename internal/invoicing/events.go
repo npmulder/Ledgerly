@@ -1,6 +1,12 @@
 package invoicing
 
-import "time"
+import (
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/npmulder/ledgerly/internal/platform/bus"
+)
 
 // InvoiceSentName is the bus event name for sent invoice facts.
 const InvoiceSentName = "invoicing.InvoiceSent"
@@ -27,6 +33,21 @@ func (InvoiceSent) Name() string {
 	return InvoiceSentName
 }
 
+// InvoiceSentFromEvent reads an InvoiceSent payload from the platform bus event.
+func InvoiceSentFromEvent(evt bus.Event) (InvoiceSent, error) {
+	switch e := evt.(type) {
+	case InvoiceSent:
+		return e, nil
+	case *InvoiceSent:
+		if e == nil {
+			return InvoiceSent{}, errors.New("invoicing: nil InvoiceSent event")
+		}
+		return *e, nil
+	default:
+		return InvoiceSent{}, fmt.Errorf("invoicing: got %T, want InvoiceSent", evt)
+	}
+}
+
 // InvoiceSettled is the contract consumed by moneyfx to post realised FX.
 //
 // InvoiceNumber is populated by INV-3 lifecycle publishing so moneyfx can
@@ -44,6 +65,21 @@ type InvoiceSettled struct {
 // Name implements bus.Event.
 func (InvoiceSettled) Name() string {
 	return InvoiceSettledName
+}
+
+// InvoiceSettledFromEvent reads an InvoiceSettled payload from the platform bus event.
+func InvoiceSettledFromEvent(evt bus.Event) (InvoiceSettled, error) {
+	switch e := evt.(type) {
+	case InvoiceSettled:
+		return e, nil
+	case *InvoiceSettled:
+		if e == nil {
+			return InvoiceSettled{}, errors.New("invoicing: nil InvoiceSettled event")
+		}
+		return *e, nil
+	default:
+		return InvoiceSettled{}, fmt.Errorf("invoicing: got %T, want InvoiceSettled", evt)
+	}
 }
 
 // InvoiceOverdue is published once per invoice per due-date crossing by the
