@@ -25,15 +25,17 @@ type YearEnd struct {
 type CompanyFacts struct {
 	IncorporationDate time.Time
 	YearEnd           YearEnd
+	IsVATRegistered   bool
 }
 
 // Deadline is one concrete next filing deadline resolved from the active pack.
 type Deadline struct {
-	Key        string
-	Label      string
-	Authority  string
-	DueDate    time.Time
-	Recurrence string
+	Key                     string
+	Label                   string
+	Authority               string
+	DueDate                 time.Time
+	Recurrence              string
+	RequiresVATRegistration bool
 }
 
 type realClock struct{}
@@ -81,6 +83,10 @@ func resolveFilingDeadlines(pack *Pack, facts CompanyFacts, reference time.Time)
 	deadlines := make([]Deadline, 0, len(keys))
 	for _, key := range keys {
 		filing := pack.Filings[key]
+		if filing.RequiresVATRegistration && !facts.IsVATRegistered {
+			continue
+		}
+
 		dueExpression := filing.dueExpression
 		if dueExpression == nil {
 			parsed, err := parseDeadlineExpression(filing.Due)
@@ -101,11 +107,12 @@ func resolveFilingDeadlines(pack *Pack, facts CompanyFacts, reference time.Time)
 		}
 
 		deadlines = append(deadlines, Deadline{
-			Key:        key,
-			Label:      filingLabel(key),
-			Authority:  filing.Authority,
-			DueDate:    dueDate,
-			Recurrence: recurrence,
+			Key:                     key,
+			Label:                   filingLabel(key),
+			Authority:               filing.Authority,
+			DueDate:                 dueDate,
+			Recurrence:              recurrence,
+			RequiresVATRegistration: filing.RequiresVATRegistration,
 		})
 	}
 

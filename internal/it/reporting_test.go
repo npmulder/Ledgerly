@@ -223,7 +223,7 @@ func TestReportingSuite(t *testing.T) {
 	t.Run("filing calendar", func(t *testing.T) {
 		ctx := context.Background()
 		h := harness.New(t, harness.Options{ClockStart: reportingDay(2026, time.July, 5)})
-		fixtures.Company(t, h, fixtures.CompanyYearEnd(time.March, 31))
+		fixtures.Company(t, h, fixtures.CompanyYearEnd(time.March, 31), fixtures.CompanyVATRegistered(true))
 		reportService, err := reports.NewService(reportingIdentity(t, h), reports.WithClock(h.Clock))
 		if err != nil {
 			t.Fatalf("NewService() error = %v", err)
