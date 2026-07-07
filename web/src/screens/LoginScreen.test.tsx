@@ -12,6 +12,20 @@ afterEach(() => {
 });
 
 describe("LoginScreen", () => {
+  it("links first-time users to registration", async () => {
+    const user = userEvent.setup();
+
+    renderLogin();
+
+    expect(screen.getByText("First time here?")).toBeInTheDocument();
+    const registerLink = screen.getByRole("link", { name: "Set up Ledgerly" });
+    expect(registerLink).toHaveAttribute("href", "/register");
+
+    await user.click(registerLink);
+
+    expect(screen.getByTestId("location")).toHaveTextContent("/register");
+  });
+
   it("renders problem details from failed login responses", async () => {
     const user = userEvent.setup();
     vi.stubGlobal(
