@@ -63,7 +63,17 @@ func newRootCommand(runtime *Runtime) *cobra.Command {
 	root.PersistentFlags().BoolVar(&runtime.json, "json", false, "emit JSON output")
 	root.PersistentFlags().BoolVar(&runtime.yes, "yes", false, "confirm mutating actions")
 	root.PersistentFlags().StringVar(&runtime.configPath, "config", "", "path to config.toml")
-	root.AddCommand(newAuthCommand(runtime))
+	root.AddCommand(
+		newAuthCommand(runtime),
+		newInvoiceCommand(runtime),
+		newClientCommand(runtime),
+		newBankCommand(runtime),
+		newDLACommand(runtime),
+		newDividendCommand(runtime),
+		newReportCommand(runtime),
+		newAdvisorCommand(runtime),
+		newRatesCommand(runtime),
+	)
 	return root
 }
 
