@@ -61,7 +61,7 @@ func runWithIO(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	}
 
 	if !isOperatorCommand(args[0]) {
-		return cli.Execute(ctx, args, stdout, stderr)
+		return cli.Execute(ctx, args, stdout, stderr, cli.WithVersion(version))
 	}
 
 	switch args[0] {

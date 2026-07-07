@@ -231,7 +231,7 @@ func internalModule(importPath, modulePath string) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	return segments[0], true
+	return canonicalModuleName(segments[0]), true
 }
 
 func internalSegments(importPath, modulePath string) ([]string, bool) {
@@ -247,7 +247,8 @@ func internalSegments(importPath, modulePath string) ([]string, bool) {
 }
 
 func allowedInternalImport(sourceModule string, importedSegments []string) bool {
-	importedModule := importedSegments[0]
+	sourceModule = canonicalModuleName(sourceModule)
+	importedModule := canonicalModuleName(importedSegments[0])
 	if importedModule == sourceModule {
 		return true
 	}
@@ -266,6 +267,13 @@ func allowedInternalImport(sourceModule string, importedSegments []string) bool 
 	}
 	_, ok = dependencies[importedModule]
 	return ok
+}
+
+func canonicalModuleName(module string) string {
+	if module == "mcp" {
+		return "cli"
+	}
+	return module
 }
 
 func dependencySet(modules ...string) map[string]struct{} {

@@ -188,6 +188,7 @@ type Reports interface {
 }
 
 type Ledger interface {
+	ReadSnapshot(context.Context, ledger.ReadSnapshotFunc) error
 	BalancesByType(context.Context, time.Time, time.Time) ([]ledger.AccountBalance, error)
 	Entries(context.Context, ledger.EntryFilter) ([]ledger.JournalEntry, error)
 	Accounts(context.Context) ([]ledger.Account, error)

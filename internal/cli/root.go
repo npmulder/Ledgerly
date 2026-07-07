@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -14,10 +15,12 @@ import (
 )
 
 type Runtime struct {
+	stdin      io.Reader
 	stdout     io.Writer
 	stderr     io.Writer
 	httpClient *http.Client
 	configPath string
+	version    string
 	json       bool
 	yes        bool
 }
@@ -30,10 +33,24 @@ func WithHTTPClient(client *http.Client) Option {
 	}
 }
 
+func WithStdin(stdin io.Reader) Option {
+	return func(runtime *Runtime) {
+		runtime.stdin = stdin
+	}
+}
+
+func WithVersion(version string) Option {
+	return func(runtime *Runtime) {
+		runtime.version = version
+	}
+}
+
 func Execute(ctx context.Context, args []string, stdout, stderr io.Writer, opts ...Option) error {
 	runtime := &Runtime{
-		stdout: stdout,
-		stderr: stderr,
+		stdin:   os.Stdin,
+		stdout:  stdout,
+		stderr:  stderr,
+		version: "dev",
 	}
 	for _, opt := range opts {
 		opt(runtime)
@@ -73,6 +90,7 @@ func newRootCommand(runtime *Runtime) *cobra.Command {
 		newReportCommand(runtime),
 		newAdvisorCommand(runtime),
 		newRatesCommand(runtime),
+		newMCPCommand(runtime),
 	)
 	return root
 }
