@@ -51,7 +51,31 @@ func (s *Service) ManualRefresh(ctx context.Context) (MatchEngineRun, error) {
 	return s.RunMatchEngine(ctx, MatchEngineTriggerManualRefresh, nil)
 }
 
+func (s *Service) RefreshDirectorNameSuggestions(ctx context.Context, names []string) (MatchEngineRun, error) {
+	return s.runMatchEngineWithDirectorNames(ctx, MatchEngineTriggerIdentityProfile, nil, directorNameSnapshot(names))
+}
+
+func (s *Service) RefreshDirectorNameSuggestionsTx(ctx context.Context, tx db.Tx, names []string) (_ MatchEngineRun, err error) {
+	if tx == nil {
+		return s.RefreshDirectorNameSuggestions(ctx, names)
+	}
+	restoreScope, err := db.ScopeTransactionToModule(ctx, tx, ModuleName)
+	if err != nil {
+		return MatchEngineRun{}, err
+	}
+	defer func() {
+		if restoreErr := restoreScope(ctx); err == nil && restoreErr != nil {
+			err = restoreErr
+		}
+	}()
+	return s.runMatchEngineTxWithDirectorNames(ctx, tx, MatchEngineTriggerIdentityProfile, nil, directorNameSnapshot(names))
+}
+
 func (s *Service) RunMatchEngine(ctx context.Context, trigger MatchEngineTrigger, txnIDs []TransactionID) (_ MatchEngineRun, err error) {
+	return s.runMatchEngineWithDirectorNames(ctx, trigger, txnIDs, nil)
+}
+
+func (s *Service) runMatchEngineWithDirectorNames(ctx context.Context, trigger MatchEngineTrigger, txnIDs []TransactionID, directorNames DirectorNameSource) (_ MatchEngineRun, err error) {
 	if s.pool == nil {
 		return MatchEngineRun{}, fmt.Errorf("banking: match engine requires pool")
 	}
@@ -65,7 +89,7 @@ func (s *Service) RunMatchEngine(ctx context.Context, trigger MatchEngineTrigger
 		}
 	}()
 
-	run, err := s.runMatchEngineTx(ctx, tx, trigger, txnIDs)
+	run, err := s.runMatchEngineTxWithDirectorNames(ctx, tx, trigger, txnIDs, directorNames)
 	if err != nil {
 		return MatchEngineRun{}, err
 	}
@@ -76,6 +100,10 @@ func (s *Service) RunMatchEngine(ctx context.Context, trigger MatchEngineTrigger
 }
 
 func (s *Service) runMatchEngineTx(ctx context.Context, tx db.Tx, trigger MatchEngineTrigger, txnIDs []TransactionID) (MatchEngineRun, error) {
+	return s.runMatchEngineTxWithDirectorNames(ctx, tx, trigger, txnIDs, nil)
+}
+
+func (s *Service) runMatchEngineTxWithDirectorNames(ctx context.Context, tx db.Tx, trigger MatchEngineTrigger, txnIDs []TransactionID, directorNames DirectorNameSource) (MatchEngineRun, error) {
 	if err := ctx.Err(); err != nil {
 		return MatchEngineRun{}, err
 	}
@@ -105,7 +133,7 @@ func (s *Service) runMatchEngineTx(ctx context.Context, tx db.Tx, trigger MatchE
 	}
 
 	for _, txn := range txns {
-		decision, err := s.evaluateTransaction(ctx, tx, txn)
+		decision, err := s.evaluateTransactionWithDirectorNames(ctx, tx, txn, directorNames)
 		if err != nil {
 			return MatchEngineRun{}, err
 		}
@@ -129,6 +157,13 @@ func (s *Service) runMatchEngineTx(ctx context.Context, tx db.Tx, trigger MatchE
 				return MatchEngineRun{}, err
 			}
 		}
+		if active, err := s.store.ActiveSuggestion(ctx, tx, lockedTxn.ID); err == nil {
+			if sameMatchEngineSuggestion(active, input) {
+				continue
+			}
+		} else if !errors.Is(err, ErrSuggestionNotFound) {
+			return MatchEngineRun{}, err
+		}
 		input.CreatedBy = matchEngineCreatedBy(run.ID)
 		suggestion, err := s.store.InsertSuggestion(ctx, tx, input)
 		if err != nil {
@@ -137,6 +172,29 @@ func (s *Service) runMatchEngineTx(ctx context.Context, tx db.Tx, trigger MatchE
 		run.Suggestions = append(run.Suggestions, suggestion)
 	}
 	return run, nil
+}
+
+func sameMatchEngineSuggestion(active Suggestion, input SuggestionInput) bool {
+	if !strings.HasPrefix(active.CreatedBy, matchEngineCreatedByPrefix) {
+		return false
+	}
+	return active.Kind == input.Kind &&
+		active.Confidence == input.Confidence &&
+		active.Target == input.Target &&
+		active.Explanation == input.Explanation &&
+		active.AutoPostable == input.AutoPostable
+}
+
+type directorNameSnapshot []string
+
+func (d directorNameSnapshot) DirectorNames(context.Context) ([]string, error) {
+	names := make([]string, 0, len(d))
+	for _, name := range d {
+		if name = strings.TrimSpace(name); name != "" {
+			names = append(names, name)
+		}
+	}
+	return names, nil
 }
 
 func (s *Service) payeeRuleSuggestionInputAfterLock(ctx context.Context, tx db.Tx, txnID TransactionID, rule PayeeRule) (SuggestionInput, error) {
@@ -181,7 +239,7 @@ func (s *Service) canWriteMatchEngineSuggestion(ctx context.Context, tx db.Tx, t
 func normalizeMatchEngineTrigger(trigger MatchEngineTrigger) (MatchEngineTrigger, error) {
 	trigger = trimMatchEngineTrigger(trigger)
 	switch trigger {
-	case MatchEngineTriggerImportCompletion, MatchEngineTriggerInvoiceSent, MatchEngineTriggerManualRefresh:
+	case MatchEngineTriggerImportCompletion, MatchEngineTriggerInvoiceSent, MatchEngineTriggerIdentityProfile, MatchEngineTriggerManualRefresh:
 		return trigger, nil
 	default:
 		return "", fmt.Errorf("banking: match engine trigger %q: %w", trigger, ErrInvalidSuggestion)

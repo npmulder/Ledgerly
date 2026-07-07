@@ -36,6 +36,10 @@ type suggestionDecision struct {
 }
 
 func (s *Service) evaluateTransaction(ctx context.Context, tx db.Tx, txn Transaction) (*suggestionDecision, error) {
+	return s.evaluateTransactionWithDirectorNames(ctx, tx, txn, nil)
+}
+
+func (s *Service) evaluateTransactionWithDirectorNames(ctx context.Context, tx db.Tx, txn Transaction, directorNames DirectorNameSource) (*suggestionDecision, error) {
 	var decisions []suggestionDecision
 
 	if decision, err := s.invoiceMatchDecision(ctx, tx, txn); err != nil {
@@ -50,7 +54,7 @@ func (s *Service) evaluateTransaction(ctx context.Context, tx db.Tx, txn Transac
 		decisions = append(decisions, *decision)
 	}
 
-	if decision, err := s.dlaDecision(ctx, txn); err != nil {
+	if decision, err := s.dlaDecisionWithDirectorNames(ctx, txn, directorNames); err != nil {
 		return nil, err
 	} else if decision != nil {
 		decisions = append(decisions, *decision)
@@ -293,6 +297,10 @@ func payeeRuleSuggestionInput(txnID TransactionID, rule PayeeRule, autoPostThres
 }
 
 func (s *Service) dlaDecision(ctx context.Context, txn Transaction) (*suggestionDecision, error) {
+	return s.dlaDecisionWithDirectorNames(ctx, txn, nil)
+}
+
+func (s *Service) dlaDecisionWithDirectorNames(ctx context.Context, txn Transaction, directorNames DirectorNameSource) (*suggestionDecision, error) {
 	if txn.Amount.Amount >= 0 {
 		return nil, nil
 	}
@@ -301,8 +309,11 @@ func (s *Service) dlaDecision(ctx context.Context, txn Transaction) (*suggestion
 		return nil, nil
 	}
 
-	if s.directorNames != nil {
-		names, err := s.directorNames.DirectorNames(ctx)
+	if directorNames == nil {
+		directorNames = s.directorNames
+	}
+	if directorNames != nil {
+		names, err := directorNames.DirectorNames(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("banking: director names: %w", err)
 		}
