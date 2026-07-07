@@ -104,6 +104,10 @@ func TestCLIMCPContracts(t *testing.T) {
 	)
 	assertContractExit(t, dlaAddResult, 0)
 
+	seedDividendResult := runContractLedgerly(t, binary, fullConfig, "--yes", "dividend", "declare", "1000")
+	assertContractExit(t, seedDividendResult, 0)
+	assertContractOutputContains(t, seedDividendResult.output, "ID", "SHAREHOLDER", "AMOUNT")
+
 	t.Run("json schema snapshots", func(t *testing.T) {
 		readCommands := []struct {
 			name string
@@ -566,6 +570,10 @@ func assertContractJSONShapeSnapshot(t *testing.T, name string, output string) {
 	if err := decoder.Decode(&decoded); err != nil {
 		t.Fatalf("decode %s JSON: %v\n%s", name, err, output)
 	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		t.Fatalf("%s JSON has trailing data after first document: %v\n%s", name, err, output)
+	}
 	body, err := json.MarshalIndent(contractJSONShape(decoded), "", "  ")
 	if err != nil {
 		t.Fatalf("marshal %s JSON shape: %v", name, err)
@@ -758,6 +766,7 @@ func runContractMCP(t *testing.T, binary string, configPath string, input string
 	defer cancel()
 	cmd := exec.CommandContext(ctx, binary, "--config", configPath, "mcp")
 	cmd.Dir = findContractRepoRoot(t)
+	cmd.Env = contractEnvWithout("LEDGERLY_URL", "LEDGERLY_TOKEN")
 	cmd.Stdin = strings.NewReader(input)
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -778,6 +787,27 @@ func runContractMCP(t *testing.T, binary string, configPath string, input string
 		responses[string(response.ID)] = response
 	}
 	return responses
+}
+
+func contractEnvWithout(keys ...string) []string {
+	blocked := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		blocked[key] = struct{}{}
+	}
+	env := os.Environ()
+	filtered := env[:0]
+	for _, entry := range env {
+		name, _, ok := strings.Cut(entry, "=")
+		if !ok {
+			filtered = append(filtered, entry)
+			continue
+		}
+		if _, skip := blocked[name]; skip {
+			continue
+		}
+		filtered = append(filtered, entry)
+	}
+	return filtered
 }
 
 type contractMCPResponse struct {

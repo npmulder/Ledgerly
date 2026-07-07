@@ -1,3 +1,66 @@
 {
-  "declarations": []
+  "declarations": [
+    {
+      "amount": {
+        "amount": "number",
+        "currency": "string"
+      },
+      "company_snapshot": {
+        "company_number": "string",
+        "director_name": "string",
+        "legal_name": "string",
+        "logo_asset_id": "null",
+        "logo_asset_url": "null",
+        "logo_data_uri": "null",
+        "registered_office": {
+          "country": "string",
+          "line1": "string",
+          "line2": "string",
+          "locality": "string",
+          "postal_code": "string",
+          "region": "string"
+        },
+        "trading_name": "string"
+      },
+      "created_at": "string",
+      "declared_date": "string",
+      "headroom_snapshot": {
+        "as_of": "string",
+        "available": {
+          "amount": "number",
+          "currency": "string"
+        },
+        "distributable": "boolean",
+        "financial_year": "string",
+        "lines": [
+          {
+            "amount": {
+              "amount": "number",
+              "currency": "string"
+            },
+            "label": "string"
+          }
+        ]
+      },
+      "id": "string",
+      "minutes_asset": "null",
+      "per_share": {
+        "amount": "number",
+        "currency": "string"
+      },
+      "shareholder_name": "string",
+      "shareholder_snapshot": {
+        "class": "string",
+        "name": "string",
+        "shares": "number"
+      },
+      "shares": "number",
+      "voucher_asset": "null",
+      "withholding_snapshot": {
+        "note": "string",
+        "policy": "string",
+        "tax_year": "string"
+      }
+    }
+  ]
 }
