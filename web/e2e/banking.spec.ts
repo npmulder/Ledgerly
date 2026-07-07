@@ -4,6 +4,7 @@ import type {
   BankingAccount,
   BankingMoney,
   BankingRecentTransaction,
+  BankingReceipt,
   BankingReviewCard,
   BankingReviewQueue,
 } from "@/api/banking";
@@ -43,6 +44,19 @@ test("imports CSV and reconciles match, DLA, and recode cards", async ({
   await expect(
     page.getByRole("button", { name: /Revolut Business Revolut EUR/ }),
   ).toContainText("1");
+
+  const receiptChooserPromise = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: "Attach receipt" }).first().click();
+  const receiptChooser = await receiptChooserPromise;
+  await receiptChooser.setFiles({
+    buffer: Buffer.from("%PDF-1.4\n% receipt fixture\n%%EOF\n"),
+    mimeType: "application/pdf",
+    name: "receipt.pdf",
+  });
+  await expect(page.getByRole("status")).toContainText("Attached receipt.pdf");
+  await expect(
+    page.getByRole("link", { name: "Preview receipt" }),
+  ).toBeVisible();
   await page.screenshot({
     fullPage: true,
     path: "test-results/banking-screen-05-populated.png",
@@ -54,6 +68,13 @@ test("imports CSV and reconciles match, DLA, and recode cards", async ({
   );
   await expect(page.getByText("Invoice match")).toBeHidden();
   await expect(page.getByText("CONTOSO GMBH SEPA")).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Preview receipt" }),
+  ).toBeVisible();
+  await page.screenshot({
+    fullPage: true,
+    path: "test-results/banking-screen-05-receipt-recent.png",
+  });
 
   await page.getByRole("button", { name: "File to DLA" }).click();
   await expect(page.getByRole("status")).toContainText(
@@ -148,6 +169,31 @@ async function mockBankingApi(page: Page, state: BankingState) {
         kind: "match",
         realised_fx_amount: money(4500, "GBP"),
         transaction: card?.transaction,
+      });
+      return;
+    }
+    if (
+      path === "/api/banking/transactions/101/receipt" &&
+      request.method() === "PUT"
+    ) {
+      const receipt = receiptFixture(101);
+      const card = state.queue.matches.find(
+        (item) => item.transaction.id === 101,
+      );
+      if (card) {
+        card.transaction.receipt = receipt;
+      }
+      await fulfillJson(route, receipt);
+      return;
+    }
+    if (
+      path === "/api/banking/transactions/101/receipt" &&
+      request.method() === "GET"
+    ) {
+      await route.fulfill({
+        body: "%PDF-1.4\n% receipt fixture\n%%EOF\n",
+        contentType: "application/pdf",
+        status: 200,
       });
       return;
     }
@@ -319,9 +365,20 @@ function transactionFixture(
     import_batch_id: 77,
     payee: "CONTOSO GMBH SEPA",
     provider_meta: {},
+    receipt: null,
     reference: "INV-2026-07",
     state: "suggested",
     ...overrides,
+  };
+}
+
+function receiptFixture(transactionID: number): BankingReceipt {
+  return {
+    content_type: "application/pdf",
+    filename: "receipt.pdf",
+    size: 33,
+    uploaded_at: "2026-07-06T10:03:00Z",
+    url: `/api/banking/transactions/${transactionID}/receipt`,
   };
 }
 

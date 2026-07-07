@@ -25,6 +25,7 @@
         "State": "string",
         "Type": "string"
       },
+      "receipt": "null",
       "reference": "string",
       "state": "string"
     }

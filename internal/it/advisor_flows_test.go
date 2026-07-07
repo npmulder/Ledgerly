@@ -5,6 +5,7 @@ package it_test
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,6 +34,7 @@ func TestAdvisorFlows(t *testing.T) {
 	t.Run("overdue invoice fires on invoice and dashboard surfaces then resolves after settlement", testAdvisorFlowsOverdueInvoice)
 	t.Run("DLA overdrawn BIK insight uses pack wording and clears via dividend", testAdvisorFlowsDLAOverdrawn)
 	t.Run("filing deadline exposes due badge facts and resolves outside window", testAdvisorFlowsFilingDeadline)
+	t.Run("VAT registration gates filing deadline advisor and cleans up on toggle", testAdvisorFlowsVATRegistrationGatesFilingDeadline)
 	t.Run("dividend headroom set-aside uses hand-computed JUR-4 marginal estimate", testAdvisorFlowsHeadroom)
 	t.Run("stale rates insight resolves after successful ECB fetch", testAdvisorFlowsRatesStale)
 	t.Run("dismissal survives same facts and new headroom facts reappear", testAdvisorFlowsDismissalSemantics)
@@ -122,7 +124,7 @@ func testAdvisorFlowsDLAOverdrawn(t *testing.T) {
 func testAdvisorFlowsFilingDeadline(t *testing.T) {
 	h := newAdvisorFlowsHarness(t, harness.Options{ClockStart: day(2026, time.July, 5).Add(9 * time.Hour)}, fixtures.RatesStep(map[time.Time]string{
 		day(2026, time.July, 5): "0.8500",
-	}))
+	}), fixtures.CompanyVATRegistered(true))
 
 	advisorFlowsRunEvaluation(t, h)
 	warn := requireAdvisorFlowInsight(t, advisorFlowsInsights(t, h, advisor.SurfaceReports), "filing_deadline_window")
@@ -151,6 +153,28 @@ func testAdvisorFlowsFilingDeadline(t *testing.T) {
 	h.Clock.Set(day(2026, time.December, 1).Add(9 * time.Hour))
 	advisorFlowsRunEvaluation(t, h)
 	assertNoAdvisorFlowInsight(t, advisorFlowsInsights(t, h, advisor.SurfaceReports), "filing_deadline_window")
+}
+
+func testAdvisorFlowsVATRegistrationGatesFilingDeadline(t *testing.T) {
+	h, company := newAdvisorFlowsHarnessWithCompany(t, harness.Options{ClockStart: day(2026, time.July, 5).Add(9 * time.Hour)}, fixtures.RatesStep(map[time.Time]string{
+		day(2026, time.July, 5): "0.8500",
+	}), fixtures.CompanyVATRegistered(false))
+
+	assertNoAdvisorFlowFiling(t, advisorFlowsCalendar(t, h), "vat_return")
+	advisorFlowsRunEvaluation(t, h)
+	assertNoAdvisorFlowInsight(t, advisorFlowsInsights(t, h, advisor.SurfaceReports), "filing_deadline_window")
+
+	company = company.With(fixtures.CompanyVATRegistered(true))
+	requireAdvisorFlowFiling(t, advisorFlowsCalendar(t, h), "vat_return")
+	advisorFlowsRunEvaluation(t, h)
+	warn := requireAdvisorFlowInsight(t, advisorFlowsInsights(t, h, advisor.SurfaceReports), "filing_deadline_window")
+	assertFilingDeadlineBinding(t, warn, "2026-07-30", 25, "due-soon", 30)
+
+	company.With(fixtures.CompanyVATRegistered(false))
+	assertNoAdvisorFlowFiling(t, advisorFlowsCalendar(t, h), "vat_return")
+	advisorFlowsRunEvaluation(t, h)
+	assertNoAdvisorFlowInsight(t, advisorFlowsInsights(t, h, advisor.SurfaceReports), "filing_deadline_window")
+	assertAdvisorFlowInsightResolved(t, h, warn.Key, advisor.ResolutionNoLongerFiring)
 }
 
 func testAdvisorFlowsHeadroom(t *testing.T) {
@@ -245,7 +269,7 @@ func testAdvisorFlowsIdempotency(t *testing.T) {
 func testAdvisorFlowsDashboardOrdering(t *testing.T) {
 	h := newAdvisorFlowsHarness(t, harness.Options{ClockStart: day(2026, time.July, 5).Add(9 * time.Hour)}, fixtures.RatesStep(map[time.Time]string{
 		day(2026, time.June, 30): "0.8500",
-	}))
+	}), fixtures.CompanyVATRegistered(true))
 	advisorFlowsCreateSentEURInvoice(t, h, "2026-07-06", 100_000)
 	h.Clock.Set(day(2026, time.July, 10).Add(9 * time.Hour))
 	advisorFlowsFileDLADrawing(t, h, "advisor-flows:dashboard-dla", 150_000)
@@ -321,7 +345,21 @@ type advisorFlowInsightsResponse struct {
 	Insights []advisorFlowInsight `json:"insights"`
 }
 
-func newAdvisorFlowsHarness(t *testing.T, opts harness.Options, rates fixtures.RateTable) *harness.Harness {
+type advisorFlowFiling struct {
+	Key string `json:"key"`
+}
+
+type advisorFlowCalendarResponse struct {
+	Filings []advisorFlowFiling `json:"filings"`
+}
+
+func newAdvisorFlowsHarness(t *testing.T, opts harness.Options, rates fixtures.RateTable, companyOverrides ...fixtures.CompanyOverride) *harness.Harness {
+	t.Helper()
+	h, _ := newAdvisorFlowsHarnessWithCompany(t, opts, rates, companyOverrides...)
+	return h
+}
+
+func newAdvisorFlowsHarnessWithCompany(t *testing.T, opts harness.Options, rates fixtures.RateTable, companyOverrides ...fixtures.CompanyOverride) (*harness.Harness, fixtures.CompanyFixture) {
 	t.Helper()
 	if err := jurisdiction.LoadActive(jurisdiction.DefaultSelector); err != nil {
 		t.Fatalf("LoadActive(%q) error = %v", jurisdiction.DefaultSelector, err)
@@ -332,9 +370,9 @@ func newAdvisorFlowsHarness(t *testing.T, opts harness.Options, rates fixtures.R
 		}
 	})
 	h := harness.New(t, opts)
-	fixtures.Company(t, h)
+	company := fixtures.Company(t, h, companyOverrides...)
 	fixtures.Rates(t, h, rates)
-	return h
+	return h, company
 }
 
 func advisorFlowsCreateSentEURInvoice(t testing.TB, h *harness.Harness, dueDate string, amount int64) invoicing.Invoice {
@@ -408,6 +446,19 @@ func advisorFlowsInsights(t testing.TB, h *harness.Harness, surface advisor.Surf
 		t.Fatalf("decode advisor insights: %v; body=%s", err, string(response.Body))
 	}
 	return body.Insights
+}
+
+func advisorFlowsCalendar(t testing.TB, h *harness.Harness) advisorFlowCalendarResponse {
+	t.Helper()
+	response := advisorFlowsRequest(t, h, nethttp.MethodGet, "/api/reports/calendar", nil)
+	if response.StatusCode != nethttp.StatusOK {
+		t.Fatalf("reports calendar status = %d, want %d; body=%s", response.StatusCode, nethttp.StatusOK, string(response.Body))
+	}
+	var body advisorFlowCalendarResponse
+	if err := json.Unmarshal(response.Body, &body); err != nil {
+		t.Fatalf("decode reports calendar: %v; body=%s", err, string(response.Body))
+	}
+	return body
 }
 
 func advisorFlowsDismiss(t testing.TB, h *harness.Harness, key string) {
@@ -498,6 +549,48 @@ func assertNoAdvisorFlowInsight(t testing.TB, insights []advisorFlowInsight, rul
 		if insight.RuleID == ruleID {
 			t.Fatalf("advisor insight rule %s still active: %#v", ruleID, insight)
 		}
+	}
+}
+
+func requireAdvisorFlowFiling(t testing.TB, calendar advisorFlowCalendarResponse, key string) advisorFlowFiling {
+	t.Helper()
+	for _, filing := range calendar.Filings {
+		if filing.Key == key {
+			return filing
+		}
+	}
+	t.Fatalf("filing %s not found in %#v", key, calendar.Filings)
+	return advisorFlowFiling{}
+}
+
+func assertNoAdvisorFlowFiling(t testing.TB, calendar advisorFlowCalendarResponse, key string) {
+	t.Helper()
+	for _, filing := range calendar.Filings {
+		if filing.Key == key {
+			t.Fatalf("filing %s still present: %#v", key, calendar.Filings)
+		}
+	}
+}
+
+func assertAdvisorFlowInsightResolved(t testing.TB, h *harness.Harness, key string, wantResolution string) {
+	t.Helper()
+	var (
+		resolvedAt sql.NullTime
+		resolution sql.NullString
+	)
+	if err := h.AdvisorPool.QueryRow(context.Background(), `
+SELECT resolved_at, resolution
+FROM advisor.insights
+WHERE key = $1`,
+		key,
+	).Scan(&resolvedAt, &resolution); err != nil {
+		t.Fatalf("advisor insight %s resolution: %v", key, err)
+	}
+	if !resolvedAt.Valid {
+		t.Fatalf("advisor insight %s resolved_at is NULL, want resolved", key)
+	}
+	if !resolution.Valid || resolution.String != wantResolution {
+		t.Fatalf("advisor insight %s resolution = %q valid=%v, want %q", key, resolution.String, resolution.Valid, wantResolution)
 	}
 }
 

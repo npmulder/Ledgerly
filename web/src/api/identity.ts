@@ -15,6 +15,10 @@ export type IdentityPATListResponse =
 export type IdentityProfile = components["schemas"]["IdentityProfile"];
 export type IdentityProfilePatch =
   components["schemas"]["IdentityProfilePatch"];
+export type IdentityRegisterWithProfileRequest =
+  components["schemas"]["IdentityRegisterWithProfileRequest"];
+export type IdentityRegisterWithProfileResult =
+  components["schemas"]["IdentityRegisterWithProfileResult"];
 export type IdentityUser = components["schemas"]["IdentityUser"];
 
 export function getCurrentUser() {
@@ -31,6 +35,14 @@ export function getIdentityPATs() {
 
 export function loginIdentity(input: IdentityLoginRequest) {
   return apiClient.post("/api/identity/login", input, {
+    handleUnauthorized: false,
+  });
+}
+
+export function registerIdentityWithProfile(
+  input: IdentityRegisterWithProfileRequest,
+) {
+  return apiClient.post("/api/identity/register-with-profile", input, {
     handleUnauthorized: false,
   });
 }

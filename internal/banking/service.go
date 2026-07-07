@@ -30,6 +30,7 @@ type Service struct {
 	parsers                    map[Provider]StatementParser
 	invoiceCandidates          InvoiceCandidateSource
 	directorNames              DirectorNameSource
+	receiptAssets              ReceiptAssetStore
 	payeeRuleAutoPostThreshold int
 	dlaPersonalPatterns        []string
 	reconciliationHooks        ReconciliationCommandHooks
@@ -106,6 +107,12 @@ func WithEventBus(eventBus *bus.Bus) ServiceOption {
 func WithReconciliationCommandHooks(hooks ReconciliationCommandHooks) ServiceOption {
 	return func(s *Service) {
 		s.reconciliationHooks = hooks
+	}
+}
+
+func WithReceiptAssetStore(store ReceiptAssetStore) ServiceOption {
+	return func(s *Service) {
+		s.receiptAssets = store
 	}
 }
 
@@ -556,6 +563,145 @@ func (s *Service) RecentlyReconciled(ctx context.Context, accountID AccountID, l
 		return nil, fmt.Errorf("banking: recently reconciled requires pool")
 	}
 	return s.store.RecentlyReconciled(ctx, s.pool, accountID, normalizeRecentlyReconciledLimit(limit))
+}
+
+func (s *Service) AttachReceipt(ctx context.Context, txnID TransactionID, upload ReceiptUpload) (_ Receipt, err error) {
+	if s.pool == nil {
+		return Receipt{}, fmt.Errorf("banking: receipt storage requires pool")
+	}
+	if s.receiptAssets == nil {
+		return Receipt{}, fmt.Errorf("banking: receipt asset store is required")
+	}
+	if txnID <= 0 {
+		return Receipt{}, fmt.Errorf("banking: transaction id is required: %w", ErrInvalidReceipt)
+	}
+	validated, err := validateReceiptUpload(upload)
+	if err != nil {
+		return Receipt{}, err
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Receipt{}, fmt.Errorf("banking: begin receipt transaction: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	if _, err := s.store.Transaction(ctx, tx, txnID); err != nil {
+		return Receipt{}, err
+	}
+	assetRef, err := s.receiptAssets.StoreReceiptAsset(ctx, ReceiptAssetUpload{
+		MIME:  validated.MIME,
+		Bytes: validated.Bytes,
+	})
+	if err != nil {
+		return Receipt{}, err
+	}
+	receipt, err := s.store.UpsertReceipt(ctx, tx, Receipt{
+		TransactionID: txnID,
+		AssetRef:      assetRef,
+		Filename:      validated.Filename,
+		MIME:          validated.MIME,
+		Size:          int64(len(validated.Bytes)),
+	})
+	if err != nil {
+		return Receipt{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return Receipt{}, fmt.Errorf("banking: commit receipt transaction: %w", err)
+	}
+	return receipt, nil
+}
+
+func (s *Service) Receipt(ctx context.Context, txnID TransactionID) (Receipt, error) {
+	if s.pool == nil {
+		return Receipt{}, fmt.Errorf("banking: receipt lookup requires pool")
+	}
+	if txnID <= 0 {
+		return Receipt{}, fmt.Errorf("banking: transaction id is required: %w", ErrInvalidReceipt)
+	}
+	return s.store.ReceiptByTransaction(ctx, s.pool, txnID)
+}
+
+func (s *Service) ReceiptAsset(ctx context.Context, txnID TransactionID) (Receipt, ReceiptAsset, error) {
+	if s.receiptAssets == nil {
+		return Receipt{}, ReceiptAsset{}, fmt.Errorf("banking: receipt asset store is required")
+	}
+	receipt, err := s.Receipt(ctx, txnID)
+	if err != nil {
+		return Receipt{}, ReceiptAsset{}, err
+	}
+	asset, err := s.receiptAssets.LoadReceiptAsset(ctx, receipt.AssetRef)
+	if err != nil {
+		return Receipt{}, ReceiptAsset{}, err
+	}
+	if asset.MIME == "" {
+		asset.MIME = receipt.MIME
+	}
+	if asset.Size == 0 {
+		asset.Size = int64(len(asset.Bytes))
+	}
+	return receipt, asset, nil
+}
+
+func (s *Service) ReceiptSummaries(ctx context.Context, txnIDs []TransactionID) (map[TransactionID]Receipt, error) {
+	if s.pool == nil {
+		return nil, fmt.Errorf("banking: receipt lookup requires pool")
+	}
+	return s.store.ReceiptsByTransactionIDs(ctx, s.pool, txnIDs)
+}
+
+func (s *Service) ReceiptsBetween(ctx context.Context, from time.Time, to time.Time) ([]ReceiptDocument, error) {
+	if s.pool == nil {
+		return nil, fmt.Errorf("banking: receipt export requires pool")
+	}
+	fromDate, err := dateOnly(from)
+	if err != nil {
+		return nil, fmt.Errorf("banking: receipt export from date: %w", ErrInvalidTransactionFilter)
+	}
+	toDate, err := dateOnly(to)
+	if err != nil {
+		return nil, fmt.Errorf("banking: receipt export to date: %w", ErrInvalidTransactionFilter)
+	}
+	if fromDate.After(toDate) {
+		return nil, fmt.Errorf("banking: receipt export from date %s is after to date %s: %w",
+			fromDate.Format(time.DateOnly),
+			toDate.Format(time.DateOnly),
+			ErrInvalidTransactionFilter,
+		)
+	}
+	return s.store.ReceiptsBetween(ctx, s.pool, fromDate, toDate)
+}
+
+func (s *Service) DeleteReceipt(ctx context.Context, txnID TransactionID) (err error) {
+	if s.pool == nil {
+		return fmt.Errorf("banking: receipt deletion requires pool")
+	}
+	if txnID <= 0 {
+		return fmt.Errorf("banking: transaction id is required: %w", ErrInvalidReceipt)
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("banking: begin receipt delete transaction: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+	if _, err := s.store.Transaction(ctx, tx, txnID); err != nil {
+		return err
+	}
+	if err := s.store.DeleteReceipt(ctx, tx, txnID); err != nil {
+		return err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return fmt.Errorf("banking: commit receipt delete transaction: %w", err)
+	}
+	return nil
 }
 
 func (s *Service) Accounts(ctx context.Context) ([]BankAccount, error) {

@@ -42,6 +42,7 @@ type Service struct {
 	invoicing      Invoicing
 	dla            DLA
 	dividends      DividendDocumentProvider
+	receipts       ReceiptDocumentProvider
 	archiveStore   ExportArchiveStore
 	pdfEngine      PLPDFEngine
 	mailer         Mailer
@@ -73,6 +74,13 @@ func WithDLA(api DLA) Option {
 func WithDividendDocuments(provider DividendDocumentProvider) Option {
 	return func(s *Service) {
 		s.dividends = provider
+	}
+}
+
+// WithReceiptDocuments injects optional banking receipts for export packs.
+func WithReceiptDocuments(provider ReceiptDocumentProvider) Option {
+	return func(s *Service) {
+		s.receipts = provider
 	}
 }
 

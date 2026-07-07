@@ -9,6 +9,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/textproto"
 	"strings"
 	"testing"
 	"time"
@@ -48,6 +49,9 @@ func TestHTTPImportRoundTripSummaryOversizeAndAuth(t *testing.T) {
 		{http.MethodPost, "/api/banking/transactions/1/recode"},
 		{http.MethodPost, "/api/banking/transactions/1/exclude"},
 		{http.MethodPost, "/api/banking/transactions/1/unexclude"},
+		{http.MethodPut, "/api/banking/transactions/1/receipt"},
+		{http.MethodGet, "/api/banking/transactions/1/receipt"},
+		{http.MethodDelete, "/api/banking/transactions/1/receipt"},
 	} {
 		response := performBankingRequest(router, tc.method, tc.path, nil, "", false)
 		if response.Code != http.StatusUnauthorized {
@@ -390,6 +394,124 @@ func TestHTTPFeedRecentAndCommandsHappyAndConflict(t *testing.T) {
 	}
 }
 
+func TestHTTPReceiptUploadGetDeleteAndSurvivesReconciliation(t *testing.T) {
+	pool, _ := temporaryMigratedBankingDatabase(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	assets := newMemoryReceiptAssetStore()
+	ledger := &recordingBankingLedger{}
+	service := NewService(
+		pool,
+		ledger,
+		WithLedgerJournal(ledger),
+		WithMoneyFX(stubBankingMoneyFX{realised: money.Money{Amount: 0, Currency: "GBP"}}),
+		WithInvoicingSettler(stubInvoiceSettler{}),
+		WithReceiptAssetStore(assets),
+	)
+	router := newBankingHTTPTestRouter(t, service)
+	account := createBankingHTTPAccount(t, router, "Revolut GBP", "GBP")
+	txnID := importSingleBankingTxn(t, ctx, pool, service, AccountID(account.ID), revolutTestTxn{
+		Date:      time.Date(2026, 12, 1, 9, 0, 0, 0, time.UTC),
+		ID:        "http-receipt",
+		Payee:     "Receipt Vendor",
+		Reference: "INV-RECEIPT",
+		Amount:    money.Money{Amount: 9900, Currency: "GBP"},
+	})
+	mustRecordSuggestion(t, ctx, service, txnID, SuggestionKindInvoiceMatch, 0.980, "invoice-receipt", "invoice match")
+
+	pdf := []byte("%PDF-1.4\n% receipt fixture\n%%EOF\n")
+	receiptBody, receiptContentType := multipartReceiptBody(t, "receipt.pdf", "application/pdf", pdf)
+	uploadResponse := performBankingRequest(router, http.MethodPut, fmt.Sprintf("/api/banking/transactions/%d/receipt", txnID), receiptBody, receiptContentType, true)
+	if uploadResponse.Code != http.StatusOK {
+		t.Fatalf("receipt upload status = %d, want %d; body=%s", uploadResponse.Code, http.StatusOK, uploadResponse.Body.String())
+	}
+	var uploaded receiptResponse
+	decodeBankingResponse(t, uploadResponse, &uploaded)
+	if uploaded.Filename != "receipt.pdf" || uploaded.ContentType != "application/pdf" || uploaded.Size != int64(len(pdf)) || uploaded.URL == "" {
+		t.Fatalf("uploaded receipt = %+v, want filename/content type/size/url", uploaded)
+	}
+
+	reviewResponse := performBankingRequest(router, http.MethodGet, "/api/banking/review", nil, "", true)
+	if reviewResponse.Code != http.StatusOK {
+		t.Fatalf("review status = %d, want %d; body=%s", reviewResponse.Code, http.StatusOK, reviewResponse.Body.String())
+	}
+	var queue reviewQueueResponse
+	decodeBankingResponse(t, reviewResponse, &queue)
+	if len(queue.Matches) != 1 || queue.Matches[0].Transaction.Receipt == nil {
+		t.Fatalf("review receipt metadata missing: %+v", queue)
+	}
+
+	getResponse := performBankingRequest(router, http.MethodGet, fmt.Sprintf("/api/banking/transactions/%d/receipt", txnID), nil, "", true)
+	if getResponse.Code != http.StatusOK {
+		t.Fatalf("receipt get status = %d, want %d; body=%s", getResponse.Code, http.StatusOK, getResponse.Body.String())
+	}
+	if got := getResponse.Header().Get("Content-Type"); got != "application/pdf" {
+		t.Fatalf("receipt content type = %q, want application/pdf", got)
+	}
+	if !bytes.Equal(getResponse.Body.Bytes(), pdf) {
+		t.Fatalf("receipt bytes = %q, want %q", getResponse.Body.Bytes(), pdf)
+	}
+
+	confirmResponse := performBankingRequest(router, http.MethodPost, fmt.Sprintf("/api/banking/transactions/%d/confirm", txnID), nil, "", true)
+	if confirmResponse.Code != http.StatusOK {
+		t.Fatalf("confirm status = %d, want %d; body=%s", confirmResponse.Code, http.StatusOK, confirmResponse.Body.String())
+	}
+
+	recentHTTPResponse := performBankingRequest(router, http.MethodGet, "/api/banking/recent", nil, "", true)
+	if recentHTTPResponse.Code != http.StatusOK {
+		t.Fatalf("recent status = %d, want %d; body=%s", recentHTTPResponse.Code, http.StatusOK, recentHTTPResponse.Body.String())
+	}
+	var recent recentResponse
+	decodeBankingResponse(t, recentHTTPResponse, &recent)
+	if len(recent.Transactions) != 1 || recent.Transactions[0].Transaction.Receipt == nil {
+		t.Fatalf("recent receipt metadata missing after reconciliation: %+v", recent)
+	}
+
+	getAfterConfirm := performBankingRequest(router, http.MethodGet, fmt.Sprintf("/api/banking/transactions/%d/receipt", txnID), nil, "", true)
+	if getAfterConfirm.Code != http.StatusOK || !bytes.Equal(getAfterConfirm.Body.Bytes(), pdf) {
+		t.Fatalf("receipt after confirm status/body = %d/%q, want 200/original", getAfterConfirm.Code, getAfterConfirm.Body.String())
+	}
+
+	deleteResponse := performBankingRequest(router, http.MethodDelete, fmt.Sprintf("/api/banking/transactions/%d/receipt", txnID), nil, "", true)
+	if deleteResponse.Code != http.StatusNoContent {
+		t.Fatalf("receipt delete status = %d, want %d; body=%s", deleteResponse.Code, http.StatusNoContent, deleteResponse.Body.String())
+	}
+	getAfterDelete := performBankingRequest(router, http.MethodGet, fmt.Sprintf("/api/banking/transactions/%d/receipt", txnID), nil, "", true)
+	if getAfterDelete.Code != http.StatusNotFound {
+		t.Fatalf("receipt get after delete status = %d, want %d; body=%s", getAfterDelete.Code, http.StatusNotFound, getAfterDelete.Body.String())
+	}
+}
+
+func TestHTTPReceiptUploadRejectsUnsupportedTypeAndOversize(t *testing.T) {
+	pool, _ := temporaryMigratedBankingDatabase(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	service := NewService(pool, &recordingBankingLedger{}, WithReceiptAssetStore(newMemoryReceiptAssetStore()))
+	router := newBankingHTTPTestRouter(t, service)
+	account := createBankingHTTPAccount(t, router, "Revolut GBP", "GBP")
+	txnID := importSingleBankingTxn(t, ctx, pool, service, AccountID(account.ID), revolutTestTxn{
+		Date:      time.Date(2026, 12, 2, 9, 0, 0, 0, time.UTC),
+		ID:        "http-receipt-invalid",
+		Payee:     "Bad Receipt Vendor",
+		Reference: "bad receipt",
+		Amount:    money.Money{Amount: -1000, Currency: "GBP"},
+	})
+
+	badBody, badContentType := multipartReceiptBody(t, "receipt.txt", "text/plain", []byte("not a receipt"))
+	badResponse := performBankingRequest(router, http.MethodPut, fmt.Sprintf("/api/banking/transactions/%d/receipt", txnID), badBody, badContentType, true)
+	if badResponse.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("unsupported receipt status = %d, want %d; body=%s", badResponse.Code, http.StatusUnsupportedMediaType, badResponse.Body.String())
+	}
+
+	oversizedBody, oversizedContentType := multipartReceiptBody(t, "receipt.pdf", "application/pdf", bytes.Repeat([]byte("x"), MaxReceiptBytes+1))
+	oversizedResponse := performBankingRequest(router, http.MethodPut, fmt.Sprintf("/api/banking/transactions/%d/receipt", txnID), oversizedBody, oversizedContentType, true)
+	if oversizedResponse.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized receipt status = %d, want %d; body=%s", oversizedResponse.Code, http.StatusRequestEntityTooLarge, oversizedResponse.Body.String())
+	}
+}
+
 func TestBankingOpenAPIFragmentDocumentsHTTPPaths(t *testing.T) {
 	t.Parallel()
 
@@ -411,6 +533,7 @@ func TestBankingOpenAPIFragmentDocumentsHTTPPaths(t *testing.T) {
 		"/api/banking/transactions/{id}/recode",
 		"/api/banking/transactions/{id}/exclude",
 		"/api/banking/transactions/{id}/unexclude",
+		"/api/banking/transactions/{id}/receipt",
 	} {
 		if _, ok := paths[path]; !ok {
 			t.Fatalf("openapi path %s missing from %+v", path, paths)
@@ -484,6 +607,26 @@ func multipartBody(t *testing.T, filename string, data []byte) (*bytes.Buffer, s
 	}
 	if _, err := part.Write(data); err != nil {
 		t.Fatalf("write multipart file: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+	return &body, writer.FormDataContentType()
+}
+
+func multipartReceiptBody(t *testing.T, filename string, contentType string, data []byte) (*bytes.Buffer, string) {
+	t.Helper()
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	header := make(textproto.MIMEHeader)
+	header.Set("Content-Disposition", fmt.Sprintf(`form-data; name="%s"; filename="%s"`, receiptMultipartFileField, filename))
+	header.Set("Content-Type", contentType)
+	part, err := writer.CreatePart(header)
+	if err != nil {
+		t.Fatalf("CreatePart() error = %v", err)
+	}
+	if _, err := part.Write(data); err != nil {
+		t.Fatalf("write multipart receipt: %v", err)
 	}
 	if err := writer.Close(); err != nil {
 		t.Fatalf("close multipart writer: %v", err)
@@ -570,4 +713,33 @@ type recordingDLAFileDrawer struct{}
 
 func (*recordingDLAFileDrawer) FileDrawing(context.Context, db.Tx, dla.TxnRef) error {
 	return nil
+}
+
+type memoryReceiptAssetStore struct {
+	next   int
+	assets map[string]ReceiptAsset
+}
+
+func newMemoryReceiptAssetStore() *memoryReceiptAssetStore {
+	return &memoryReceiptAssetStore{assets: map[string]ReceiptAsset{}}
+}
+
+func (s *memoryReceiptAssetStore) StoreReceiptAsset(_ context.Context, upload ReceiptAssetUpload) (string, error) {
+	s.next++
+	ref := fmt.Sprintf("receipt-asset-%d", s.next)
+	s.assets[ref] = ReceiptAsset{
+		MIME:  upload.MIME,
+		Size:  int64(len(upload.Bytes)),
+		Bytes: append([]byte{}, upload.Bytes...),
+	}
+	return ref, nil
+}
+
+func (s *memoryReceiptAssetStore) LoadReceiptAsset(_ context.Context, ref string) (ReceiptAsset, error) {
+	asset, ok := s.assets[ref]
+	if !ok {
+		return ReceiptAsset{}, ErrReceiptNotFound
+	}
+	asset.Bytes = append([]byte{}, asset.Bytes...)
+	return asset, nil
 }

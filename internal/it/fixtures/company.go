@@ -104,17 +104,17 @@ func CompanyYearEnd(month time.Month, day int) CompanyOverride {
 	}
 }
 
-// CompanyVATRegistered overrides whether the company is registered for VAT.
-func CompanyVATRegistered(registered bool) CompanyOverride {
-	return func(profile *identity.CompanyProfile) {
-		profile.IsVATRegistered = registered
-	}
-}
-
 // CompanyIncorporationDate overrides the incorporation date.
 func CompanyIncorporationDate(date time.Time) CompanyOverride {
 	return func(profile *identity.CompanyProfile) {
 		profile.IncorporationDate = date
+	}
+}
+
+// CompanyVATRegistered overrides whether the company is registered for VAT.
+func CompanyVATRegistered(registered bool) CompanyOverride {
+	return func(profile *identity.CompanyProfile) {
+		profile.IsVATRegistered = registered
 	}
 }
 
@@ -169,8 +169,8 @@ func patchCompanyProfile(t testing.TB, h *harness.Harness, profile identity.Comp
 			"month": int(profile.YearEnd.Month),
 			"day":   profile.YearEnd.Day,
 		},
-		"is_vat_registered": profile.IsVATRegistered,
 		"vat_number":        profile.VATNumber,
+		"is_vat_registered": profile.IsVATRegistered,
 		"bank_details":      profile.BankDetails,
 		"shareholders":      profile.Shareholders,
 		"directors":         profile.Directors,

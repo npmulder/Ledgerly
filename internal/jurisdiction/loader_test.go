@@ -59,6 +59,9 @@ func TestLoadFromFSEmbeddedFixture(t *testing.T) {
 	if len(pack.Filings) != 3 {
 		t.Fatalf("filings length = %d, want 3", len(pack.Filings))
 	}
+	if !pack.Filings["vat_return"].RequiresVATRegistration {
+		t.Fatalf("vat_return RequiresVATRegistration = false, want true")
+	}
 	if !pack.DirectorLoans.S455Charge {
 		t.Fatalf("director loan policy not loaded: %#v", pack.DirectorLoans)
 	}
@@ -148,6 +151,9 @@ func TestLoadFromFSEmbeddedIsleOfManPack(t *testing.T) {
 	}
 	if pack.Tax.VAT.Authority != "Isle of Man Customs & Excise" {
 		t.Fatalf("VAT authority = %q, want Isle of Man Customs & Excise", pack.Tax.VAT.Authority)
+	}
+	if !pack.Filings["vat_return"].RequiresVATRegistration {
+		t.Fatalf("vat_return RequiresVATRegistration = false, want true")
 	}
 }
 
