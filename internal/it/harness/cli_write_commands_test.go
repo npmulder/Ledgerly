@@ -55,9 +55,19 @@ func TestCLIWriteMoneyMoversConfirmSemanticsAgainstHarness(t *testing.T) {
 	assertOutputContains(t, clientAddResult.output, "CLI Draft Client")
 
 	fabrikam := fixtures.Fabrikam(t, h)
+	assertInvoiceTotalCount(t, invoiceService, 0)
+	badLineResult := runLedgerlyBinary(t, binary, configPath, "invoice", "create", "--client", fabrikam.ID, "--line", "Consulting:1000")
+	assertCLIExit(t, badLineResult, 2)
+	assertOutputContains(t, badLineResult.output, `--line must use "desc:qty:price"`)
+	assertInvoiceTotalCount(t, invoiceService, 0)
+	wrongCurrencyLineResult := runLedgerlyBinary(t, binary, configPath, "invoice", "create", "--client", fabrikam.ID, "--line", "Consulting:1:1000 EUR")
+	assertCLIExit(t, wrongCurrencyLineResult, 2)
+	assertOutputContains(t, wrongCurrencyLineResult.output, "--line 1 price currency must match client currency GBP")
+	assertInvoiceTotalCount(t, invoiceService, 0)
 	invoiceCreateResult := runLedgerlyBinary(t, binary, configPath, "invoice", "create", "--client", fabrikam.ID, "--line", "Consulting:1:1000")
 	assertCLIExit(t, invoiceCreateResult, 0)
 	assertOutputContains(t, invoiceCreateResult.output, "STATUS", "draft", "AMOUNT")
+	assertInvoiceTotalCount(t, invoiceService, 1)
 
 	dlaAddResult := runLedgerlyBinary(t, binary, configPath,
 		"dla", "add",
@@ -366,6 +376,17 @@ func assertInvoiceStatus(t testing.TB, service *invoicing.Service, id string, wa
 	}
 	if invoice.Status != want {
 		t.Fatalf("invoice %s status = %q, want %q", id, invoice.Status, want)
+	}
+}
+
+func assertInvoiceTotalCount(t testing.TB, service *invoicing.Service, want int) {
+	t.Helper()
+	result, err := service.List(context.Background(), invoicing.InvoiceListFilter{Limit: 10})
+	if err != nil {
+		t.Fatalf("List(invoices) error = %v", err)
+	}
+	if result.TotalCount != want {
+		t.Fatalf("invoice total count = %d, want %d", result.TotalCount, want)
 	}
 }
 

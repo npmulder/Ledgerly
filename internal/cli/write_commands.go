@@ -9,6 +9,7 @@ import (
 	"mime/multipart"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"unicode"
@@ -18,16 +19,46 @@ import (
 	"github.com/npmulder/ledgerly/internal/cli/gen"
 )
 
+var cliDecimalQuantityPattern = regexp.MustCompile(`^[0-9]+(\.[0-9]+)?$`)
+
 func runInvoiceCreate(ctx context.Context, runtime *Runtime, clientID string, rawLines []string) error {
-	if strings.TrimSpace(clientID) == "" {
+	clientID = strings.TrimSpace(clientID)
+	if clientID == "" {
 		return newUsageError("--client is required")
+	}
+	lines, err := parseInvoiceLineInputs(rawLines, "")
+	if err != nil {
+		return err
 	}
 	client, err := newConfiguredAPIClient(runtime)
 	if err != nil {
 		return err
 	}
+	if len(lines) > 0 {
+		clientResponse, err := client.client.InvoicingGetClientWithResponse(ctx, clientID)
+		if err != nil {
+			return newDomainError(fmt.Sprintf("unable to reach Ledgerly API: %v", err))
+		}
+		if clientResponse.JSON200 == nil {
+			if err := responseProblem(clientResponse.StatusCode(), clientResponse.Status(), clientResponse.Body, runtime.json, clientResponse.ApplicationproblemJSON401, clientResponse.ApplicationproblemJSON404); err != nil {
+				return err
+			}
+			return unexpectedAPIResponse(clientResponse.Status())
+		}
+		invoiceCurrency := string(clientResponse.JSON200.DefaultCurrency)
+		for i := range lines {
+			lineCurrency := strings.TrimSpace(string(lines[i].UnitPrice.Currency))
+			if lineCurrency == "" {
+				lines[i].UnitPrice.Currency = gen.InvoicingMoneyCurrency(invoiceCurrency)
+				continue
+			}
+			if !strings.EqualFold(lineCurrency, invoiceCurrency) {
+				return newUsageError(fmt.Sprintf("--line %d price currency must match client currency %s", i+1, invoiceCurrency))
+			}
+		}
+	}
 	response, err := client.client.InvoicingCreateDraftInvoiceWithResponse(ctx, gen.InvoicingCreateDraftInvoiceRequest{
-		ClientId: strings.TrimSpace(clientID),
+		ClientId: clientID,
 	})
 	if err != nil {
 		return newDomainError(fmt.Sprintf("unable to reach Ledgerly API: %v", err))
@@ -40,11 +71,7 @@ func runInvoiceCreate(ctx context.Context, runtime *Runtime, clientID string, ra
 	}
 
 	invoice := response.JSON201
-	if len(rawLines) > 0 {
-		lines, err := parseInvoiceLineInputs(rawLines, string(invoice.Currency))
-		if err != nil {
-			return err
-		}
+	if len(lines) > 0 {
 		patchResponse, err := client.client.InvoicingPatchInvoiceWithResponse(ctx, invoice.Id, gen.InvoicingInvoicePatch{
 			Lines: &lines,
 		})
@@ -568,18 +595,29 @@ func optionalMoneyAmount(raw string, defaultCurrency string, label string) (*gen
 
 func parseInvoiceLineInputs(rawLines []string, defaultCurrency string) ([]gen.InvoicingInvoiceLineInput, error) {
 	lines := make([]gen.InvoicingInvoiceLineInput, 0, len(rawLines))
-	for _, raw := range rawLines {
+	for i, raw := range rawLines {
 		parts := strings.Split(raw, ":")
 		if len(parts) != 3 {
 			return nil, newUsageError(`--line must use "desc:qty:price"`)
 		}
-		amount, currency, err := parseMoney(parts[2], defaultCurrency, "--line price")
+		description := strings.TrimSpace(parts[0])
+		if description == "" {
+			return nil, newUsageError(fmt.Sprintf("--line %d description is required", i+1))
+		}
+		qty := strings.TrimSpace(parts[1])
+		if err := validateDecimalQuantity(qty); err != nil {
+			return nil, newUsageError(fmt.Sprintf("invalid --line %d qty %q: %v", i+1, parts[1], err))
+		}
+		amount, currency, err := parseInvoiceLinePrice(parts[2], defaultCurrency)
 		if err != nil {
 			return nil, err
 		}
+		if amount <= 0 {
+			return nil, newUsageError(fmt.Sprintf("--line %d price must be greater than zero", i+1))
+		}
 		lines = append(lines, gen.InvoicingInvoiceLineInput{
-			Description: strings.TrimSpace(parts[0]),
-			Qty:         strings.TrimSpace(parts[1]),
+			Description: description,
+			Qty:         qty,
 			UnitPrice: gen.InvoicingMoney{
 				Amount:   amount,
 				Currency: gen.InvoicingMoneyCurrency(currency),
@@ -587,6 +625,51 @@ func parseInvoiceLineInputs(rawLines []string, defaultCurrency string) ([]gen.In
 		})
 	}
 	return lines, nil
+}
+
+func parseInvoiceLinePrice(raw string, defaultCurrency string) (int64, string, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return 0, "", newUsageError("--line price is required")
+	}
+	currency := strings.ToUpper(strings.TrimSpace(defaultCurrency))
+	fields := strings.Fields(value)
+	switch len(fields) {
+	case 1:
+		amountPart, detectedCurrency := splitCurrencySuffix(fields[0])
+		value = amountPart
+		if detectedCurrency != "" {
+			currency = detectedCurrency
+		}
+	case 2:
+		value = fields[0]
+		currency = strings.ToUpper(strings.TrimSpace(fields[1]))
+	default:
+		return 0, "", newUsageError("--line price must be an amount optionally followed by a currency")
+	}
+	if currency != "" && currency != "EUR" && currency != "GBP" {
+		return 0, "", newUsageError("--line price currency must be EUR or GBP")
+	}
+	amount, err := parseMinorAmount(value)
+	if err != nil {
+		return 0, "", newUsageError(fmt.Sprintf("invalid --line price %q: %v", raw, err))
+	}
+	return amount, currency, nil
+}
+
+func validateDecimalQuantity(value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fmt.Errorf("is required")
+	}
+	if !cliDecimalQuantityPattern.MatchString(value) {
+		return fmt.Errorf("must be a positive decimal")
+	}
+	amount, err := strconv.ParseFloat(value, 64)
+	if err != nil || amount <= 0 {
+		return fmt.Errorf("must be a positive decimal")
+	}
+	return nil
 }
 
 func parseMoney(raw string, defaultCurrency string, label string) (int64, string, error) {
