@@ -63,8 +63,7 @@ func (Store) EnsureAccount(ctx context.Context, tx db.Tx, spec AccountSpec) (Acc
 func (Store) ListAccounts(ctx context.Context, tx db.Tx) ([]Account, error) {
 	rows, err := tx.Query(ctx, `
 SELECT id, code, name, type, currency, created_at
-FROM ledger.accounts
-ORDER BY code`)
+FROM ledger.accounts_list()`)
 	if err != nil {
 		return nil, fmt.Errorf("ledger: list accounts: %w", err)
 	}
@@ -90,9 +89,8 @@ func (Store) PostingAccountCurrencies(ctx context.Context, tx db.Tx, codes []Acc
 	}
 
 	rows, err := tx.Query(ctx, `
-SELECT code, currency
-FROM ledger.accounts
-WHERE code = ANY($1)`, unique)
+SELECT account_code, account_currency
+FROM ledger.posting_account_currencies($1)`, unique)
 	if err != nil {
 		return nil, fmt.Errorf("ledger: check posting accounts: %w", err)
 	}
@@ -133,16 +131,29 @@ func (Store) InsertJournalEntry(ctx context.Context, tx db.Tx, entry NewJournalE
 		reversal = int64(*reversalOf)
 	}
 
+	accountCodes := make([]string, len(entry.Postings))
+	amounts := make([]int64, len(entry.Postings))
+	currencies := make([]string, len(entry.Postings))
+	amountGBPs := make([]int64, len(entry.Postings))
+	for i, posting := range entry.Postings {
+		accountCodes[i] = string(posting.AccountCode)
+		amounts[i] = posting.Amount.Amount
+		currencies[i] = posting.Amount.Currency
+		amountGBPs[i] = posting.AmountGBP.Amount
+	}
+
 	var id int64
 	if err := tx.QueryRow(ctx, `
-INSERT INTO ledger.journal_entries (date, description, source_module, source_ref, reversal_of)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING id`,
+SELECT ledger.insert_journal_entry($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
 		entry.Date,
 		entry.Description,
 		entry.SourceModule,
 		entry.SourceRef,
 		reversal,
+		accountCodes,
+		amounts,
+		currencies,
+		amountGBPs,
 	).Scan(&id); err != nil {
 		if reversalOf != nil && isReversalUniqueViolation(err) {
 			return 0, fmt.Errorf("ledger: entry %d already has a reversal: %w", *reversalOf, ErrEntryAlreadyReversed)
@@ -150,23 +161,7 @@ RETURNING id`,
 		return 0, fmt.Errorf("ledger: insert journal entry: %w", err)
 	}
 
-	entryID := EntryID(id)
-	for i, posting := range entry.Postings {
-		if _, err := tx.Exec(ctx, `
-INSERT INTO ledger.postings (entry_id, entry_date, account_code, amount, currency, amount_gbp)
-VALUES ($1, $2, $3, $4, $5, $6)`,
-			int64(entryID),
-			entry.Date,
-			string(posting.AccountCode),
-			posting.Amount.Amount,
-			posting.Amount.Currency,
-			posting.AmountGBP.Amount,
-		); err != nil {
-			return 0, fmt.Errorf("ledger: insert posting %d: %w", i, err)
-		}
-	}
-
-	return entryID, nil
+	return EntryID(id), nil
 }
 
 // JournalEntry loads an entry with postings for reversal construction.
@@ -176,9 +171,8 @@ func (Store) JournalEntry(ctx context.Context, tx db.Tx, id EntryID) (JournalEnt
 		reversalOf pgtype.Int8
 	)
 	if err := tx.QueryRow(ctx, `
-SELECT id, date, description, source_module, source_ref, reversal_of, created_at
-FROM ledger.journal_entries
-WHERE id = $1`, int64(id)).
+SELECT id, entry_date, description, source_module, source_ref, reversal_of, created_at
+FROM ledger.journal_entry($1)`, int64(id)).
 		Scan(
 			&entry.ID,
 			&entry.Date,
@@ -210,11 +204,7 @@ WHERE id = $1`, int64(id)).
 func (Store) HasReversal(ctx context.Context, tx db.Tx, id EntryID) (bool, error) {
 	var exists bool
 	if err := tx.QueryRow(ctx, `
-SELECT EXISTS (
-	SELECT 1
-	FROM ledger.journal_entries
-	WHERE reversal_of = $1
-)`, int64(id)).Scan(&exists); err != nil {
+SELECT ledger.has_reversal($1)`, int64(id)).Scan(&exists); err != nil {
 		return false, fmt.Errorf("ledger: check reversal for entry %d: %w", id, err)
 	}
 	return exists, nil
@@ -222,46 +212,9 @@ SELECT EXISTS (
 
 // CheckEntryInvariant performs the cheap per-entry balance check after insert.
 func (Store) CheckEntryInvariant(ctx context.Context, tx db.Tx, id EntryID) error {
-	var (
-		postingCount int
-		gbpTotal     int64
-	)
-	if err := tx.QueryRow(ctx, `
-SELECT count(*), COALESCE(sum(amount_gbp), 0)::bigint
-FROM ledger.postings
-WHERE entry_id = $1`, int64(id)).Scan(&postingCount, &gbpTotal); err != nil {
-		return fmt.Errorf("ledger: check GBP invariant for entry %d: %w", id, err)
-	}
-	if postingCount < 2 {
-		return fmt.Errorf("ledger: entry %d has %d postings after insert: %w", id, postingCount, ErrInvariantViolation)
-	}
-	if gbpTotal != 0 {
-		return fmt.Errorf("ledger: entry %d stored GBP total is %d: %w", id, gbpTotal, ErrInvariantViolation)
-	}
-
-	rows, err := tx.Query(ctx, `
-SELECT currency, sum(amount)::bigint
-FROM ledger.postings
-WHERE entry_id = $1
-GROUP BY currency
-HAVING sum(amount) <> 0`, int64(id))
-	if err != nil {
-		return fmt.Errorf("ledger: check native invariant for entry %d: %w", id, err)
-	}
-	defer rows.Close()
-
-	if rows.Next() {
-		var (
-			currency string
-			total    int64
-		)
-		if err := rows.Scan(&currency, &total); err != nil {
-			return fmt.Errorf("ledger: scan native invariant for entry %d: %w", id, err)
-		}
-		return fmt.Errorf("ledger: entry %d stored %s total is %d: %w", id, currency, total, ErrInvariantViolation)
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("ledger: collect native invariant for entry %d: %w", id, err)
+	if _, err := tx.Exec(ctx, `
+SELECT ledger.check_entry_invariant($1)`, int64(id)); err != nil {
+		return fmt.Errorf("ledger: check entry invariant for entry %d: %v: %w", id, err, ErrInvariantViolation)
 	}
 	return nil
 }
@@ -274,12 +227,8 @@ func (Store) AccountBalance(ctx context.Context, tx db.Tx, code AccountCode, asO
 	}
 
 	rows, err := tx.Query(ctx, `
-SELECT currency, COALESCE(sum(amount), 0)::bigint, COALESCE(sum(amount_gbp), 0)::bigint
-FROM ledger.postings
-WHERE account_code = $1
-	AND entry_date <= $2
-GROUP BY currency
-ORDER BY currency`, string(code), asOf)
+SELECT currency, amount, amount_gbp
+FROM ledger.account_balance_rows($1, $2)`, string(code), asOf)
 	if err != nil {
 		return AccountBalance{}, fmt.Errorf("ledger: account balance %s: %w", code, err)
 	}
@@ -328,24 +277,8 @@ func (Store) BalancesByType(ctx context.Context, tx db.Tx, from time.Time, to ti
 	}
 
 	rows, err := tx.Query(ctx, `
-SELECT a.type::text,
-	p.currency,
-	COALESCE(sum(p.amount), 0)::bigint,
-	COALESCE(sum(p.amount_gbp), 0)::bigint
-FROM ledger.accounts AS a
-LEFT JOIN ledger.postings AS p
-	ON p.account_code = a.code
-	AND p.entry_date <= $2
-	AND (a.type NOT IN ('income', 'expense') OR p.entry_date >= $1)
-GROUP BY a.type, p.currency
-ORDER BY CASE a.type
-	WHEN 'asset' THEN 1
-	WHEN 'liability' THEN 2
-	WHEN 'equity' THEN 3
-	WHEN 'income' THEN 4
-	WHEN 'expense' THEN 5
-	ELSE 6
-END, p.currency`, from, to)
+SELECT account_type, currency, amount, amount_gbp
+FROM ledger.balances_by_type_rows($1, $2)`, from, to)
 	if err != nil {
 		return nil, fmt.Errorf("ledger: balances by type: %w", err)
 	}
@@ -384,8 +317,40 @@ END, p.currency`, from, to)
 // Entries loads journal entries matching filter and attaches all postings for
 // each matched entry.
 func (Store) Entries(ctx context.Context, tx db.Tx, filter EntryFilter) ([]JournalEntry, error) {
-	query, args := buildEntriesQuery(filter)
-	rows, err := tx.Query(ctx, query, args...)
+	var from any
+	if filter.From != nil {
+		from = *filter.From
+	}
+	var to any
+	if filter.To != nil {
+		to = *filter.To
+	}
+	var sourceModule any
+	if filter.SourceModule != "" {
+		sourceModule = filter.SourceModule
+	}
+	var accountCode any
+	if filter.AccountCode != "" {
+		accountCode = string(filter.AccountCode)
+	}
+	var afterDate any
+	var afterID any
+	if filter.After != nil {
+		afterDate = filter.After.Date
+		afterID = int64(filter.After.ID)
+	}
+
+	rows, err := tx.Query(ctx, `
+SELECT id, entry_date, description, source_module, source_ref, reversal_of, created_at
+FROM ledger.entries($1, $2, $3, $4, $5, $6, $7)`,
+		from,
+		to,
+		sourceModule,
+		accountCode,
+		afterDate,
+		afterID,
+		filter.Limit,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("ledger: list entries: %w", err)
 	}
@@ -462,8 +427,7 @@ FROM ledger.ensure_account($1, $2, $3, $4)`
 func loadAccount(ctx context.Context, tx db.Tx, code AccountCode) (Account, error) {
 	account, err := scanSingleAccount(tx.QueryRow(ctx, `
 SELECT id, code, name, type, currency, created_at
-FROM ledger.accounts
-WHERE code = $1`, string(code)))
+FROM ledger.account_by_code($1)`, string(code)))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Account{}, &AccountNotFoundError{Code: code}
@@ -489,47 +453,6 @@ func typeBalance(accountType AccountType) AccountBalance {
 		AccountType: accountType,
 		AmountGBP:   money.Money{Currency: "GBP"},
 	}
-}
-
-func buildEntriesQuery(filter EntryFilter) (string, []any) {
-	args := []any{}
-	where := []string{"true"}
-	addArg := func(value any) string {
-		args = append(args, value)
-		return fmt.Sprintf("$%d", len(args))
-	}
-
-	if filter.From != nil {
-		where = append(where, "je.date >= "+addArg(*filter.From))
-	}
-	if filter.To != nil {
-		where = append(where, "je.date <= "+addArg(*filter.To))
-	}
-	if filter.SourceModule != "" {
-		where = append(where, "je.source_module = "+addArg(filter.SourceModule))
-	}
-	if filter.AccountCode != "" {
-		where = append(where, `EXISTS (
-	SELECT 1
-	FROM ledger.postings AS account_filter
-	WHERE account_filter.entry_id = je.id
-		AND account_filter.account_code = `+addArg(string(filter.AccountCode))+`
-)`)
-	}
-	if filter.After != nil {
-		afterDate := addArg(filter.After.Date)
-		afterID := addArg(int64(filter.After.ID))
-		where = append(where, "(je.date, je.id) > ("+afterDate+", "+afterID+")")
-	}
-	limit := addArg(filter.Limit)
-
-	query := `
-SELECT je.id, je.date, je.description, je.source_module, je.source_ref, je.reversal_of, je.created_at
-FROM ledger.journal_entries AS je
-WHERE ` + strings.Join(where, "\n\tAND ") + `
-ORDER BY je.date, je.id
-LIMIT ` + limit
-	return query, args
 }
 
 func normalizeAccountSpec(spec AccountSpec) (AccountSpec, error) {
@@ -660,9 +583,7 @@ func scanJournalEntryWithoutPostings(row accountRow) (JournalEntry, error) {
 func loadPostings(ctx context.Context, tx db.Tx, entryID EntryID) ([]Posting, error) {
 	rows, err := tx.Query(ctx, `
 SELECT account_code, amount, currency, amount_gbp
-FROM ledger.postings
-WHERE entry_id = $1
-ORDER BY id`, int64(entryID))
+FROM ledger.entry_postings($1)`, int64(entryID))
 	if err != nil {
 		return nil, fmt.Errorf("ledger: load postings for entry %d: %w", entryID, err)
 	}
@@ -700,9 +621,7 @@ ORDER BY id`, int64(entryID))
 func loadPostingsForEntries(ctx context.Context, tx db.Tx, entryIDs []int64) (map[EntryID][]Posting, error) {
 	rows, err := tx.Query(ctx, `
 SELECT entry_id, account_code, amount, currency, amount_gbp
-FROM ledger.postings
-WHERE entry_id = ANY($1)
-ORDER BY entry_id, id`, entryIDs)
+FROM ledger.entry_postings_for_entries($1)`, entryIDs)
 	if err != nil {
 		return nil, fmt.Errorf("ledger: load postings for entries: %w", err)
 	}
