@@ -25,6 +25,17 @@ func defaultConfigPath() (string, error) {
 }
 
 func loadConfig(path string) (Config, error) {
+	cfg, err := loadConfigValues(path)
+	if err != nil {
+		return Config{}, err
+	}
+	if cfg.URL == "" || cfg.Token == "" {
+		return Config{}, newAuthError("config is missing url or token; run ledgerly auth login")
+	}
+	return cfg, nil
+}
+
+func loadConfigValues(path string) (Config, error) {
 	resolved, err := resolveConfigPath(path)
 	if err != nil {
 		return Config{}, err
@@ -75,9 +86,6 @@ func loadConfig(path string) (Config, error) {
 	cfg := Config{
 		URL:   strings.TrimSpace(values["url"]),
 		Token: strings.TrimSpace(values["token"]),
-	}
-	if cfg.URL == "" || cfg.Token == "" {
-		return Config{}, newAuthError("config is missing url or token; run ledgerly auth login")
 	}
 	return cfg, nil
 }
