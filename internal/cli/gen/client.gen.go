@@ -868,6 +868,13 @@ type DashboardToReconcile struct {
 	ReviewQueue []DashboardReviewQueueItem  `json:"review_queue"`
 }
 
+// Director defines model for Director.
+type Director struct {
+	AppointedDate *openapi_types.Date `json:"appointed_date,omitempty"`
+	IsChair       *bool               `json:"is_chair,omitempty"`
+	Name          string              `json:"name"`
+}
+
 // DividendsAddress defines model for DividendsAddress.
 type DividendsAddress struct {
 	Country    string `json:"country"`
@@ -1716,13 +1723,6 @@ type ReportsVATResponse struct {
 
 // ReportsVATResponseStatus defines model for ReportsVATResponse.Status.
 type ReportsVATResponseStatus string
-
-// Director defines model for Director.
-type Director struct {
-	AppointedDate *openapi_types.Date `json:"appointed_date,omitempty"`
-	IsChair       *bool               `json:"is_chair,omitempty"`
-	Name          string              `json:"name"`
-}
 
 // Shareholder defines model for Shareholder.
 type Shareholder struct {

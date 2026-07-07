@@ -1730,6 +1730,12 @@ export interface components {
             accounts: components["schemas"]["DashboardReconcileAccount"][];
             review_queue: components["schemas"]["DashboardReviewQueueItem"][];
         };
+        Director: {
+            /** Format: date */
+            appointed_date?: string;
+            is_chair?: boolean;
+            name: string;
+        };
         DividendsAddress: {
             country: string;
             line1: string;
@@ -1959,12 +1965,6 @@ export interface components {
             trading_name: string;
             year_end_day: number;
             year_end_month: number;
-        };
-        Director: {
-            /** Format: date */
-            appointed_date?: string;
-            is_chair?: boolean;
-            name: string;
         };
         IdentityRegisterWithProfileResult: {
             profile: components["schemas"]["IdentityProfile"];
