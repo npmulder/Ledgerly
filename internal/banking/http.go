@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"mime/multipart"
 	nethttp "net/http"
 	"strconv"
@@ -25,7 +26,9 @@ const (
 	maxBankingJSONBodyBytes       = 64 * 1024
 	maxImportCSVBytes             = 10 * 1024 * 1024
 	maxImportMultipartBodyBytes   = maxImportCSVBytes + 1024*1024
+	maxReceiptMultipartBodyBytes  = MaxReceiptBytes + 32*1024
 	importMultipartFileField      = "file"
+	receiptMultipartFileField     = "receipt"
 	bankingFeedPageSize           = DefaultFeedLimit
 	defaultUnexcludeReason        = "manual unexclude"
 	problemTypeBankingBadRequest  = "https://ledgerly.local/problems/banking/bad-request"
@@ -88,6 +91,15 @@ type transactionResponse struct {
 	ImportBatchID int64             `json:"import_batch_id"`
 	State         TransactionState  `json:"state"`
 	CreatedAt     string            `json:"created_at"`
+	Receipt       *receiptResponse  `json:"receipt"`
+}
+
+type receiptResponse struct {
+	Filename    string `json:"filename"`
+	ContentType string `json:"content_type"`
+	Size        int64  `json:"size"`
+	UploadedAt  string `json:"uploaded_at"`
+	URL         string `json:"url"`
 }
 
 type reviewQueueResponse struct {
@@ -192,6 +204,9 @@ func (m *Module) RegisterRoutes(r chi.Router) {
 	r.Post("/transactions/{id}/recode", h.recodeTransaction)
 	r.Post("/transactions/{id}/exclude", h.excludeTransaction)
 	r.Post("/transactions/{id}/unexclude", h.unexcludeTransaction)
+	r.Put("/transactions/{id}/receipt", h.putReceipt)
+	r.Get("/transactions/{id}/receipt", h.getReceipt)
+	r.Delete("/transactions/{id}/receipt", h.deleteReceipt)
 }
 
 func (h bankingHandler) listAccounts(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -333,6 +348,11 @@ func (h bankingHandler) getFeed(w nethttp.ResponseWriter, r *nethttp.Request) {
 		nextCursor = &cursor
 		txns = txns[:bankingFeedPageSize]
 	}
+	txns, err = h.transactionsWithReceiptMetadata(r.Context(), txns)
+	if err != nil {
+		writeBankingError(w, r, err)
+		return
+	}
 	writeBankingJSON(w, nethttp.StatusOK, feedToResponse(txns, nextCursor))
 }
 
@@ -361,6 +381,11 @@ func (h bankingHandler) getRecent(w nethttp.ResponseWriter, r *nethttp.Request) 
 		writeBankingError(w, r, err)
 		return
 	}
+	recent, err = h.recentWithReceiptMetadata(r.Context(), recent)
+	if err != nil {
+		writeBankingError(w, r, err)
+		return
+	}
 	writeBankingJSON(w, nethttp.StatusOK, recentToResponse(recent))
 }
 
@@ -375,7 +400,11 @@ func (h bankingHandler) confirmTransaction(w nethttp.ResponseWriter, r *nethttp.
 		return
 	}
 	realised := moneyToResponse(result.RealisedFXGBP)
-	transaction := transactionToResponse(result.Transaction)
+	transaction, err := h.transactionToResponse(r.Context(), result.Transaction)
+	if err != nil {
+		writeBankingError(w, r, err)
+		return
+	}
 	writeBankingJSON(w, nethttp.StatusOK, commandResponse{
 		Transaction:      &transaction,
 		Kind:             cardKindForSuggestion(result.Kind),
@@ -394,7 +423,11 @@ func (h bankingHandler) fileTransactionToDLA(w nethttp.ResponseWriter, r *nethtt
 		return
 	}
 	amountGBP := moneyToResponse(result.AmountGBP)
-	transaction := transactionToResponse(result.Transaction)
+	transaction, err := h.transactionToResponse(r.Context(), result.Transaction)
+	if err != nil {
+		writeBankingError(w, r, err)
+		return
+	}
 	writeBankingJSON(w, nethttp.StatusOK, commandResponse{
 		Transaction: &transaction,
 		Kind:        cardKindForSuggestion(result.Kind),
@@ -425,7 +458,11 @@ func (h bankingHandler) recodeTransaction(w nethttp.ResponseWriter, r *nethttp.R
 		writeBankingError(w, r, err)
 		return
 	}
-	transaction := transactionToResponse(result.Transaction)
+	transaction, err := h.transactionToResponse(r.Context(), result.Transaction)
+	if err != nil {
+		writeBankingError(w, r, err)
+		return
+	}
 	rule := payeeRuleToResponse(result.Rule)
 	writeBankingJSON(w, nethttp.StatusOK, commandResponse{
 		Transaction: &transaction,
@@ -455,6 +492,62 @@ func (h bankingHandler) excludeTransaction(w nethttp.ResponseWriter, r *nethttp.
 	}
 	stateChange := stateChangeToResponse(change)
 	writeBankingJSON(w, nethttp.StatusOK, commandResponse{StateChange: &stateChange})
+}
+
+func (h bankingHandler) putReceipt(w nethttp.ResponseWriter, r *nethttp.Request) {
+	txnID, ok := transactionIDParam(w, r)
+	if !ok {
+		return
+	}
+	upload, err := readReceiptUpload(w, r)
+	if err != nil {
+		if isRequestTooLarge(err) {
+			writeBankingPayloadTooLarge(w, r)
+			return
+		}
+		writeBankingBadRequest(w, r, err)
+		return
+	}
+	receipt, err := h.service.AttachReceipt(r.Context(), txnID, upload)
+	if err != nil {
+		writeBankingError(w, r, err)
+		return
+	}
+	writeBankingJSON(w, nethttp.StatusOK, receiptToResponse(txnID, receipt))
+}
+
+func (h bankingHandler) getReceipt(w nethttp.ResponseWriter, r *nethttp.Request) {
+	txnID, ok := transactionIDParam(w, r)
+	if !ok {
+		return
+	}
+	receipt, asset, err := h.service.ReceiptAsset(r.Context(), txnID)
+	if err != nil {
+		writeBankingError(w, r, err)
+		return
+	}
+	contentType := strings.TrimSpace(asset.MIME)
+	if contentType == "" {
+		contentType = receipt.MIME
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Length", strconv.FormatInt(int64(len(asset.Bytes)), 10))
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("inline", map[string]string{"filename": receipt.Filename}))
+	w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
+	w.WriteHeader(nethttp.StatusOK)
+	_, _ = w.Write(asset.Bytes)
+}
+
+func (h bankingHandler) deleteReceipt(w nethttp.ResponseWriter, r *nethttp.Request) {
+	txnID, ok := transactionIDParam(w, r)
+	if !ok {
+		return
+	}
+	if err := h.service.DeleteReceipt(r.Context(), txnID); err != nil {
+		writeBankingError(w, r, err)
+		return
+	}
+	w.WriteHeader(nethttp.StatusNoContent)
 }
 
 func (h bankingHandler) unexcludeTransaction(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -576,8 +669,13 @@ func (h bankingHandler) reviewQueueToResponse(ctx context.Context, queue ReviewQ
 		Suggestions: make([]reviewCardResponse, 0, len(queue.DLA)),
 		Rules:       make([]reviewCardResponse, 0, len(queue.PayeeRules)),
 	}
+	receipts, err := h.service.ReceiptSummaries(ctx, reviewQueueTransactionIDs(queue))
+	if err != nil {
+		return reviewQueueResponse{}, err
+	}
 	invoiceCandidates := map[string][]InvoiceMatchCandidate{}
 	for _, item := range queue.InvoiceMatches {
+		item.Transaction = transactionWithReceiptMetadata(item.Transaction, receipts)
 		card, err := h.reviewCardToResponse(ctx, item, invoiceCandidates)
 		if err != nil {
 			return reviewQueueResponse{}, err
@@ -585,6 +683,7 @@ func (h bankingHandler) reviewQueueToResponse(ctx context.Context, queue ReviewQ
 		response.Matches = append(response.Matches, card)
 	}
 	for _, item := range queue.DLA {
+		item.Transaction = transactionWithReceiptMetadata(item.Transaction, receipts)
 		card, err := h.reviewCardToResponse(ctx, item, invoiceCandidates)
 		if err != nil {
 			return reviewQueueResponse{}, err
@@ -592,6 +691,7 @@ func (h bankingHandler) reviewQueueToResponse(ctx context.Context, queue ReviewQ
 		response.Suggestions = append(response.Suggestions, card)
 	}
 	for _, item := range queue.PayeeRules {
+		item.Transaction = transactionWithReceiptMetadata(item.Transaction, receipts)
 		card, err := h.reviewCardToResponse(ctx, item, invoiceCandidates)
 		if err != nil {
 			return reviewQueueResponse{}, err
@@ -599,6 +699,20 @@ func (h bankingHandler) reviewQueueToResponse(ctx context.Context, queue ReviewQ
 		response.Rules = append(response.Rules, card)
 	}
 	return response, nil
+}
+
+func reviewQueueTransactionIDs(queue ReviewQueue) []TransactionID {
+	ids := make([]TransactionID, 0, len(queue.InvoiceMatches)+len(queue.DLA)+len(queue.PayeeRules))
+	for _, item := range queue.InvoiceMatches {
+		ids = append(ids, item.Transaction.ID)
+	}
+	for _, item := range queue.DLA {
+		ids = append(ids, item.Transaction.ID)
+	}
+	for _, item := range queue.PayeeRules {
+		ids = append(ids, item.Transaction.ID)
+	}
+	return ids
 }
 
 func (h bankingHandler) reviewCardToResponse(ctx context.Context, item ReviewQueueItem, invoiceCandidates map[string][]InvoiceMatchCandidate) (reviewCardResponse, error) {
@@ -719,6 +833,10 @@ func transactionToResponse(txn Transaction) transactionResponse {
 	if providerMeta == nil {
 		providerMeta = map[string]string{}
 	}
+	var receipt *receiptResponse
+	if txn.Receipt != nil {
+		receipt = receiptMetadataToResponse(txn.ID, *txn.Receipt)
+	}
 	return transactionResponse{
 		ID:            int64(txn.ID),
 		AccountID:     int64(txn.AccountID),
@@ -730,7 +848,95 @@ func transactionToResponse(txn Transaction) transactionResponse {
 		ImportBatchID: int64(txn.ImportBatchID),
 		State:         txn.State,
 		CreatedAt:     txn.CreatedAt.UTC().Format(time.RFC3339Nano),
+		Receipt:       receipt,
 	}
+}
+
+func (h bankingHandler) transactionToResponse(ctx context.Context, txn Transaction) (transactionResponse, error) {
+	txns, err := h.transactionsWithReceiptMetadata(ctx, []Transaction{txn})
+	if err != nil {
+		return transactionResponse{}, err
+	}
+	if len(txns) == 0 {
+		return transactionResponse{}, fmt.Errorf("banking: transaction response is missing: %w", ErrTransactionNotFound)
+	}
+	return transactionToResponse(txns[0]), nil
+}
+
+func (h bankingHandler) transactionsWithReceiptMetadata(ctx context.Context, txns []Transaction) ([]Transaction, error) {
+	if len(txns) == 0 {
+		return txns, nil
+	}
+	ids := make([]TransactionID, 0, len(txns))
+	for _, txn := range txns {
+		ids = append(ids, txn.ID)
+	}
+	receipts, err := h.service.ReceiptSummaries(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	out := append([]Transaction{}, txns...)
+	for i := range out {
+		out[i] = transactionWithReceiptMetadata(out[i], receipts)
+	}
+	return out, nil
+}
+
+func (h bankingHandler) recentWithReceiptMetadata(ctx context.Context, recent []ReconciledTransaction) ([]ReconciledTransaction, error) {
+	if len(recent) == 0 {
+		return recent, nil
+	}
+	ids := make([]TransactionID, 0, len(recent))
+	for _, item := range recent {
+		ids = append(ids, item.Transaction.ID)
+	}
+	receipts, err := h.service.ReceiptSummaries(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	out := append([]ReconciledTransaction{}, recent...)
+	for i := range out {
+		out[i].Transaction = transactionWithReceiptMetadata(out[i].Transaction, receipts)
+	}
+	return out, nil
+}
+
+func transactionWithReceiptMetadata(txn Transaction, receipts map[TransactionID]Receipt) Transaction {
+	receipt, ok := receipts[txn.ID]
+	if !ok {
+		txn.Receipt = nil
+		return txn
+	}
+	meta := receiptToMetadata(receipt)
+	txn.Receipt = &meta
+	return txn
+}
+
+func receiptToMetadata(receipt Receipt) ReceiptMetadata {
+	return ReceiptMetadata{
+		Filename:   receipt.Filename,
+		MIME:       receipt.MIME,
+		Size:       receipt.Size,
+		UploadedAt: receipt.UploadedAt,
+	}
+}
+
+func receiptToResponse(txnID TransactionID, receipt Receipt) *receiptResponse {
+	return receiptMetadataToResponse(txnID, receiptToMetadata(receipt))
+}
+
+func receiptMetadataToResponse(txnID TransactionID, receipt ReceiptMetadata) *receiptResponse {
+	return &receiptResponse{
+		Filename:    receipt.Filename,
+		ContentType: receipt.MIME,
+		Size:        receipt.Size,
+		UploadedAt:  receipt.UploadedAt.UTC().Format(time.RFC3339Nano),
+		URL:         receiptURL(txnID),
+	}
+}
+
+func receiptURL(txnID TransactionID) string {
+	return fmt.Sprintf("/api/banking/transactions/%d/receipt", txnID)
 }
 
 func feedToResponse(txns []Transaction, nextCursor *string) feedResponse {
@@ -800,6 +1006,56 @@ func cardKindForSuggestion(kind SuggestionKind) string {
 	default:
 		return string(kind)
 	}
+}
+
+func readReceiptUpload(w nethttp.ResponseWriter, r *nethttp.Request) (ReceiptUpload, error) {
+	r.Body = nethttp.MaxBytesReader(w, r.Body, maxReceiptMultipartBodyBytes)
+	reader, err := r.MultipartReader()
+	if err != nil {
+		return ReceiptUpload{}, fmt.Errorf("receipt upload must be multipart/form-data with a %q file field", receiptMultipartFileField)
+	}
+
+	for {
+		part, err := reader.NextPart()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			if isRequestTooLarge(err) || errors.Is(err, multipart.ErrMessageTooLarge) {
+				return ReceiptUpload{}, errBankingRequestBodyTooLarge
+			}
+			return ReceiptUpload{}, fmt.Errorf("read multipart receipt: %w", err)
+		}
+		if part.FormName() != receiptMultipartFileField {
+			_ = part.Close()
+			continue
+		}
+		defer func() {
+			_ = part.Close()
+		}()
+
+		data, err := io.ReadAll(io.LimitReader(part, MaxReceiptBytes+1))
+		if err != nil {
+			if isRequestTooLarge(err) {
+				return ReceiptUpload{}, errBankingRequestBodyTooLarge
+			}
+			return ReceiptUpload{}, fmt.Errorf("read receipt upload: %w", err)
+		}
+		if len(data) > MaxReceiptBytes {
+			return ReceiptUpload{}, errBankingRequestBodyTooLarge
+		}
+		mediaType := strings.TrimSpace(part.Header.Get("Content-Type"))
+		if mediaType == "" {
+			mediaType = nethttp.DetectContentType(data)
+		}
+		return ReceiptUpload{
+			Filename: part.FileName(),
+			MIME:     mediaType,
+			Bytes:    data,
+		}, nil
+	}
+
+	return ReceiptUpload{}, fmt.Errorf("receipt upload must include a %q file field", receiptMultipartFileField)
 }
 
 func decodeBankingJSON(w nethttp.ResponseWriter, r *nethttp.Request, target any) error {
@@ -877,11 +1133,25 @@ func bankingProblemForError(err error) (httpserver.Problem, bool) {
 			Status: nethttp.StatusConflict,
 			Detail: err.Error(),
 		}, true
-	case errors.Is(err, ErrAccountNotFound), errors.Is(err, ErrTransactionNotFound), errors.Is(err, ErrSuggestionNotFound), errors.Is(err, ErrPayeeRuleNotFound):
+	case errors.Is(err, ErrAccountNotFound), errors.Is(err, ErrTransactionNotFound), errors.Is(err, ErrSuggestionNotFound), errors.Is(err, ErrPayeeRuleNotFound), errors.Is(err, ErrReceiptNotFound):
 		return httpserver.Problem{
 			Type:   problemTypeBankingNotFound,
 			Title:  nethttp.StatusText(nethttp.StatusNotFound),
 			Status: nethttp.StatusNotFound,
+			Detail: err.Error(),
+		}, true
+	case errors.Is(err, ErrReceiptTooLarge):
+		return httpserver.Problem{
+			Type:   problemTypeBankingPayload,
+			Title:  nethttp.StatusText(nethttp.StatusRequestEntityTooLarge),
+			Status: nethttp.StatusRequestEntityTooLarge,
+			Detail: err.Error(),
+		}, true
+	case errors.Is(err, ErrUnsupportedReceipt):
+		return httpserver.Problem{
+			Type:   problemTypeBankingUnsupported,
+			Title:  nethttp.StatusText(nethttp.StatusUnsupportedMediaType),
+			Status: nethttp.StatusUnsupportedMediaType,
 			Detail: err.Error(),
 		}, true
 	case errors.Is(err, ErrInvalidTransactionFilter):
@@ -898,7 +1168,8 @@ func bankingProblemForError(err error) (httpserver.Problem, bool) {
 		errors.Is(err, ErrCurrencyMismatch),
 		errors.Is(err, ErrInvalidSuggestion),
 		errors.Is(err, ErrInvalidPayeeRule),
-		errors.Is(err, ErrInvalidReconciliation):
+		errors.Is(err, ErrInvalidReconciliation),
+		errors.Is(err, ErrInvalidReceipt):
 		return httpserver.Problem{
 			Type:   problemTypeBankingValidation,
 			Title:  nethttp.StatusText(nethttp.StatusUnprocessableEntity),

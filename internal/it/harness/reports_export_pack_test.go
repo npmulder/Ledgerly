@@ -8,8 +8,11 @@ import (
 	"context"
 	"encoding/csv"
 	"encoding/json"
+	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"sort"
 	"strconv"
 	"strings"
@@ -21,6 +24,7 @@ import (
 	"github.com/npmulder/ledgerly/internal/it/fixtures"
 	"github.com/npmulder/ledgerly/internal/it/harness"
 	"github.com/npmulder/ledgerly/internal/ledger"
+	"github.com/npmulder/ledgerly/internal/moneyfx/money"
 	"github.com/npmulder/ledgerly/internal/platform/mail"
 	"github.com/npmulder/ledgerly/internal/reports"
 )
@@ -56,6 +60,13 @@ func TestReportsExportPackHTTPAssemblesZipAndSharesAttachment(t *testing.T) {
 	}
 	if len(files) < 7 {
 		t.Fatalf("export zip file count = %d, want at least 7", len(files))
+	}
+	receiptName := firstZipFileWithPrefix(files, "receipts/")
+	if receiptName == "" {
+		t.Fatalf("export zip missing receipt document; files=%v", sortedKeys(files))
+	}
+	if !bytes.Equal(files[receiptName], exportReceiptPDF()) {
+		t.Fatalf("receipt export %s bytes = %q, want fixture PDF", receiptName, files[receiptName])
 	}
 	assertJournalCSVBalanced(t, files["journal.csv"])
 	assertPLCSVNetProfit(t, files["pl.csv"], pl.NetProfit.AmountMinor)
@@ -119,6 +130,7 @@ func seedReportsExportQuarter(t *testing.T, h *harness.Harness) {
 	postManualVATReclaim(t, h, "2026-04-20", 4_120)
 	seedExportDLAEntry(t, h)
 	seedExportInvoicePDF(t, h, fabrikam.ID)
+	seedExportBankingReceipt(t, h)
 }
 
 func postManualVATReclaim(t testing.TB, h *harness.Harness, date string, amount int64) {
@@ -200,6 +212,41 @@ func seedExportInvoicePDF(t *testing.T, h *harness.Harness, clientID string) {
 	storeInvoicePDFAssetForReminderTest(t, h, sent.Invoice.ID, []byte("%PDF-1.4\n% export invoice fixture\n%%EOF\n"))
 }
 
+func seedExportBankingReceipt(t *testing.T, h *harness.Harness) {
+	t.Helper()
+	var account struct {
+		ID int64 `json:"id"`
+	}
+	postJSON(t, h, "/api/banking/accounts", map[string]any{
+		"name":     "Revolut Receipts",
+		"provider": "revolut",
+		"currency": "GBP",
+	}, http.StatusCreated, &account)
+
+	statement := fixtures.RevolutCSV(fixtures.RevolutTxn{
+		Date:      time.Date(2026, 4, 12, 9, 0, 0, 0, time.UTC),
+		ID:        "export-receipt-1",
+		Payee:     "Office Supplies Ltd",
+		Reference: "receipt export",
+		Amount:    money.Money{Amount: -2000, Currency: "GBP"},
+		Balance:   money.Money{Amount: -2000, Currency: "GBP"},
+	})
+	postMultipart(t, h, fmt.Sprintf("/api/banking/accounts/%d/import", account.ID), "file", "receipts.csv", "text/csv", statement, http.StatusOK, nil)
+
+	var txnID int64
+	if err := h.BankingPool.QueryRow(context.Background(), `
+SELECT id
+FROM transactions
+WHERE reference = 'receipt export'`).Scan(&txnID); err != nil {
+		t.Fatalf("load receipt export transaction: %v", err)
+	}
+	postMultipart(t, h, fmt.Sprintf("/api/banking/transactions/%d/receipt", txnID), "receipt", "receipt.pdf", "application/pdf", exportReceiptPDF(), http.StatusOK, nil)
+}
+
+func exportReceiptPDF() []byte {
+	return []byte("%PDF-1.4\n% export receipt fixture\n%%EOF\n")
+}
+
 func exportLocation(t *testing.T, h *harness.Harness, path string) string {
 	t.Helper()
 	client := *h.Client
@@ -256,6 +303,80 @@ func getJSON(t *testing.T, h *harness.Harness, path string, target any) {
 	body := getBytes(t, h, path)
 	if err := json.Unmarshal(body, target); err != nil {
 		t.Fatalf("decode %s: %v; body=%s", path, err, string(body))
+	}
+}
+
+func postJSON(t *testing.T, h *harness.Harness, path string, body map[string]any, wantStatus int, target any) {
+	t.Helper()
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, path, mustJSON(t, body))
+	if err != nil {
+		t.Fatalf("create POST %s: %v", path, err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := h.Do(req)
+	if err != nil {
+		t.Fatalf("POST %s: %v", path, err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read POST %s response: %v", path, err)
+	}
+	if resp.StatusCode != wantStatus {
+		t.Fatalf("POST %s status = %d, want %d; body=%s", path, resp.StatusCode, wantStatus, string(responseBody))
+	}
+	if target != nil {
+		if err := json.Unmarshal(responseBody, target); err != nil {
+			t.Fatalf("decode POST %s response: %v; body=%s", path, err, string(responseBody))
+		}
+	}
+}
+
+func postMultipart(t *testing.T, h *harness.Harness, path string, field string, filename string, contentType string, data []byte, wantStatus int, target any) {
+	t.Helper()
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	header := make(textproto.MIMEHeader)
+	header.Set("Content-Disposition", fmt.Sprintf(`form-data; name="%s"; filename="%s"`, field, filename))
+	header.Set("Content-Type", contentType)
+	part, err := writer.CreatePart(header)
+	if err != nil {
+		t.Fatalf("create multipart part: %v", err)
+	}
+	if _, err := part.Write(data); err != nil {
+		t.Fatalf("write multipart part: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart body: %v", err)
+	}
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, path, &body)
+	if err != nil {
+		t.Fatalf("create multipart POST %s: %v", path, err)
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	if strings.Contains(path, "/receipt") {
+		req.Method = http.MethodPut
+	}
+	resp, err := h.Do(req)
+	if err != nil {
+		t.Fatalf("%s %s: %v", req.Method, path, err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read multipart %s response: %v", path, err)
+	}
+	if resp.StatusCode != wantStatus {
+		t.Fatalf("%s %s status = %d, want %d; body=%s", req.Method, path, resp.StatusCode, wantStatus, string(responseBody))
+	}
+	if target != nil {
+		if err := json.Unmarshal(responseBody, target); err != nil {
+			t.Fatalf("decode multipart %s response: %v; body=%s", path, err, string(responseBody))
+		}
 	}
 }
 
@@ -317,6 +438,16 @@ func readZipFiles(t *testing.T, data []byte) map[string][]byte {
 		files[file.Name] = body
 	}
 	return files
+}
+
+func firstZipFileWithPrefix(files map[string][]byte, prefix string) string {
+	names := sortedKeys(files)
+	for _, name := range names {
+		if strings.HasPrefix(name, prefix) {
+			return name
+		}
+	}
+	return ""
 }
 
 func assertJournalCSVBalanced(t *testing.T, data []byte) {

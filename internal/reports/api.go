@@ -177,6 +177,12 @@ type DividendDocumentProvider interface {
 	DividendDocuments(context.Context, Period) ([]StoredDocument, error)
 }
 
+// ReceiptDocumentProvider supplies optional banking receipt documents without
+// making reports import the banking package.
+type ReceiptDocumentProvider interface {
+	ReceiptDocuments(context.Context, Period) ([]StoredDocument, error)
+}
+
 // Reports is the v1 reports read API.
 type Reports interface {
 	ProfitAndLoss(context.Context, Period) (PL, error)

@@ -126,8 +126,78 @@ func OpenAPIFragment() httpserver.OpenAPIFragment {
 			"/api/banking/transactions/{id}/recode":    bankingCommandPath("bankingRecodeTransaction", "Recode a transaction to an expense account", bankingJSONRequestBodyRef("BankingRecodeRequest"), "BankingCommandResponse"),
 			"/api/banking/transactions/{id}/exclude":   bankingCommandPath("bankingExcludeTransaction", "Exclude a transaction", bankingJSONRequestBodyRef("BankingReasonRequest"), "BankingCommandResponse"),
 			"/api/banking/transactions/{id}/unexclude": bankingCommandPath("bankingUnexcludeTransaction", "Unexclude a transaction", bankingOptionalJSONRequestBodyRef("BankingReasonRequest"), "BankingCommandResponse"),
+			"/api/banking/transactions/{id}/receipt":   bankingReceiptPath(),
 		},
 		Components: bankingComponents(),
+	}
+}
+
+func bankingReceiptPath() map[string]any {
+	parameters := []map[string]any{bankingIDPathParameter("id", "Bank transaction ID.")}
+	return map[string]any{
+		"put": map[string]any{
+			"tags":        []string{"banking"},
+			"summary":     "Attach or replace a transaction receipt",
+			"description": "Accepts a multipart PDF, PNG, or JPEG receipt upload capped at 2 MB and stores it as an immutable asset linked from the banking receipt record.",
+			"operationId": "bankingPutReceipt",
+			"security":    bankingSessionSecurity(),
+			"parameters":  parameters,
+			"requestBody": map[string]any{
+				"required": true,
+				"content": map[string]any{
+					"multipart/form-data": map[string]any{
+						"schema": map[string]any{
+							"type":     "object",
+							"required": []string{"receipt"},
+							"properties": map[string]any{
+								"receipt": map[string]any{"type": "string", "format": "binary"},
+							},
+							"additionalProperties": false,
+						},
+					},
+				},
+			},
+			"responses": map[string]any{
+				"200": bankingJSONResponseRef("Receipt metadata", "BankingReceipt"),
+				"400": bankingProblemResponse("Malformed multipart upload"),
+				"401": bankingProblemResponse("Authentication required"),
+				"404": bankingProblemResponse("Transaction was not found"),
+				"413": bankingProblemResponse("Receipt upload is too large"),
+				"415": bankingProblemResponse("Unsupported receipt media type"),
+				"422": bankingProblemResponse("Receipt validation failed"),
+			},
+		},
+		"get": map[string]any{
+			"tags":        []string{"banking"},
+			"summary":     "Download a transaction receipt",
+			"operationId": "bankingGetReceipt",
+			"security":    bankingSessionSecurity(),
+			"parameters":  parameters,
+			"responses": map[string]any{
+				"200": map[string]any{
+					"description": "Receipt bytes",
+					"content": map[string]any{
+						"application/pdf": map[string]any{"schema": map[string]any{"type": "string", "format": "binary"}},
+						"image/png":       map[string]any{"schema": map[string]any{"type": "string", "format": "binary"}},
+						"image/jpeg":      map[string]any{"schema": map[string]any{"type": "string", "format": "binary"}},
+					},
+				},
+				"401": bankingProblemResponse("Authentication required"),
+				"404": bankingProblemResponse("Transaction receipt was not found"),
+			},
+		},
+		"delete": map[string]any{
+			"tags":        []string{"banking"},
+			"summary":     "Delete a transaction receipt link",
+			"operationId": "bankingDeleteReceipt",
+			"security":    bankingSessionSecurity(),
+			"parameters":  parameters,
+			"responses": map[string]any{
+				"204": map[string]any{"description": "Receipt deleted"},
+				"401": bankingProblemResponse("Authentication required"),
+				"404": bankingProblemResponse("Transaction receipt was not found"),
+			},
+		},
 	}
 }
 
@@ -247,6 +317,7 @@ func bankingComponents() map[string]any {
 				"additionalProperties": false,
 			},
 			"BankingBatchSummary":   bankingBatchSummarySchema(),
+			"BankingReceipt":        bankingReceiptSchema(),
 			"BankingTransaction":    bankingTransactionSchema(),
 			"BankingReviewTarget":   bankingReviewTargetSchema(),
 			"BankingReviewCard":     bankingReviewCardSchema(),
@@ -358,6 +429,21 @@ func bankingBatchSummarySchema() map[string]any {
 	}
 }
 
+func bankingReceiptSchema() map[string]any {
+	return map[string]any{
+		"type":     "object",
+		"required": []string{"filename", "content_type", "size", "uploaded_at", "url"},
+		"properties": map[string]any{
+			"filename":     map[string]any{"type": "string"},
+			"content_type": map[string]any{"type": "string", "enum": []string{"application/pdf", "image/png", "image/jpeg"}},
+			"size":         map[string]any{"type": "integer", "format": "int64"},
+			"uploaded_at":  map[string]any{"type": "string", "format": "date-time"},
+			"url":          map[string]any{"type": "string"},
+		},
+		"additionalProperties": false,
+	}
+}
+
 func bankingTransactionSchema() map[string]any {
 	return map[string]any{
 		"type": "object",
@@ -372,6 +458,7 @@ func bankingTransactionSchema() map[string]any {
 			"import_batch_id",
 			"state",
 			"created_at",
+			"receipt",
 		},
 		"properties": map[string]any{
 			"id":              map[string]any{"type": "integer", "format": "int64"},
@@ -384,6 +471,12 @@ func bankingTransactionSchema() map[string]any {
 			"import_batch_id": map[string]any{"type": "integer", "format": "int64"},
 			"state":           bankingTransactionStateSchema(),
 			"created_at":      map[string]any{"type": "string", "format": "date-time"},
+			"receipt": map[string]any{
+				"allOf": []map[string]any{
+					{"$ref": "#/components/schemas/BankingReceipt"},
+				},
+				"nullable": true,
+			},
 		},
 		"additionalProperties": false,
 	}

@@ -164,6 +164,7 @@ type exportPackData struct {
 	dlaRows     []dla.Entry
 	invoices    []StoredDocument
 	dividends   []StoredDocument
+	receipts    []StoredDocument
 	profile     identity.CompanyProfile
 	facts       identity.CompanyFacts
 	plPDF       []byte
@@ -205,6 +206,10 @@ func (s *Service) exportPackData(ctx context.Context, period Period) (exportPack
 	if err != nil {
 		return exportPackData{}, err
 	}
+	receiptDocs, err := s.receiptDocuments(ctx, period)
+	if err != nil {
+		return exportPackData{}, err
+	}
 	return exportPackData{
 		period:    period,
 		pl:        pl,
@@ -213,6 +218,7 @@ func (s *Service) exportPackData(ctx context.Context, period Period) (exportPack
 		dlaRows:   dlaRows,
 		invoices:  invoiceDocs,
 		dividends: dividendDocs,
+		receipts:  receiptDocs,
 		profile:   profile,
 		facts:     facts,
 	}, nil
@@ -319,6 +325,38 @@ func (s *Service) dividendDocuments(ctx context.Context, period Period) ([]Store
 	return out, nil
 }
 
+func (s *Service) receiptDocuments(ctx context.Context, period Period) ([]StoredDocument, error) {
+	if s.receipts == nil {
+		return nil, nil
+	}
+	documents, err := s.receipts.ReceiptDocuments(ctx, period)
+	if err != nil {
+		return nil, fmt.Errorf("reports: export receipt documents: %w", err)
+	}
+	out := make([]StoredDocument, 0, len(documents))
+	used := map[string]int{}
+	for _, document := range documents {
+		if len(document.Bytes) == 0 {
+			continue
+		}
+		name := strings.TrimSpace(document.Path)
+		if name == "" {
+			continue
+		}
+		if !strings.HasPrefix(name, "receipts/") {
+			name = "receipts/" + name
+		}
+		name = uniqueArchivePath(safeArchivePath(name), used)
+		out = append(out, StoredDocument{
+			Path:        name,
+			ContentType: document.ContentType,
+			Bytes:       append([]byte{}, document.Bytes...),
+		})
+	}
+	sortStoredDocuments(out)
+	return out, nil
+}
+
 func buildExportArchive(data exportPackData) ([]byte, error) {
 	files := []archiveFile{
 		{Name: "pl.csv", Bytes: mustBuildCSV(plCSVRows(data.pl))},
@@ -329,6 +367,7 @@ func buildExportArchive(data exportPackData) ([]byte, error) {
 	}
 	files = append(files, documentsToArchiveFiles(data.invoices)...)
 	files = append(files, documentsToArchiveFiles(data.dividends)...)
+	files = append(files, documentsToArchiveFiles(data.receipts)...)
 	manifest, err := exportManifestJSON(data, files)
 	if err != nil {
 		return nil, err
@@ -338,7 +377,7 @@ func buildExportArchive(data exportPackData) ([]byte, error) {
 
 	var buf bytes.Buffer
 	writer := zip.NewWriter(&buf)
-	for _, dir := range []string{"invoices/", "dividends/"} {
+	for _, dir := range []string{"invoices/", "dividends/", "receipts/"} {
 		header := &zip.FileHeader{Name: dir, Method: zip.Store, Modified: data.generatedAt}
 		if _, err := writer.CreateHeader(header); err != nil {
 			_ = writer.Close()
@@ -496,8 +535,8 @@ func dlaCSVRows(entries []dla.Entry) [][]string {
 }
 
 func exportManifestJSON(data exportPackData, files []archiveFile) ([]byte, error) {
-	fileRecords := make([]manifestFile, 0, len(files)+2)
-	fileRecords = append(fileRecords, manifestFile{Name: "invoices/", Size: 0}, manifestFile{Name: "dividends/", Size: 0})
+	fileRecords := make([]manifestFile, 0, len(files)+3)
+	fileRecords = append(fileRecords, manifestFile{Name: "invoices/", Size: 0}, manifestFile{Name: "dividends/", Size: 0}, manifestFile{Name: "receipts/", Size: 0})
 	for _, file := range files {
 		fileRecords = append(fileRecords, manifestFile{
 			Name:   file.Name,
@@ -572,6 +611,7 @@ func exportPackDataVersion(data exportPackData, appVersion string) (string, erro
 		DLA       []dla.Entry           `json:"dla"`
 		Invoices  []documentDigest      `json:"invoices"`
 		Dividends []documentDigest      `json:"dividends"`
+		Receipts  []documentDigest      `json:"receipts"`
 		Company   manifestCompany       `json:"company"`
 	}{
 		Period: periodResponse{
@@ -596,6 +636,7 @@ func exportPackDataVersion(data exportPackData, appVersion string) (string, erro
 	}
 	payload.Invoices = documentDigests(data.invoices)
 	payload.Dividends = documentDigests(data.dividends)
+	payload.Receipts = documentDigests(data.receipts)
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return "", fmt.Errorf("reports: marshal export data version: %w", err)

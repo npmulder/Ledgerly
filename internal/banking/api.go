@@ -24,6 +24,7 @@ type SuggestionID int64
 type PayeeRuleID int64
 type TransactionStateChangeID int64
 type MatchEngineRunID int64
+type ReceiptID int64
 
 type Provider string
 
@@ -65,6 +66,7 @@ const (
 	MaxFeedLimit                   = 500
 	DefaultRecentlyReconciledLimit = 10
 	MaxRecentlyReconciledLimit     = 100
+	MaxReceiptBytes                = 2 * 1024 * 1024
 )
 
 var (
@@ -83,6 +85,10 @@ var (
 	ErrPayeeRuleNotFound        = errors.New("banking: payee rule not found")
 	ErrInvalidReconciliation    = errors.New("banking: invalid reconciliation")
 	ErrAlreadyReconciled        = errors.New("banking: already reconciled")
+	ErrReceiptNotFound          = errors.New("banking: receipt not found")
+	ErrInvalidReceipt           = errors.New("banking: invalid receipt")
+	ErrReceiptTooLarge          = errors.New("banking: receipt exceeds maximum size")
+	ErrUnsupportedReceipt       = errors.New("banking: unsupported receipt MIME type")
 )
 
 // LedgerAccountEnsurer is the ledger capability banking needs when creating
@@ -117,6 +123,13 @@ type DLAFileDrawer interface {
 	FileDrawing(context.Context, db.Tx, dla.TxnRef) error
 }
 
+// ReceiptAssetStore persists immutable receipt bytes outside the banking
+// schema and returns opaque references that banking can store safely.
+type ReceiptAssetStore interface {
+	StoreReceiptAsset(context.Context, ReceiptAssetUpload) (string, error)
+	LoadReceiptAsset(context.Context, string) (ReceiptAsset, error)
+}
+
 type BankAccount struct {
 	ID                AccountID
 	Name              string
@@ -143,6 +156,7 @@ type Transaction struct {
 	ImportBatchID ImportBatchID
 	State         TransactionState
 	CreatedAt     time.Time
+	Receipt       *ReceiptMetadata
 }
 
 type TransactionStateChange struct {
@@ -224,6 +238,45 @@ type ReconciledTransaction struct {
 	Transaction  Transaction
 	ReconciledAt time.Time
 	Actor        string
+}
+
+type Receipt struct {
+	ID            ReceiptID
+	TransactionID TransactionID
+	AssetRef      string
+	Filename      string
+	MIME          string
+	Size          int64
+	UploadedAt    time.Time
+}
+
+type ReceiptMetadata struct {
+	Filename   string
+	MIME       string
+	Size       int64
+	UploadedAt time.Time
+}
+
+type ReceiptUpload struct {
+	Filename string
+	MIME     string
+	Bytes    []byte
+}
+
+type ReceiptAssetUpload struct {
+	MIME  string
+	Bytes []byte
+}
+
+type ReceiptAsset struct {
+	MIME  string
+	Size  int64
+	Bytes []byte
+}
+
+type ReceiptDocument struct {
+	Transaction Transaction
+	Receipt     Receipt
 }
 
 type ConfirmMatchResult struct {

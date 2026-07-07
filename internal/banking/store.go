@@ -717,6 +717,130 @@ func (Store) RecentlyReconciled(ctx context.Context, tx db.Tx, accountID Account
 	return items, nil
 }
 
+func (Store) UpsertReceipt(ctx context.Context, tx db.Tx, receipt Receipt) (Receipt, error) {
+	assetRef := strings.TrimSpace(receipt.AssetRef)
+	filename := strings.TrimSpace(receipt.Filename)
+	mediaType := strings.TrimSpace(receipt.MIME)
+	if receipt.TransactionID <= 0 {
+		return Receipt{}, fmt.Errorf("banking: receipt transaction id is required: %w", ErrInvalidReceipt)
+	}
+	if assetRef == "" {
+		return Receipt{}, fmt.Errorf("banking: receipt asset reference is required: %w", ErrInvalidReceipt)
+	}
+	if filename == "" {
+		return Receipt{}, fmt.Errorf("banking: receipt filename is required: %w", ErrInvalidReceipt)
+	}
+	if mediaType == "" {
+		return Receipt{}, fmt.Errorf("banking: receipt MIME type is required: %w", ErrInvalidReceipt)
+	}
+	if receipt.Size <= 0 {
+		return Receipt{}, fmt.Errorf("banking: receipt size must be positive: %w", ErrInvalidReceipt)
+	}
+	return scanReceiptRow(tx.QueryRow(ctx, `
+INSERT INTO receipts (transaction_id, asset_ref, filename, mime, size)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (transaction_id)
+DO UPDATE SET asset_ref = EXCLUDED.asset_ref,
+	filename = EXCLUDED.filename,
+	mime = EXCLUDED.mime,
+	size = EXCLUDED.size,
+	uploaded_at = now()
+RETURNING id, transaction_id, asset_ref, filename, mime, size, uploaded_at`,
+		int64(receipt.TransactionID),
+		assetRef,
+		filename,
+		mediaType,
+		receipt.Size,
+	))
+}
+
+func (Store) ReceiptByTransaction(ctx context.Context, tx db.Tx, txnID TransactionID) (Receipt, error) {
+	receipt, err := scanReceiptRow(tx.QueryRow(ctx, `
+SELECT id, transaction_id, asset_ref, filename, mime, size, uploaded_at
+FROM receipts
+WHERE transaction_id = $1`, int64(txnID)))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Receipt{}, ErrReceiptNotFound
+		}
+		return Receipt{}, fmt.Errorf("banking: load receipt for transaction %d: %w", txnID, err)
+	}
+	return receipt, nil
+}
+
+func (Store) ReceiptsByTransactionIDs(ctx context.Context, tx db.Tx, txnIDs []TransactionID) (map[TransactionID]Receipt, error) {
+	receipts := map[TransactionID]Receipt{}
+	if len(txnIDs) == 0 {
+		return receipts, nil
+	}
+	rows, err := tx.Query(ctx, `
+SELECT id, transaction_id, asset_ref, filename, mime, size, uploaded_at
+FROM receipts
+WHERE transaction_id = ANY($1::bigint[])`, transactionIDsToInt64(txnIDs))
+	if err != nil {
+		return nil, fmt.Errorf("banking: load receipt summaries: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		receipt, err := scanReceipt(rows)
+		if err != nil {
+			return nil, err
+		}
+		receipts[receipt.TransactionID] = receipt
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("banking: collect receipt summaries: %w", err)
+	}
+	return receipts, nil
+}
+
+func (Store) ReceiptsBetween(ctx context.Context, tx db.Tx, from time.Time, to time.Time) ([]ReceiptDocument, error) {
+	rows, err := tx.Query(ctx, `
+SELECT `+transactionColumns("t")+`,
+	r.id,
+	r.transaction_id,
+	r.asset_ref,
+	r.filename,
+	r.mime,
+	r.size,
+	r.uploaded_at
+FROM receipts r
+JOIN transactions t ON t.id = r.transaction_id
+WHERE t.date >= $1
+	AND t.date <= $2
+ORDER BY t.date, t.id`, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("banking: receipt export documents: %w", err)
+	}
+	defer rows.Close()
+
+	documents := []ReceiptDocument{}
+	for rows.Next() {
+		document, err := scanReceiptDocument(rows)
+		if err != nil {
+			return nil, err
+		}
+		documents = append(documents, document)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("banking: collect receipt export documents: %w", err)
+	}
+	return documents, nil
+}
+
+func (Store) DeleteReceipt(ctx context.Context, tx db.Tx, txnID TransactionID) error {
+	tag, err := tx.Exec(ctx, `
+DELETE FROM receipts
+WHERE transaction_id = $1`, int64(txnID))
+	if err != nil {
+		return fmt.Errorf("banking: delete receipt for transaction %d: %w", txnID, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrReceiptNotFound
+	}
+	return nil
+}
+
 func (Store) UnreconciledCount(ctx context.Context, tx db.Tx, accountID AccountID) (int, error) {
 	var count int
 	if err := tx.QueryRow(ctx, `
@@ -805,6 +929,95 @@ func scanAccountRow(row accountRow) (BankAccount, error) {
 
 func scanTransaction(row pgx.CollectableRow) (Transaction, error) {
 	return scanTransactionRow(row)
+}
+
+func scanReceipt(row pgx.CollectableRow) (Receipt, error) {
+	return scanReceiptRow(row)
+}
+
+type receiptRow interface {
+	Scan(dest ...any) error
+}
+
+func scanReceiptRow(row receiptRow) (Receipt, error) {
+	var (
+		receipt Receipt
+		id      int64
+		txnID   int64
+	)
+	if err := row.Scan(
+		&id,
+		&txnID,
+		&receipt.AssetRef,
+		&receipt.Filename,
+		&receipt.MIME,
+		&receipt.Size,
+		&receipt.UploadedAt,
+	); err != nil {
+		return Receipt{}, err
+	}
+	receipt.ID = ReceiptID(id)
+	receipt.TransactionID = TransactionID(txnID)
+	receipt.UploadedAt = receipt.UploadedAt.UTC()
+	return receipt, nil
+}
+
+func scanReceiptDocument(row transactionRow) (ReceiptDocument, error) {
+	var (
+		document     ReceiptDocument
+		txnID        int64
+		accountID    int64
+		amount       int64
+		currency     string
+		meta         []byte
+		batchID      int64
+		state        string
+		receiptID    int64
+		receiptTxnID int64
+	)
+	if err := row.Scan(
+		&txnID,
+		&accountID,
+		&document.Transaction.Date,
+		&amount,
+		&currency,
+		&document.Transaction.Payee,
+		&document.Transaction.Reference,
+		&meta,
+		&batchID,
+		&state,
+		&document.Transaction.CreatedAt,
+		&receiptID,
+		&receiptTxnID,
+		&document.Receipt.AssetRef,
+		&document.Receipt.Filename,
+		&document.Receipt.MIME,
+		&document.Receipt.Size,
+		&document.Receipt.UploadedAt,
+	); err != nil {
+		return ReceiptDocument{}, fmt.Errorf("banking: scan receipt export document: %w", err)
+	}
+	if err := json.Unmarshal(meta, &document.Transaction.ProviderMeta); err != nil {
+		return ReceiptDocument{}, fmt.Errorf("banking: unmarshal transaction provider metadata: %w", err)
+	}
+	document.Transaction.ID = TransactionID(txnID)
+	document.Transaction.AccountID = AccountID(accountID)
+	document.Transaction.Amount = money.Money{Amount: amount, Currency: currency}
+	document.Transaction.ImportBatchID = ImportBatchID(batchID)
+	document.Transaction.State = TransactionState(state)
+	document.Transaction.Date = document.Transaction.Date.UTC()
+	document.Transaction.CreatedAt = document.Transaction.CreatedAt.UTC()
+	document.Receipt.ID = ReceiptID(receiptID)
+	document.Receipt.TransactionID = TransactionID(receiptTxnID)
+	document.Receipt.UploadedAt = document.Receipt.UploadedAt.UTC()
+	metaReceipt := ReceiptMetadata{
+		Filename:   document.Receipt.Filename,
+		MIME:       document.Receipt.MIME,
+		Size:       document.Receipt.Size,
+		UploadedAt: document.Receipt.UploadedAt,
+	}
+	document.Transaction.Receipt = &metaReceipt
+	return document, nil
 }
 
 type transactionRow interface {

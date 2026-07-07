@@ -14,6 +14,7 @@ import type {
   BankingCommandResponse,
   BankingMoney,
   BankingRecentTransaction,
+  BankingReceipt,
   BankingReviewCard,
   BankingReviewQueue,
 } from "@/api/banking";
@@ -209,6 +210,84 @@ describe("BankingScreen", () => {
       await screen.findByText("Exclude conflict; restored the card."),
     ).toBeInTheDocument();
     expect(screen.getByText("Invoice match")).toBeInTheDocument();
+  });
+
+  it("attaches, previews, and deletes receipts on review cards", async () => {
+    const user = userEvent.setup();
+    const queue = reviewQueueFixture();
+    const receipt = receiptFixture();
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = urlFromRequest(input);
+        const method = init?.method ?? "GET";
+
+        if (url.pathname === "/api/banking/accounts") {
+          return jsonResponse({ accounts: accountsFixture() });
+        }
+        if (url.pathname === "/api/banking/review") {
+          return jsonResponse(queue);
+        }
+        if (url.pathname === "/api/banking/recent") {
+          return jsonResponse({ transactions: [] });
+        }
+        if (
+          url.pathname === "/api/banking/transactions/101/receipt" &&
+          method === "PUT"
+        ) {
+          queue.matches[0].transaction.receipt = receipt;
+          return jsonResponse(receipt);
+        }
+        if (
+          url.pathname === "/api/banking/transactions/101/receipt" &&
+          method === "DELETE"
+        ) {
+          queue.matches[0].transaction.receipt = null;
+          return new Response(null, { status: 204 });
+        }
+        return jsonResponse(
+          { status: 404, title: "Not Found", type: "about:blank" },
+          404,
+          "application/problem+json",
+        );
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderBanking();
+
+    const input = await screen.findByLabelText(
+      "Receipt file for CONTOSO GMBH SEPA",
+    );
+    await user.upload(
+      input,
+      new File(["%PDF-1.4\n% receipt\n%%EOF\n"], "receipt.pdf", {
+        type: "application/pdf",
+      }),
+    );
+
+    expect(await screen.findByText("Attached receipt.pdf")).toBeInTheDocument();
+    const preview = await screen.findByRole("link", {
+      name: "Preview receipt",
+    });
+    expect(preview).toHaveAttribute(
+      "href",
+      "/api/banking/transactions/101/receipt",
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/banking/transactions/101/receipt",
+      expect.objectContaining({ method: "PUT" }),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Delete receipt" }));
+
+    expect(await screen.findByText("Receipt removed.")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: "Preview receipt" }),
+    ).not.toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/banking/transactions/101/receipt",
+      expect.objectContaining({ method: "DELETE" }),
+    );
   });
 });
 
@@ -412,9 +491,20 @@ function transactionFixture(
     import_batch_id: 77,
     payee: "CONTOSO GMBH SEPA",
     provider_meta: {},
+    receipt: null,
     reference: "INV-2026-07",
     state: "suggested",
     ...overrides,
+  };
+}
+
+function receiptFixture(): BankingReceipt {
+  return {
+    content_type: "application/pdf",
+    filename: "receipt.pdf",
+    size: 31,
+    uploaded_at: "2026-07-06T09:15:00Z",
+    url: "/api/banking/transactions/101/receipt",
   };
 }
 
