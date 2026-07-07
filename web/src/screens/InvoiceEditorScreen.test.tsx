@@ -100,7 +100,10 @@ describe("InvoiceEditorScreen", () => {
       screen.getByLabelText("VAT treatment"),
       "reverse-charge-eu-b2b",
     );
-    await user.selectOptions(screen.getByLabelText("VAT treatment"), "domestic");
+    await user.selectOptions(
+      screen.getByLabelText("VAT treatment"),
+      "domestic",
+    );
 
     expect(totalRow("VAT")).toHaveTextContent("€0.00");
     expect(totalRow("Total")).toHaveTextContent("€1,000.00");
@@ -113,12 +116,18 @@ describe("InvoiceEditorScreen", () => {
     renderEditor();
 
     await screen.findByText("≈ 0.85");
-    expect(screen.getByText("ECB 2026-07-05, locks at send")).toBeInTheDocument();
+    expect(
+      screen.getByText("ECB 2026-07-05, locks at send"),
+    ).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Send invoice" }));
 
-    expect((await screen.findAllByText("INV-2026-1")).length).toBeGreaterThan(0);
-    expect(await screen.findByText("Source: ECB 2026-07-06")).toBeInTheDocument();
+    expect((await screen.findAllByText("INV-2026-1")).length).toBeGreaterThan(
+      0,
+    );
+    expect(
+      await screen.findByText("Source: ECB 2026-07-06"),
+    ).toBeInTheDocument();
     expect(screen.getByText("🔒 0.850000000000000000")).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Revert same-day" }),
@@ -130,7 +139,9 @@ describe("InvoiceEditorScreen", () => {
     vi.stubGlobal("fetch", api.fetch);
     renderEditor();
 
-    expect((await screen.findAllByText("INV-2026-1")).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText("INV-2026-1")).length).toBeGreaterThan(
+      0,
+    );
     expect(screen.getByLabelText("Client")).toBeDisabled();
     expect(screen.getByLabelText("Issue date")).toHaveAttribute("readonly");
     expect(screen.getByLabelText("Due date")).toHaveAttribute("readonly");
@@ -295,9 +306,7 @@ function applyPatch(
     ...invoice,
     client_id: patch.client_id ?? invoice.client_id,
     currency,
-    due_date: patch.due_date
-      ? `${patch.due_date}T00:00:00Z`
-      : invoice.due_date,
+    due_date: patch.due_date ? `${patch.due_date}T00:00:00Z` : invoice.due_date,
     issue_date: patch.issue_date
       ? `${patch.issue_date}T00:00:00Z`
       : invoice.issue_date,
@@ -341,8 +350,7 @@ function draftInvoice(
   const subtotal = 100000;
   const vatTreatment = overrides.vat_treatment ?? "domestic";
   const vatRegistered = overrides.vat_registered ?? true;
-  const vat =
-    vatTreatment === "domestic" && vatRegistered ? 20000 : 0;
+  const vat = vatTreatment === "domestic" && vatRegistered ? 20000 : 0;
   return {
     client_id: "client_contoso",
     created_at: "2026-07-06T10:00:00Z",
@@ -364,6 +372,8 @@ function draftInvoice(
     lock_id: null,
     number: null,
     pdf_asset: null,
+    recurring_run_date: null,
+    recurring_template_id: null,
     reminders: [],
     sent_at: null,
     settled_amount: null,

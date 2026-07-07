@@ -1547,6 +1547,10 @@
   flex: 0 1 240px;
 }
 
+.recurring-templates-table .ui-button {
+  min-width: 72px;
+}
+
 .advisor-strip {
   position: relative;
   display: grid;
@@ -3010,6 +3014,44 @@ article.ui-stat-card.dashboard-stat-card--unavailable {
   color: var(--color-text);
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
+}
+
+.invoice-recurring-form {
+  display: grid;
+  gap: 12px;
+}
+
+.invoice-recurring-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text);
+  font-size: var(--type-secondary-size);
+  font-weight: 700;
+}
+
+.invoice-recurring-toggle input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--color-navy);
+}
+
+.invoice-recurring-status {
+  margin: 0;
+  padding: 9px 10px;
+  border-radius: var(--radius-input);
+  font-size: var(--type-secondary-size);
+  font-weight: 700;
+}
+
+.invoice-recurring-status--success {
+  background: var(--color-success-tint);
+  color: var(--color-success);
+}
+
+.invoice-recurring-status--error {
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
 }
 
 .invoice-advisor-notes p,

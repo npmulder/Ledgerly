@@ -743,11 +743,18 @@ func buildInvoicingModule(_ context.Context, deps ModuleDeps) (Module, error) {
 		HTTPModule:      invoicingModule.HTTPModule(),
 		OpenAPIFragment: invoicingModule.OpenAPIFragment(),
 		ReadAPI:         invoicingModule,
-		ScheduledJobs: []ScheduledJob{{
-			Name:     invoicing.OverdueSweepJobName,
-			Schedule: invoicing.OverdueSweepSchedule,
-			Run:      invoicingModule.RunOverdueSweep,
-		}},
+		ScheduledJobs: []ScheduledJob{
+			{
+				Name:     invoicing.RecurringInvoicesJobName,
+				Schedule: invoicing.RecurringInvoicesSchedule,
+				Run:      invoicingModule.RunRecurringInvoices,
+			},
+			{
+				Name:     invoicing.OverdueSweepJobName,
+				Schedule: invoicing.OverdueSweepSchedule,
+				Run:      invoicingModule.RunOverdueSweep,
+			},
+		},
 	}, nil
 }
 

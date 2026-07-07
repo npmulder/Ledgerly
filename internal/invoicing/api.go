@@ -138,6 +138,12 @@ func (m *Module) OverdueInvoices(ctx context.Context) ([]OverdueInvoiceFact, err
 	return m.service.OverdueInvoices(ctx)
 }
 
+// RecurringDraftInvoices returns advisor-facing facts for generated recurring
+// draft invoices waiting to be sent.
+func (m *Module) RecurringDraftInvoices(ctx context.Context) ([]RecurringDraftInvoiceFact, error) {
+	return m.service.RecurringDraftInvoices(ctx)
+}
+
 // Client returns one invoicing client by id.
 func (m *Module) Client(ctx context.Context, id string) (Client, error) {
 	return m.service.Client(ctx, id)

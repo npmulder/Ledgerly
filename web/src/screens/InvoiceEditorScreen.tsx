@@ -11,6 +11,7 @@ import { useParams } from "react-router-dom";
 
 import { isApiError } from "@/api/client";
 import {
+  createRecurringTemplateFromInvoice,
   getInvoicingClients,
   getInvoice,
   invoicePDFPath,
@@ -19,6 +20,7 @@ import {
   sendInvoiceReminder,
   sendInvoice,
   type InvoicingClient,
+  type InvoicingCreateRecurringFromInvoiceRequest,
   type InvoicingInvoice,
   type InvoicingInvoicePatch,
   type InvoicingSendInvoiceResult,
@@ -55,6 +57,14 @@ type InvoiceForm = {
   lines: LineForm[];
   vatRegistered: boolean;
   vatTreatment: VATTreatment;
+};
+
+type RecurringForm = {
+  autoSend: boolean;
+  cadence: InvoicingCreateRecurringFromInvoiceRequest["cadence"];
+  dayOfMonth: string;
+  maxOccurrences: string;
+  nextRunDate: string;
 };
 
 type LocalTotals = {
@@ -146,6 +156,13 @@ function LoadedInvoiceEditor({
   const [form, setForm] = useState<InvoiceForm>(() =>
     invoiceToForm(initialInvoice),
   );
+  const [recurringForm, setRecurringForm] = useState<RecurringForm>(() =>
+    defaultRecurringForm(initialInvoice),
+  );
+  const [recurringStatus, setRecurringStatus] = useState<{
+    kind: "error" | "success";
+    text: string;
+  } | null>(null);
   const [lockedRate, setLockedRate] = useState<LockedRate | null>(null);
   const [reminderStatus, setReminderStatus] = useState<{
     kind: "error" | "success";
@@ -169,7 +186,9 @@ function LoadedInvoiceEditor({
         queryKeys.invoicing.invoice(result.invoice.id),
         result.invoice,
       );
-      queryClient.invalidateQueries({ queryKey: queryKeys.invoicing.invoices() });
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.invoicing.invoices(),
+      });
     },
   });
 
@@ -180,8 +199,13 @@ function LoadedInvoiceEditor({
       setForm(invoiceToForm(updated));
       setLockedRate(null);
       setValidationSummary([]);
-      queryClient.setQueryData(queryKeys.invoicing.invoice(updated.id), updated);
-      queryClient.invalidateQueries({ queryKey: queryKeys.invoicing.invoices() });
+      queryClient.setQueryData(
+        queryKeys.invoicing.invoice(updated.id),
+        updated,
+      );
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.invoicing.invoices(),
+      });
     },
   });
 
@@ -203,7 +227,29 @@ function LoadedInvoiceEditor({
         queryKeys.invoicing.invoice(result.invoice.id),
         result.invoice,
       );
-      queryClient.invalidateQueries({ queryKey: queryKeys.invoicing.invoices() });
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.invoicing.invoices(),
+      });
+    },
+  });
+
+  const recurringMutation = useMutation({
+    mutationFn: (input: InvoicingCreateRecurringFromInvoiceRequest) =>
+      createRecurringTemplateFromInvoice(invoiceId, input),
+    onError: (error) => {
+      setRecurringStatus({
+        kind: "error",
+        text: problemMessage(error, "Unable to create recurring template"),
+      });
+    },
+    onSuccess: (template) => {
+      setRecurringStatus({
+        kind: "success",
+        text: `Recurring template created for ${template.client_name}.`,
+      });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.invoicing.recurringTemplates(),
+      });
     },
   });
 
@@ -315,6 +361,30 @@ function LoadedInvoiceEditor({
     }
   }
 
+  async function handleCreateRecurringTemplate() {
+    const input = recurringInput(recurringForm);
+    if (!input) {
+      setRecurringStatus({
+        kind: "error",
+        text: "Complete the recurring schedule.",
+      });
+      return;
+    }
+    if (form.lines.length === 0) {
+      setRecurringStatus({
+        kind: "error",
+        text: "Add at least one line before making this recurring.",
+      });
+      return;
+    }
+    try {
+      await autosave.flush();
+      await recurringMutation.mutateAsync(input);
+    } catch {
+      return;
+    }
+  }
+
   return (
     <div className="invoice-editor-screen">
       <div className="invoice-editor-header">
@@ -380,7 +450,10 @@ function LoadedInvoiceEditor({
             title="Invoice details"
           >
             <div className="invoice-field-grid">
-              <Field helperText="Only active clients are available." label="Client">
+              <Field
+                helperText="Only active clients are available."
+                label="Client"
+              >
                 <Select
                   aria-label="Client"
                   disabled={isReadOnly}
@@ -421,8 +494,8 @@ function LoadedInvoiceEditor({
                   isReadOnly
                     ? "Locked after send."
                     : selectedClient
-                    ? `Default from ${selectedClient.name}, editable while draft.`
-                    : "Editable while draft."
+                      ? `Default from ${selectedClient.name}, editable while draft.`
+                      : "Editable while draft."
                 }
                 label="Currency"
               >
@@ -575,6 +648,14 @@ function LoadedInvoiceEditor({
             invoice={invoice}
             onSend={() => reminderMutation.mutate()}
             pending={reminderMutation.isPending}
+          />
+          <RecurringTemplateCard
+            form={recurringForm}
+            invoice={invoice}
+            onChange={setRecurringForm}
+            onSubmit={handleCreateRecurringTemplate}
+            pending={recurringMutation.isPending}
+            status={recurringStatus}
           />
           <AdvisorNotes
             currency={form.currency}
@@ -752,7 +833,10 @@ function FXRateField({
       : "No FX lock";
   const rate = lockedRate?.rate ?? "locked";
   return (
-    <div className="invoice-fx-field invoice-fx-field--locked" aria-label="Locked FX rate">
+    <div
+      className="invoice-fx-field invoice-fx-field--locked"
+      aria-label="Locked FX rate"
+    >
       <strong>🔒 {rate}</strong>
       <span>Source: {source}</span>
     </div>
@@ -862,6 +946,109 @@ function ReminderCard({
   );
 }
 
+function RecurringTemplateCard({
+  form,
+  invoice,
+  onChange,
+  onSubmit,
+  pending,
+  status,
+}: {
+  form: RecurringForm;
+  invoice: InvoicingInvoice;
+  onChange: (form: RecurringForm) => void;
+  onSubmit: () => void;
+  pending: boolean;
+  status: { kind: "error" | "success"; text: string } | null;
+}) {
+  return (
+    <Card
+      actions={
+        <Button
+          disabled={pending || invoice.lines.length === 0}
+          onClick={onSubmit}
+          size="small"
+        >
+          {pending ? "Creating" : "Make recurring"}
+        </Button>
+      }
+      title="Recurring"
+    >
+      <div className="invoice-recurring-form">
+        <Field label="Cadence">
+          <Select
+            aria-label="Recurring cadence"
+            onChange={(event) =>
+              onChange({
+                ...form,
+                cadence: event.target.value as RecurringForm["cadence"],
+              })
+            }
+            value={form.cadence}
+          >
+            <option value="monthly">Monthly</option>
+            <option value="quarterly">Quarterly</option>
+          </Select>
+        </Field>
+        <Field label="Day">
+          <Input
+            aria-label="Recurring day of month"
+            inputMode="numeric"
+            max={31}
+            min={1}
+            onChange={(event) =>
+              onChange({ ...form, dayOfMonth: event.target.value })
+            }
+            type="number"
+            value={form.dayOfMonth}
+          />
+        </Field>
+        <Field label="Next run">
+          <Input
+            aria-label="Recurring next run date"
+            onChange={(event) =>
+              onChange({ ...form, nextRunDate: event.target.value })
+            }
+            type="date"
+            value={form.nextRunDate}
+          />
+        </Field>
+        <Field label="End after">
+          <Input
+            aria-label="Recurring max occurrences"
+            inputMode="numeric"
+            min={1}
+            onChange={(event) =>
+              onChange({ ...form, maxOccurrences: event.target.value })
+            }
+            placeholder="Until canceled"
+            type="number"
+            value={form.maxOccurrences}
+          />
+        </Field>
+        <label className="invoice-recurring-toggle">
+          <input
+            checked={form.autoSend}
+            onChange={(event) =>
+              onChange({ ...form, autoSend: event.target.checked })
+            }
+            type="checkbox"
+          />
+          <span>Auto-send</span>
+        </label>
+        {status ? (
+          <p
+            className={`invoice-recurring-status invoice-recurring-status--${status.kind}`}
+            role={status.kind === "success" ? "status" : "alert"}
+          >
+            {status.text}
+          </p>
+        ) : null}
+      </div>
+    </Card>
+  );
+}
+
 function AdvisorNotes({
   currency,
   isReverseCharge,
@@ -878,7 +1065,9 @@ function AdvisorNotes({
           locked GBP value from send time.
         </p>
         {currency === "GBP" && (
-          <p>GBP invoices lock an identity rate and do not create FX movement.</p>
+          <p>
+            GBP invoices lock an identity rate and do not create FX movement.
+          </p>
         )}
       </div>
     </Card>
@@ -916,6 +1105,47 @@ function invoiceToForm(invoice: InvoicingInvoice): InvoiceForm {
     })),
     vatRegistered: invoice.vat_registered,
     vatTreatment: invoice.vat_treatment,
+  };
+}
+
+function defaultRecurringForm(invoice: InvoicingInvoice): RecurringForm {
+  const issue = new Date(invoice.issue_date);
+  const next = Number.isNaN(issue.getTime()) ? new Date() : issue;
+  next.setUTCMonth(next.getUTCMonth() + 1, 1);
+  return {
+    autoSend: false,
+    cadence: "monthly",
+    dayOfMonth: "1",
+    maxOccurrences: "",
+    nextRunDate: dateInputValue(next.toISOString()),
+  };
+}
+
+function recurringInput(
+  form: RecurringForm,
+): InvoicingCreateRecurringFromInvoiceRequest | null {
+  const dayOfMonth = Number(form.dayOfMonth);
+  if (!Number.isInteger(dayOfMonth) || dayOfMonth < 1 || dayOfMonth > 31) {
+    return null;
+  }
+  if (!form.nextRunDate) {
+    return null;
+  }
+  const trimmedOccurrences = form.maxOccurrences.trim();
+  const maxOccurrences =
+    trimmedOccurrences === "" ? undefined : Number(trimmedOccurrences);
+  if (
+    maxOccurrences !== undefined &&
+    (!Number.isInteger(maxOccurrences) || maxOccurrences < 1)
+  ) {
+    return null;
+  }
+  return {
+    auto_send: form.autoSend,
+    cadence: form.cadence,
+    day_of_month: dayOfMonth,
+    max_occurrences: maxOccurrences,
+    next_run_date: form.nextRunDate,
   };
 }
 

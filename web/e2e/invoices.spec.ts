@@ -14,6 +14,11 @@ test("fixture invoices render, filter and search round-trip, and new invoice nav
   await expect(table.getByText("INV-2026-F2")).toBeVisible();
   await expect(table.getByText("OVERDUE 9D")).toBeVisible();
   await expect(table.getByText("€13,500.00 + £1,200.00")).toBeVisible();
+  const recurringTable = page.getByLabel("Recurring templates list");
+  await expect(recurringTable.getByText("Fabrikam Ltd")).toBeVisible();
+  await expect(recurringTable.getByText("Monthly on day 1")).toBeVisible();
+  await recurringTable.getByRole("button", { name: "Cancel" }).click();
+  await expect(recurringTable.getByText("CANCELED")).toBeVisible();
 
   await page.getByRole("button", { name: /OVERDUE 1/ }).click();
   await expect(table.getByText("INV-2026-F2")).toBeVisible();
@@ -109,6 +114,30 @@ async function mockInvoicesApi(
       return;
     }
     if (
+      path === "/api/invoicing/recurring-templates" &&
+      request.method() === "GET"
+    ) {
+      await fulfillJson(route, { templates: state.recurringTemplates });
+      return;
+    }
+    if (
+      path === "/api/invoicing/recurring-templates/rtpl-fabrikam/cancel" &&
+      request.method() === "POST"
+    ) {
+      state.recurringTemplates = state.recurringTemplates.map((template) =>
+        template.id === "rtpl-fabrikam"
+          ? {
+              ...template,
+              canceled_at: "2026-07-06T13:20:00Z",
+              status: "canceled",
+              updated_at: "2026-07-06T13:20:00Z",
+            }
+          : template,
+      );
+      await fulfillJson(route, state.recurringTemplates[0]);
+      return;
+    }
+    if (
       path === "/api/invoicing/invoices/invoice-overdue/remind" &&
       request.method() === "POST"
     ) {
@@ -201,6 +230,7 @@ type InvoicesState = {
   createdClientId: string | null;
   dismissedAdvisorKeys: Set<string>;
   invoices: InvoiceFixture[];
+  recurringTemplates: RecurringTemplateFixture[];
   reminderRequests: string[];
 };
 
@@ -243,7 +273,50 @@ function invoicesState(): InvoicesState {
         totals: euroTotals(450000, 386100, "0.8580"),
       }),
     ],
+    recurringTemplates: [recurringTemplateFixture()],
     reminderRequests: [],
+  };
+}
+
+type RecurringTemplateFixture = {
+  auto_send: boolean;
+  cadence: "monthly" | "quarterly";
+  canceled_at: string | null;
+  client_id: string;
+  client_name: string;
+  created_at: string;
+  created_from_invoice_id: string | null;
+  currency: InvoiceCurrency;
+  day_of_month: number;
+  id: string;
+  lines: unknown[];
+  max_occurrences: number | null;
+  next_run_date: string;
+  occurrences_created: number;
+  status: "active" | "canceled";
+  updated_at: string;
+  vat_treatment: "domestic" | "reverse-charge-eu-b2b";
+};
+
+function recurringTemplateFixture(): RecurringTemplateFixture {
+  return {
+    auto_send: false,
+    cadence: "monthly",
+    canceled_at: null,
+    client_id: "client-fabrikam",
+    client_name: "Fabrikam Ltd",
+    created_at: "2026-07-06T12:00:00Z",
+    created_from_invoice_id: "invoice-overdue",
+    currency: "GBP",
+    day_of_month: 1,
+    id: "rtpl-fabrikam",
+    lines: [],
+    max_occurrences: null,
+    next_run_date: "2026-08-01T00:00:00Z",
+    occurrences_created: 0,
+    status: "active",
+    updated_at: "2026-07-06T12:00:00Z",
+    vat_treatment: "domestic",
   };
 }
 
@@ -401,6 +474,8 @@ function draftInvoice(clientId: string) {
     lock_id: null,
     number: null,
     pdf_asset: null,
+    recurring_run_date: null,
+    recurring_template_id: null,
     settled_amount: null,
     settled_date: null,
     settlement_txn_ref: null,

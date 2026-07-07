@@ -88,6 +88,15 @@ advisor_rules:
       action: invoicing.sendReminder
       params:
         invoice_id: '{{ invoice_id }}'
+  - id: recurring_invoice_draft_waiting
+    severity: teal
+    surfaces: [dashboard, invoices]
+    fact_query: [recurring_draft_client_name, recurring_draft_count, recurring_draft_invoice_id, recurring_draft_run_date]
+    condition: recurring_draft_count > 0
+    text_template: 'Recurring invoice draft for {{ recurring_draft_client_name }} is ready for {{ recurring_draft_run_date }}.'
+    cta:
+      label: Open draft
+      action: 'navigate:/invoices/{{ recurring_draft_invoice_id }}'
   - id: dla_overdrawn_bik
     severity: amber
     surfaces: [dashboard, dla]
