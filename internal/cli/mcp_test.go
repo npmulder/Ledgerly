@@ -51,16 +51,25 @@ func TestMCPServerStdioReadTools(t *testing.T) {
 		Tools []struct {
 			Name        string `json:"name"`
 			Description string `json:"description"`
+			InputSchema struct {
+				Properties map[string]struct {
+					Description string `json:"description"`
+				} `json:"properties"`
+			} `json:"inputSchema"`
 		} `json:"tools"`
 	}
 	decodeResult(t, responses["2"], &toolsResult)
 	gotNames := make([]string, 0, len(toolsResult.Tools))
+	listInvoicesCursorDescription := ""
 	for _, tool := range toolsResult.Tools {
 		gotNames = append(gotNames, tool.Name)
 		for _, want := range []string{"integer minor units", "currency", "ISO", "Prefer", "not"} {
 			if !strings.Contains(tool.Description, want) {
 				t.Fatalf("%s description missing %q: %s", tool.Name, want, tool.Description)
 			}
+		}
+		if tool.Name == "list_invoices" {
+			listInvoicesCursorDescription = tool.InputSchema.Properties["cursor"].Description
 		}
 	}
 	wantNames := []string{
@@ -77,6 +86,11 @@ func TestMCPServerStdioReadTools(t *testing.T) {
 	}
 	if !reflect.DeepEqual(gotNames, wantNames) {
 		t.Fatalf("tool names = %#v, want %#v", gotNames, wantNames)
+	}
+	for _, want := range []string{"zero-based invoice row offset", "offset + limit", "total_count"} {
+		if !strings.Contains(listInvoicesCursorDescription, want) {
+			t.Fatalf("list_invoices cursor description missing %q: %s", want, listInvoicesCursorDescription)
+		}
 	}
 
 	expectedPayloads := map[string]string{
@@ -130,7 +144,7 @@ func TestMCPMalformedParamsReturnErrorsAndServerSurvives(t *testing.T) {
 	assertMCPStructuredContent(t, responses[`"after-error"`], reportCalendarFixture)
 }
 
-func TestMCPProblemDetailsBecomeMCPError(t *testing.T) {
+func TestMCPProblemDetailsBecomeToolErrorResult(t *testing.T) {
 	server := newReadFixtureServer(t, true)
 	defer server.Close()
 	configPath := writeTestConfig(t, server.URL, "lgy_bad", configFileMode)
@@ -141,17 +155,37 @@ func TestMCPProblemDetailsBecomeMCPError(t *testing.T) {
 	}, "\n")
 	responses := runMCPForTest(t, configPath, input, "dev")
 	response := responses["1"]
-	if response.Error == nil {
-		t.Fatal("MCP error = nil, want problem-details error")
+	if response.Error != nil {
+		t.Fatalf("MCP protocol error = %+v, want tool error result", response.Error)
 	}
-	if response.Error.Code != -32000 {
-		t.Fatalf("MCP error code = %d, want -32000", response.Error.Code)
+	var result struct {
+		IsError bool `json:"isError"`
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+		StructuredContent struct {
+			Type   string `json:"type"`
+			Title  string `json:"title"`
+			Status int    `json:"status"`
+			Detail string `json:"detail"`
+		} `json:"structuredContent"`
 	}
-	if !strings.Contains(response.Error.Message, "Unauthorized") || !strings.Contains(response.Error.Message, "authentication required") {
-		t.Fatalf("MCP error message = %q, want problem detail", response.Error.Message)
+	decodeResult(t, response, &result)
+	if !result.IsError {
+		t.Fatal("isError = false, want true")
 	}
-	if strings.Contains(response.Error.Message, "goroutine") || strings.Contains(response.Error.Message, ".go:") {
-		t.Fatalf("MCP error leaked implementation detail: %s", response.Error.Message)
+	if len(result.Content) != 1 || result.Content[0].Type != "text" {
+		t.Fatalf("content = %+v, want one text item", result.Content)
+	}
+	if !strings.Contains(result.Content[0].Text, "Unauthorized") || !strings.Contains(result.Content[0].Text, "authentication required") {
+		t.Fatalf("tool error text = %q, want problem detail", result.Content[0].Text)
+	}
+	if strings.Contains(result.Content[0].Text, "goroutine") || strings.Contains(result.Content[0].Text, ".go:") {
+		t.Fatalf("tool error text leaked implementation detail: %s", result.Content[0].Text)
+	}
+	if result.StructuredContent.Title != "Unauthorized" || result.StructuredContent.Status != 401 || result.StructuredContent.Detail != "authentication required" {
+		t.Fatalf("structuredContent = %+v, want problem detail", result.StructuredContent)
 	}
 }
 

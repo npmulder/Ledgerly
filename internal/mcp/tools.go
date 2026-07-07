@@ -28,7 +28,7 @@ func toolDefinitions() []toolDefinition {
 				},
 				"cursor": map[string]any{
 					"type":        "string",
-					"description": "Optional next cursor from a previous list_invoices response.",
+					"description": "Optional zero-based invoice row offset encoded as a string. To fetch the next page, pass previous response offset + limit while that value is less than total_count.",
 				},
 			}, nil),
 		},

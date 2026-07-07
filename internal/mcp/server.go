@@ -67,12 +67,38 @@ func (s *Server) Serve(ctx context.Context, input io.Reader, output io.Writer) e
 	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
 	writer := bufio.NewWriter(output)
 	encoder := json.NewEncoder(writer)
+	messages := make(chan scanResult, 1)
 
-	for scanner.Scan() {
-		if err := ctx.Err(); err != nil {
-			return err
+	go func() {
+		for scanner.Scan() {
+			line := append([]byte(nil), scanner.Bytes()...)
+			select {
+			case messages <- scanResult{line: line}:
+			case <-ctx.Done():
+				return
+			}
 		}
-		line := bytes.TrimSpace(scanner.Bytes())
+		result := scanResult{err: scanner.Err(), done: true}
+		select {
+		case messages <- result:
+		case <-ctx.Done():
+		}
+	}()
+
+	for {
+		var scanned scanResult
+		select {
+		case <-ctx.Done():
+			return writer.Flush()
+		case scanned = <-messages:
+		}
+		if scanned.done {
+			if scanned.err != nil {
+				return fmt.Errorf("read MCP message: %w", scanned.err)
+			}
+			return writer.Flush()
+		}
+		line := bytes.TrimSpace(scanned.line)
 		if len(line) == 0 {
 			continue
 		}
@@ -87,10 +113,6 @@ func (s *Server) Serve(ctx context.Context, input io.Reader, output io.Writer) e
 			return err
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("read MCP message: %w", err)
-	}
-	return writer.Flush()
 }
 
 func (s *Server) handle(ctx context.Context, line []byte) *rpcResponse {
@@ -197,6 +219,10 @@ func (s *Server) callTool(ctx context.Context, rawParams json.RawMessage) (toolR
 		return toolResult{}, invalidParams(fmt.Sprintf("unknown Ledgerly MCP tool %q", name))
 	}
 	if err != nil {
+		var toolErr *toolExecutionError
+		if errors.As(err, &toolErr) {
+			return toolErrorResult(toolErr), nil
+		}
 		return toolResult{}, err
 	}
 	return structuredToolResult(payload)
@@ -460,6 +486,21 @@ func (e *protocolError) Error() string {
 	return e.message
 }
 
+type toolExecutionError struct {
+	message           string
+	structuredContent any
+}
+
+func (e *toolExecutionError) Error() string {
+	return e.message
+}
+
+type scanResult struct {
+	line []byte
+	err  error
+	done bool
+}
+
 func resultResponse(id json.RawMessage, result any) *rpcResponse {
 	return &rpcResponse{JSONRPC: "2.0", ID: responseID(id), Result: result}
 }
@@ -488,27 +529,49 @@ func invalidParams(message string) error {
 }
 
 func apiUnavailable(err error) error {
-	return &protocolError{code: -32000, message: fmt.Sprintf("unable to reach Ledgerly API: %v", err)}
+	message := fmt.Sprintf("unable to reach Ledgerly API: %v", err)
+	return &toolExecutionError{
+		message: message,
+		structuredContent: map[string]any{
+			"title":  "Unable to reach Ledgerly API",
+			"detail": message,
+		},
+	}
 }
 
 func apiProblem(statusCode int, status string, body []byte, problems ...*gen.Problem) error {
 	if statusCode < 400 {
-		return &protocolError{code: -32000, message: unexpectedAPIResponse(status)}
+		message := unexpectedAPIResponse(status)
+		return &toolExecutionError{
+			message: message,
+			structuredContent: map[string]any{
+				"title":  "Unexpected Ledgerly API response",
+				"detail": message,
+			},
+		}
 	}
 	for _, problem := range problems {
 		if problem == nil {
 			continue
 		}
-		return &protocolError{code: -32000, message: renderProblem(*problem)}
+		return problemToolError(*problem, body)
 	}
 	var problem gen.Problem
 	if len(body) > 0 && json.Unmarshal(body, &problem) == nil && strings.TrimSpace(problem.Title) != "" {
 		if problem.Status == 0 {
 			problem.Status = int32(statusCode)
 		}
-		return &protocolError{code: -32000, message: renderProblem(problem)}
+		return problemToolError(problem, body)
 	}
-	return &protocolError{code: -32000, message: unexpectedAPIResponse(status)}
+	message := unexpectedAPIResponse(status)
+	return &toolExecutionError{
+		message: message,
+		structuredContent: map[string]any{
+			"status": statusCode,
+			"title":  "Unexpected Ledgerly API response",
+			"detail": message,
+		},
+	}
 }
 
 func responsePayload(body []byte, fallback any) any {
@@ -544,6 +607,13 @@ func renderProblem(problem gen.Problem) string {
 		return title
 	}
 	return title + " - " + detail
+}
+
+func problemToolError(problem gen.Problem, body []byte) error {
+	return &toolExecutionError{
+		message:           renderProblem(problem),
+		structuredContent: responsePayload(body, problem),
+	}
 }
 
 func decodeArgs(toolName string, raw json.RawMessage, target any) error {
@@ -586,6 +656,17 @@ func structuredToolResult(payload any) (toolResult, error) {
 		}},
 		StructuredContent: payload,
 	}, nil
+}
+
+func toolErrorResult(err *toolExecutionError) toolResult {
+	return toolResult{
+		Content: []contentItem{{
+			Type: "text",
+			Text: err.message,
+		}},
+		StructuredContent: err.structuredContent,
+		IsError:           true,
+	}
 }
 
 type initializeResult struct {
