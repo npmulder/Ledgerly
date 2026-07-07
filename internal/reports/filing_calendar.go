@@ -96,6 +96,7 @@ func toJurisdictionFacts(facts identity.CompanyFacts) jurisdiction.CompanyFacts 
 			Month: facts.YearEnd.Month,
 			Day:   facts.YearEnd.Day,
 		},
+		IsVATRegistered: facts.IsVATRegistered,
 	}
 }
 

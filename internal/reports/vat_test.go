@@ -34,7 +34,7 @@ func TestVATPositionDueDateMatchesReportedQuarter(t *testing.T) {
 
 	service := New(
 		newFakeLedger(),
-		fakeIdentity{yearEnd: identityYearEnd(time.March, 31)},
+		fakeIdentity{yearEnd: identityYearEnd(time.March, 31), isVATRegistered: true},
 		fakeInvoicing{},
 		WithClock(clock.NewFake(testDate(2025, time.April, 15))),
 	)
