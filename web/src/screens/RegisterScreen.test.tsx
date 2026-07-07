@@ -151,6 +151,29 @@ describe("RegisterScreen", () => {
       screen.getByText("year-end day 31 out of range for month 2"),
     ).toBeInTheDocument();
   });
+
+  it.each(["3.5", "1e2"])(
+    "rejects non-integer year-end day input %s before submitting",
+    async (yearEndDay) => {
+      const user = userEvent.setup();
+      const fetchImpl = vi.fn();
+      vi.stubGlobal("fetch", fetchImpl);
+
+      renderRegister();
+
+      await fillOwnerStep(user);
+      await fillCompanyStep(user);
+      const dayInput = screen.getByLabelText("Year end day");
+      await user.clear(dayInput);
+      await user.type(dayInput, yearEndDay);
+      await user.click(screen.getByRole("button", { name: "Create profile" }));
+
+      expect(
+        screen.getByText("Enter a valid year end day."),
+      ).toBeInTheDocument();
+      expect(fetchImpl).not.toHaveBeenCalled();
+    },
+  );
 });
 
 function renderRegister(initialEntry = "/register") {

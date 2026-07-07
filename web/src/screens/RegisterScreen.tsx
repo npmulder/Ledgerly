@@ -358,12 +358,11 @@ export function RegisterScreen() {
               >
                 <Input
                   aria-label="Year end day"
+                  inputMode="numeric"
                   invalid={Boolean(fieldErrors.yearEndDay)}
-                  max={31}
-                  min={1}
                   onChange={handleFieldChange("yearEndDay")}
+                  pattern="[0-9]*"
                   required
-                  type="number"
                   value={form.yearEndDay}
                 />
                 <Select
@@ -504,16 +503,16 @@ function validateProfileStep(form: RegisterFormState): RegisterFieldErrors {
     errors.incorporationDate = "Incorporation date is required.";
   }
 
-  const yearEndMonth = Number.parseInt(form.yearEndMonth, 10);
-  const yearEndDay = Number.parseInt(form.yearEndDay, 10);
+  const yearEndMonth = parseIntegerInput(form.yearEndMonth);
+  const yearEndDay = parseIntegerInput(form.yearEndDay);
 
-  if (!Number.isInteger(yearEndMonth) || yearEndMonth < 1 || yearEndMonth > 12) {
+  if (yearEndMonth === null || yearEndMonth < 1 || yearEndMonth > 12) {
     errors.yearEndMonth = "Choose a year end month.";
   }
-  if (!Number.isInteger(yearEndDay) || yearEndDay < 1) {
+  if (yearEndDay === null || yearEndDay < 1) {
     errors.yearEndDay = "Enter a valid year end day.";
   } else if (
-    Number.isInteger(yearEndMonth) &&
+    yearEndMonth !== null &&
     yearEndMonth >= 1 &&
     yearEndMonth <= 12 &&
     yearEndDay > daysInMonth(yearEndMonth)
@@ -543,9 +542,27 @@ function formToRequest(
       region: form.region.trim(),
     },
     trading_name: form.tradingName.trim(),
-    year_end_day: Number.parseInt(form.yearEndDay, 10),
-    year_end_month: Number.parseInt(form.yearEndMonth, 10),
+    year_end_day: requiredIntegerInput(form.yearEndDay),
+    year_end_month: requiredIntegerInput(form.yearEndMonth),
   };
+}
+
+function parseIntegerInput(value: string) {
+  const trimmed = value.trim();
+  if (!/^\d+$/.test(trimmed)) {
+    return null;
+  }
+
+  const parsed = Number(trimmed);
+  return Number.isSafeInteger(parsed) ? parsed : null;
+}
+
+function requiredIntegerInput(value: string) {
+  const parsed = parseIntegerInput(value);
+  if (parsed === null) {
+    throw new Error("Expected a validated integer input.");
+  }
+  return parsed;
 }
 
 function passwordStrengthError(password: string) {
