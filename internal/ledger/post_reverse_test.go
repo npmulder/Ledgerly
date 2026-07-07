@@ -13,6 +13,8 @@ import (
 
 	"pgregory.net/rapid"
 
+	"github.com/jackc/pgx/v5/pgconn"
+
 	"github.com/npmulder/ledgerly/internal/moneyfx/money"
 	"github.com/npmulder/ledgerly/internal/platform/bus"
 	"github.com/npmulder/ledgerly/internal/platform/db"
@@ -184,7 +186,30 @@ func TestPostRunsInsideModuleOwnedTransaction(t *testing.T) {
 	if _, err := service.Post(ctx, tx, entry); err != nil {
 		t.Fatalf("Post() from invoicing-owned tx error = %v", err)
 	}
-	assertJournalEntryCount(t, ctx, tx, 1)
+	assertJournalEntryCountThroughAPI(t, ctx, service, tx, 1)
+}
+
+func TestInsertJournalEntryFunctionRejectsDirectInvariantBypass(t *testing.T) {
+	ctx, _, ledgerPool := temporaryMigratedLedgerDatabase(t)
+	invoicingPool := openDatabasePool(t, ctx, testDatabaseURL(t), ledgerPool.Config().ConnConfig.Database, db.WithModule("invoicing"))
+	t.Cleanup(invoicingPool.Close)
+
+	service := New(invoicingPool, discardLedgerBus())
+	entry := validJournalEntry()
+	_, err := invoicingPool.Exec(ctx, `
+SELECT ledger.insert_journal_entry($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		entry.Date,
+		entry.Description,
+		"invoicing",
+		"direct-invalid",
+		nil,
+		[]string{string(entry.Postings[0].AccountCode), string(entry.Postings[1].AccountCode)},
+		[]int64{entry.Postings[0].Amount.Amount, entry.Postings[1].Amount.Amount},
+		[]string{entry.Postings[0].Amount.Currency, entry.Postings[1].Amount.Currency},
+		[]int64{entry.Postings[0].AmountGBP.Amount + 1, entry.Postings[1].AmountGBP.Amount},
+	)
+	assertPostgresCode(t, err, "23514")
+	assertJournalEntryCountThroughAPI(t, ctx, service, invoicingPool, 0)
 }
 
 func TestPostAllowsNullCurrencyAccountsToUseAnyNativeCurrency(t *testing.T) {
@@ -678,6 +703,30 @@ func assertJournalEntryCount(t *testing.T, ctx context.Context, tx db.Tx, want i
 	t.Helper()
 
 	assertCountWhere(t, ctx, tx, "ledger.journal_entries", "true", want)
+}
+
+func assertJournalEntryCountThroughAPI(t *testing.T, ctx context.Context, service *Service, tx db.Tx, want int) {
+	t.Helper()
+
+	entries, err := service.EntriesInTx(ctx, tx, EntryFilter{Limit: MaxEntriesLimit})
+	if err != nil {
+		t.Fatalf("EntriesInTx() error = %v", err)
+	}
+	if got := len(entries); got != want {
+		t.Fatalf("EntriesInTx() count = %d, want %d", got, want)
+	}
+}
+
+func assertPostgresCode(t *testing.T, err error, code string) {
+	t.Helper()
+
+	if err == nil {
+		t.Fatalf("PostgreSQL error = nil, want SQLSTATE %s", code)
+	}
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != code {
+		t.Fatalf("PostgreSQL error = %v, want SQLSTATE %s", err, code)
+	}
 }
 
 func assertCountWhere(t *testing.T, ctx context.Context, tx db.Tx, table string, predicate string, want int, args ...any) {
