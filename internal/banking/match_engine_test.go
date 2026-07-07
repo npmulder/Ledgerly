@@ -172,6 +172,90 @@ func TestDLAPersonalPatternsUseTokenBoundaries(t *testing.T) {
 	}
 }
 
+func TestDirectorNameRefreshCreatesUpdatesAndIsIdempotent(t *testing.T) {
+	pool, ledgerPool := temporaryMigratedBankingDatabase(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	service := NewService(pool, ledger.New(ledgerPool))
+	account, err := service.CreateAccount(ctx, AccountInput{
+		Name:     "Revolut GBP",
+		Provider: ProviderRevolut,
+		Currency: "GBP",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount() error = %v", err)
+	}
+
+	txnID := importSingleBankingTxn(t, ctx, pool, service, account.ID, revolutTestTxn{
+		Date:      time.Date(2026, 7, 7, 9, 0, 0, 0, time.UTC),
+		ID:        "director-refresh",
+		Payee:     "Jane Roberts",
+		Reference: "shareholder transfer",
+		Amount:    money.Money{Amount: -15_000, Currency: "GBP"},
+	})
+	if suggestions := mustSuggestions(t, ctx, service, txnID); len(suggestions) != 0 {
+		t.Fatalf("suggestions before director names = %#v, want none", suggestions)
+	}
+
+	run, err := service.RefreshDirectorNameSuggestions(ctx, []string{"Jane Roberts"})
+	if err != nil {
+		t.Fatalf("RefreshDirectorNameSuggestions() error = %v", err)
+	}
+	if run.Trigger != MatchEngineTriggerIdentityProfile || !slices.Equal(run.TxnsEvaluated, []TransactionID{txnID}) || len(run.Suggestions) != 1 {
+		t.Fatalf("director refresh run = %#v, want identity profile trigger evaluating and suggesting txn", run)
+	}
+	active := activeSuggestion(t, mustSuggestions(t, ctx, service, txnID))
+	if active.Kind != SuggestionKindDLA || active.Target != dlaSuggestionTarget || !strings.Contains(active.Explanation, "Jane Roberts") {
+		t.Fatalf("active suggestion = %#v, want Jane Roberts DLA suggestion", active)
+	}
+	assertStoredTransactionState(t, ctx, pool, txnID, TransactionStateSuggested)
+
+	repeated, err := service.RefreshDirectorNameSuggestions(ctx, []string{" Jane Roberts "})
+	if err != nil {
+		t.Fatalf("RefreshDirectorNameSuggestions() repeated error = %v", err)
+	}
+	if len(repeated.Suggestions) != 0 {
+		t.Fatalf("repeated director refresh suggestions = %#v, want no duplicate rows", repeated.Suggestions)
+	}
+	history := mustSuggestions(t, ctx, service, txnID)
+	if len(history) != 1 {
+		t.Fatalf("suggestion history after repeated refresh = %#v, want one row", history)
+	}
+	if got := activeSuggestion(t, history); got.ID != active.ID {
+		t.Fatalf("active suggestion after repeated refresh = %d, want existing %d", got.ID, active.ID)
+	}
+
+	cleared, err := service.RefreshDirectorNameSuggestions(ctx, []string{"Different Director"})
+	if err != nil {
+		t.Fatalf("RefreshDirectorNameSuggestions() renamed error = %v", err)
+	}
+	if len(cleared.Suggestions) != 0 {
+		t.Fatalf("renamed director refresh suggestions = %#v, want no replacement suggestion", cleared.Suggestions)
+	}
+	for _, suggestion := range mustSuggestions(t, ctx, service, txnID) {
+		if suggestion.SupersededAt == nil {
+			t.Fatalf("active suggestion after director rename = %#v, want cleared", suggestion)
+		}
+	}
+	assertStoredTransactionState(t, ctx, pool, txnID, TransactionStateUnreconciled)
+
+	excludedTxnID := importSingleBankingTxn(t, ctx, pool, service, account.ID, revolutTestTxn{
+		Date:      time.Date(2026, 7, 8, 9, 0, 0, 0, time.UTC),
+		ID:        "director-refresh-excluded",
+		Payee:     "Excluded Person",
+		Reference: "excluded transfer",
+		Amount:    money.Money{Amount: -8_000, Currency: "GBP"},
+	})
+	mustTransition(t, ctx, service, excludedTxnID, TransactionStateExcluded, "reviewer")
+	if _, err := service.RefreshDirectorNameSuggestions(ctx, []string{"Excluded Person"}); err != nil {
+		t.Fatalf("RefreshDirectorNameSuggestions() excluded error = %v", err)
+	}
+	if suggestions := mustSuggestions(t, ctx, service, excludedTxnID); len(suggestions) != 0 {
+		t.Fatalf("excluded transaction suggestions = %#v, want none", suggestions)
+	}
+}
+
 func TestSuggestionKindPriorityOrderingAllKinds(t *testing.T) {
 	decisions := []suggestionDecision{
 		{input: SuggestionInput{Kind: SuggestionKindDLA, Confidence: 0.82, Target: "director-loan"}},

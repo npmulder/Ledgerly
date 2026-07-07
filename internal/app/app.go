@@ -404,6 +404,7 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		banking.WithEventBus(eventBus),
 		banking.WithDirectorNames(identityDirectorNames{profile: identityProfile}),
 	)
+	subscribeBankingIdentityProfileRefresh(eventBus, identityProfile, profileOptions, bankingService)
 	bankingHTTPModule := banking.NewHTTPModule(bankingService)
 	modules = append(modules, bankingHTTPModule.HTTPModule())
 	fragments = append(fragments, bankingHTTPModule.OpenAPIFragment())
@@ -789,13 +790,46 @@ func (d identityDirectorNames) DirectorNames(ctx context.Context) ([]string, err
 		}
 		return nil, err
 	}
+	return identityProfileDirectorNames(profile), nil
+}
+
+func subscribeBankingIdentityProfileRefresh(eventBus *bus.Bus, profile identity.Identity, opts []identity.ProfileOption, bankingService *banking.Service) {
+	if eventBus == nil || profile == nil || bankingService == nil {
+		return
+	}
+	profileOpts := append([]identity.ProfileOption{}, opts...)
+	eventBus.Subscribe(identity.ProfileUpdatedEventName, func(ctx context.Context, tx db.Tx, evt bus.Event) error {
+		if _, ok := evt.(identity.ProfileUpdated); !ok {
+			return fmt.Errorf("app: identity profile refresh event has type %T", evt)
+		}
+		updated, err := identityProfileForBankingRefresh(ctx, tx, eventBus, profile, profileOpts)
+		if err != nil {
+			if errors.Is(err, identity.ErrProfileNotFound) {
+				_, refreshErr := bankingService.RefreshDirectorNameSuggestionsTx(ctx, tx, nil)
+				return refreshErr
+			}
+			return err
+		}
+		_, err = bankingService.RefreshDirectorNameSuggestionsTx(ctx, tx, identityProfileDirectorNames(updated))
+		return err
+	})
+}
+
+func identityProfileForBankingRefresh(ctx context.Context, tx db.Tx, eventBus *bus.Bus, profile identity.Identity, opts []identity.ProfileOption) (identity.CompanyProfile, error) {
+	if tx == nil {
+		return profile.Profile(ctx)
+	}
+	return identity.NewProfileService(tx, eventBus, opts...).Profile(ctx)
+}
+
+func identityProfileDirectorNames(profile identity.CompanyProfile) []string {
 	names := make([]string, 0, len(profile.Shareholders))
 	for _, shareholder := range profile.Shareholders {
 		if name := strings.TrimSpace(shareholder.Name); name != "" {
 			names = append(names, name)
 		}
 	}
-	return names, nil
+	return names
 }
 
 func subscribeAdvisorTriggers(eventBus *bus.Bus, service *advisor.Service) {

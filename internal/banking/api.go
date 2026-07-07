@@ -287,6 +287,7 @@ type MatchEngineTrigger string
 const (
 	MatchEngineTriggerImportCompletion MatchEngineTrigger = "import-completion"
 	MatchEngineTriggerInvoiceSent      MatchEngineTrigger = "invoicing.InvoiceSent"
+	MatchEngineTriggerIdentityProfile  MatchEngineTrigger = "identity.ProfileUpdated"
 	MatchEngineTriggerManualRefresh    MatchEngineTrigger = "manual-refresh"
 )
 
