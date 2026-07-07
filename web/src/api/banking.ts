@@ -8,6 +8,11 @@ export type BankingBatchSummary = components["schemas"]["BankingBatchSummary"];
 export type BankingCommandResponse =
   components["schemas"]["BankingCommandResponse"];
 export type BankingMoney = components["schemas"]["BankingMoney"];
+export type BankingPayeeRule = components["schemas"]["BankingPayeeRule"];
+export type BankingPayeeRuleRequest =
+  components["schemas"]["BankingPayeeRuleRequest"];
+export type BankingPayeeRulesResponse =
+  components["schemas"]["BankingPayeeRulesResponse"];
 export type BankingRecentResponse =
   components["schemas"]["BankingRecentResponse"];
 export type BankingRecentTransaction =
@@ -51,6 +56,25 @@ export function deleteBankingReceipt(transactionID: number) {
   return apiClient.delete(transactionReceiptPath(transactionID));
 }
 
+export function getBankingPayeeRules() {
+  return apiClient.get("/api/banking/payee-rules");
+}
+
+export function createBankingPayeeRule(rule: BankingPayeeRuleRequest) {
+  return apiClient.post("/api/banking/payee-rules", rule);
+}
+
+export function updateBankingPayeeRule(
+  id: number,
+  rule: BankingPayeeRuleRequest,
+) {
+  return apiClient.put(payeeRulePath(id), rule);
+}
+
+export function deleteBankingPayeeRule(id: number) {
+  return apiClient.delete(payeeRulePath(id));
+}
+
 export function confirmBankingMatch(transactionID: number) {
   return apiClient.post(transactionCommandPath(transactionID, "confirm"));
 }
@@ -81,6 +105,12 @@ function importPath(accountID: number) {
   return `/api/banking/accounts/${encodeURIComponent(
     String(accountID),
   )}/import` as "/api/banking/accounts/{id}/import";
+}
+
+function payeeRulePath(ruleID: number) {
+  return `/api/banking/payee-rules/${encodeURIComponent(
+    String(ruleID),
+  )}` as "/api/banking/payee-rules/{id}";
 }
 
 function transactionCommandPath(

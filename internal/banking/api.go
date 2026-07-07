@@ -97,6 +97,12 @@ type LedgerAccountEnsurer interface {
 	EnsureAccount(context.Context, db.Tx, ledger.AccountSpec) (ledger.AccountCode, error)
 }
 
+// LedgerAccountCatalog is the optional ledger read capability banking uses to
+// validate payee-rule target accounts when available.
+type LedgerAccountCatalog interface {
+	Accounts(context.Context) ([]ledger.Account, error)
+}
+
 // LedgerJournal is the ledger posting capability used by reconciliation
 // commands. ledger.Service satisfies this interface.
 type LedgerJournal interface {
@@ -207,6 +213,12 @@ type PayeeRuleInput struct {
 	MatchMode   PayeeRuleMatchMode
 	AccountCode ledger.AccountCode
 	CreatedFrom PayeeRuleCreatedFrom
+}
+
+type PayeeRuleUpdateInput struct {
+	Matcher     string
+	MatchMode   PayeeRuleMatchMode
+	AccountCode ledger.AccountCode
 }
 
 type FeedCursor struct {

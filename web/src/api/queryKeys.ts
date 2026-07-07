@@ -31,6 +31,7 @@ export const queryKeys = {
       "recent",
       { accountId, limit },
     ],
+    payeeRules: (): ApiQueryKey => ["banking", "payeeRules", {}],
     review: (): ApiQueryKey => ["banking", "review", {}],
   },
   dashboard: {
@@ -84,6 +85,13 @@ export const queryKeys = {
   },
   jurisdiction: {
     pack: (): ApiQueryKey => ["jurisdiction", "pack", {}],
+  },
+  ledger: {
+    expenseAccounts: (): ApiQueryKey => [
+      "ledger",
+      "accounts",
+      { type: "expense" },
+    ],
   },
   moneyfx: {
     todayRate: (from: string, to: string): ApiQueryKey => [

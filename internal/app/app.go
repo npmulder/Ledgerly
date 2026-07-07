@@ -297,10 +297,12 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 	if err := cronRunner.Register(moneyfx.ECBFetchJobName, moneyfx.ECBFetchSchedule, moneyFXFetcher.Run); err != nil {
 		return nil, err
 	}
+	identityServiceOptions := []identity.ServiceOption{identity.WithEventBus(eventBus)}
+	identityServiceOptions = append(identityServiceOptions, deps.IdentityServiceOptions...)
 	identityService := identity.NewService(
 		identity.NewPostgresStore(identityPool),
 		clk,
-		deps.IdentityServiceOptions...,
+		identityServiceOptions...,
 	)
 	profileOptions := []identity.ProfileOption{}
 	if strings.TrimSpace(cfg.Runtime.DataDir) != "" {

@@ -48,6 +48,7 @@ const (
 	FactCompanyYearEnd           FactKey = "company.yearEnd"
 	FactCompanyYearEndMonth      FactKey = "company.yearEnd.month"
 	FactCompanyYearEndDay        FactKey = "company.yearEnd.day"
+	FactCompanyVATRegistered     FactKey = "company.isVATRegistered"
 )
 
 // OverdueInvoiceFact is the advisor contract shape for invoices.overdue[].

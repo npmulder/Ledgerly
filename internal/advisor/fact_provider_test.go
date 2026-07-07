@@ -259,6 +259,7 @@ func TestIdentityFactProviderMapsCompanyFacts(t *testing.T) {
 		facts: identity.CompanyFacts{
 			IncorporationDate: incorporated,
 			YearEnd:           identity.YearEnd{Month: time.March, Day: 31},
+			IsVATRegistered:   true,
 		},
 	})
 
@@ -277,6 +278,9 @@ func TestIdentityFactProviderMapsCompanyFacts(t *testing.T) {
 	}
 	if got := facts[FactCompanyYearEndDay]; got != 31 {
 		t.Fatalf("company.yearEnd.day = %#v", got)
+	}
+	if got := facts[FactCompanyVATRegistered]; got != true {
+		t.Fatalf("company.isVATRegistered = %#v", got)
 	}
 }
 

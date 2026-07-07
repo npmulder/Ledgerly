@@ -55,6 +55,10 @@ type bankingAccountsResponse struct {
 	Accounts []bankingAccountResponse `json:"accounts"`
 }
 
+type payeeRulesResponse struct {
+	Rules []payeeRuleResponse `json:"rules"`
+}
+
 type bankingAccountResponse struct {
 	ID                int64    `json:"id"`
 	Name              string   `json:"name"`
@@ -180,6 +184,12 @@ type recodeRequest struct {
 	AccountCodeCamel string `json:"accountCode"`
 }
 
+type payeeRuleRequest struct {
+	Matcher     string `json:"matcher"`
+	MatchMode   string `json:"match_mode"`
+	AccountCode string `json:"account_code"`
+}
+
 type reasonRequest struct {
 	Reason string `json:"reason"`
 }
@@ -199,6 +209,10 @@ func (m *Module) RegisterRoutes(r chi.Router) {
 	r.Get("/review", h.getReviewQueue)
 	r.Get("/feed", h.getFeed)
 	r.Get("/recent", h.getRecent)
+	r.Get("/payee-rules", h.listPayeeRules)
+	r.Post("/payee-rules", h.createPayeeRule)
+	r.Put("/payee-rules/{id}", h.updatePayeeRule)
+	r.Delete("/payee-rules/{id}", h.deletePayeeRule)
 	r.Post("/transactions/{id}/confirm", h.confirmTransaction)
 	r.Post("/transactions/{id}/file-dla", h.fileTransactionToDLA)
 	r.Post("/transactions/{id}/recode", h.recodeTransaction)
@@ -387,6 +401,88 @@ func (h bankingHandler) getRecent(w nethttp.ResponseWriter, r *nethttp.Request) 
 		return
 	}
 	writeBankingJSON(w, nethttp.StatusOK, recentToResponse(recent))
+}
+
+func (h bankingHandler) listPayeeRules(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if h.service == nil {
+		httpserver.WriteError(w, r, errors.New("banking: service is required"))
+		return
+	}
+	rules, err := h.service.PayeeRules(r.Context())
+	if err != nil {
+		writeBankingError(w, r, err)
+		return
+	}
+	response := payeeRulesResponse{Rules: make([]payeeRuleResponse, 0, len(rules))}
+	for _, rule := range rules {
+		response.Rules = append(response.Rules, payeeRuleToResponse(rule))
+	}
+	writeBankingJSON(w, nethttp.StatusOK, response)
+}
+
+func (h bankingHandler) createPayeeRule(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if h.service == nil {
+		httpserver.WriteError(w, r, errors.New("banking: service is required"))
+		return
+	}
+	var request payeeRuleRequest
+	if err := decodeBankingJSON(w, r, &request); err != nil {
+		writeBankingDecodeError(w, r, err)
+		return
+	}
+	rule, err := h.service.CreatePayeeRule(r.Context(), PayeeRuleInput{
+		Matcher:     request.Matcher,
+		MatchMode:   PayeeRuleMatchMode(request.MatchMode),
+		AccountCode: ledger.AccountCode(request.AccountCode),
+		CreatedFrom: PayeeRuleCreatedFromManual,
+	})
+	if err != nil {
+		writeBankingError(w, r, err)
+		return
+	}
+	writeBankingJSON(w, nethttp.StatusCreated, payeeRuleToResponse(rule))
+}
+
+func (h bankingHandler) updatePayeeRule(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if h.service == nil {
+		httpserver.WriteError(w, r, errors.New("banking: service is required"))
+		return
+	}
+	ruleID, ok := payeeRuleIDParam(w, r)
+	if !ok {
+		return
+	}
+	var request payeeRuleRequest
+	if err := decodeBankingJSON(w, r, &request); err != nil {
+		writeBankingDecodeError(w, r, err)
+		return
+	}
+	rule, err := h.service.UpdatePayeeRule(r.Context(), ruleID, PayeeRuleUpdateInput{
+		Matcher:     request.Matcher,
+		MatchMode:   PayeeRuleMatchMode(request.MatchMode),
+		AccountCode: ledger.AccountCode(request.AccountCode),
+	})
+	if err != nil {
+		writeBankingError(w, r, err)
+		return
+	}
+	writeBankingJSON(w, nethttp.StatusOK, payeeRuleToResponse(rule))
+}
+
+func (h bankingHandler) deletePayeeRule(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if h.service == nil {
+		httpserver.WriteError(w, r, errors.New("banking: service is required"))
+		return
+	}
+	ruleID, ok := payeeRuleIDParam(w, r)
+	if !ok {
+		return
+	}
+	if err := h.service.DeletePayeeRule(r.Context(), ruleID); err != nil {
+		writeBankingError(w, r, err)
+		return
+	}
+	w.WriteHeader(nethttp.StatusNoContent)
 }
 
 func (h bankingHandler) confirmTransaction(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -591,6 +687,15 @@ func transactionIDParam(w nethttp.ResponseWriter, r *nethttp.Request) (Transacti
 		return 0, false
 	}
 	return TransactionID(id), true
+}
+
+func payeeRuleIDParam(w nethttp.ResponseWriter, r *nethttp.Request) (PayeeRuleID, bool) {
+	id, err := parsePositiveInt64(chi.URLParam(r, "id"), "payee rule id")
+	if err != nil {
+		writeBankingBadRequest(w, r, err)
+		return 0, false
+	}
+	return PayeeRuleID(id), true
 }
 
 func parseFeedFilter(r *nethttp.Request) (FeedFilter, error) {
