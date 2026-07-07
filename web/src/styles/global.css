@@ -1678,6 +1678,7 @@
 
 .reports-screen,
 .reports-layout,
+.reports-main-column,
 .reports-rail {
   display: grid;
   align-content: start;
@@ -1761,6 +1762,129 @@
 .reports-layout {
   grid-template-columns: minmax(0, 1.3fr) minmax(340px, 1fr);
   align-items: start;
+}
+
+.reports-expense-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.42fr) minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+  min-width: 0;
+}
+
+.reports-expense-summary,
+.reports-expense-detail,
+.reports-expense-categories,
+.reports-top-payees,
+.reports-expense-table {
+  display: grid;
+  min-width: 0;
+}
+
+.reports-expense-summary {
+  gap: 14px;
+}
+
+.reports-expense-categories {
+  gap: 8px;
+}
+
+.reports-expense-category {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 58px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border-hairline);
+  border-radius: var(--radius-input);
+  background: var(--color-card);
+  color: var(--color-text);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.reports-expense-category--active {
+  border-color: var(--color-navy);
+  background: var(--color-panel);
+}
+
+.reports-expense-category span:first-child,
+.reports-expense-table__row span:nth-child(2) {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.reports-expense-category strong,
+.reports-expense-table__row strong {
+  overflow-wrap: anywhere;
+}
+
+.reports-expense-category small,
+.reports-expense-table__row small,
+.reports-expense-detail__header span {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.reports-top-payees {
+  gap: 2px;
+}
+
+.reports-top-payees h3 {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.reports-expense-detail {
+  gap: 12px;
+}
+
+.reports-expense-detail__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.reports-expense-detail__header strong {
+  overflow-wrap: anywhere;
+}
+
+.reports-expense-table {
+  overflow-x: auto;
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.reports-expense-table__row {
+  display: grid;
+  grid-template-columns: minmax(82px, 0.42fr) minmax(160px, 1fr) minmax(
+      130px,
+      0.6fr
+    ) auto;
+  gap: 12px;
+  align-items: center;
+  min-width: 560px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--color-border-subtle);
+  color: var(--color-text);
+  font-size: var(--type-secondary-size);
+}
+
+.reports-expense-table__row:first-child {
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
 }
 
 .reports-card-title {
@@ -3164,8 +3288,16 @@ article.ui-stat-card.dashboard-stat-card--unavailable {
   }
 
   .reports-layout,
+  .reports-expense-grid,
   .reports-custom-range {
     grid-template-columns: 1fr;
+  }
+
+  .reports-expense-table__row {
+    grid-template-columns: minmax(72px, 0.42fr) minmax(150px, 1fr) minmax(
+        110px,
+        0.55fr
+      ) auto;
   }
 
   .company-logo-row {
