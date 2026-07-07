@@ -1185,7 +1185,7 @@ func formatOptionalTime(value *time.Time) string {
 }
 
 func formatAPIDate(value openapi_types.Date) string {
-	if value.Time.IsZero() {
+	if value.IsZero() {
 		return "-"
 	}
 	return value.String()
