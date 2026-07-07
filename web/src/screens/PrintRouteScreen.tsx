@@ -110,6 +110,10 @@ function InvoiceDocument({
   const { client, identity, invoice } = payload;
   const invoiceNumber = invoice.number ?? "Draft invoice";
   const logoSrc = identity.logo_data_uri ?? identity.logo_asset_url ?? null;
+  const showVATLine =
+    Boolean(payload.reverse_charge_note) ||
+    payload.vat_registered ||
+    invoice.totals.vat.amount !== 0;
 
   return (
     <article
@@ -149,7 +153,9 @@ function InvoiceDocument({
             identity.legal_name,
             ...addressLines(identity.address),
             `Company no. ${identity.company_number}`,
-            identity.vat_number ? `VAT no. ${identity.vat_number}` : null,
+            payload.vat_registered && identity.vat_number
+              ? `VAT no. ${identity.vat_number}`
+              : null,
           ]}
         />
         <AddressBlock
@@ -198,14 +204,16 @@ function InvoiceDocument({
       <section className="invoice-print__summary" aria-label="Invoice totals">
         <dl>
           <Term label="Subtotal" value={formatMoney(invoice.totals.subtotal)} />
-          <Term
-            label={
-              payload.reverse_charge_note
-                ? "VAT reverse charge"
-                : `${formatRate(payload.vat_rate)} VAT`
-            }
-            value={formatMoney(invoice.totals.vat)}
-          />
+          {showVATLine ? (
+            <Term
+              label={
+                payload.reverse_charge_note
+                  ? "VAT reverse charge"
+                  : `${formatRate(payload.vat_rate)} VAT`
+              }
+              value={formatMoney(invoice.totals.vat)}
+            />
+          ) : null}
           <Term label="Total due" value={formatMoney(invoice.totals.total)} />
         </dl>
       </section>
@@ -455,7 +463,8 @@ function DividendDocumentHeader({
       <p>Company no. {company.company_number}</p>
       {showRegisteredOffice ? (
         <p>
-          Registered office: {addressLines(company.registered_office).join(", ")}
+          Registered office:{" "}
+          {addressLines(company.registered_office).join(", ")}
         </p>
       ) : null}
     </>

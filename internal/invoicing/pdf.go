@@ -37,6 +37,7 @@ type InvoicePrintPayload struct {
 	Invoice           Invoice                 `json:"invoice"`
 	Client            Client                  `json:"client"`
 	Identity          InvoicePrintIdentity    `json:"identity"`
+	VATRegistered     bool                    `json:"vat_registered"`
 	VATRate           string                  `json:"vat_rate"`
 	VATTaxYear        string                  `json:"vat_tax_year"`
 	ReverseChargeNote *string                 `json:"reverse_charge_note,omitempty"`

@@ -2027,6 +2027,7 @@ export interface components {
             locked_rate?: components["schemas"]["InvoicingLockedRate"] | null;
             reverse_charge_note?: string | null;
             vat_rate: string;
+            vat_registered: boolean;
             vat_tax_year: string;
         };
         InvoicingInvoiceStatusCount: {

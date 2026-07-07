@@ -77,27 +77,28 @@ type Quantity string
 // Invoice is an invoice header, ordered lines, settlement metadata, and
 // computed totals. Totals are never stored.
 type Invoice struct {
-	ID                string            `json:"id"`
-	Number            *string           `json:"number"`
-	ClientID          string            `json:"client_id"`
-	Status            InvoiceStatus     `json:"status"`
-	IssueDate         time.Time         `json:"issue_date"`
-	DueDate           time.Time         `json:"due_date"`
-	Currency          Currency          `json:"currency"`
-	LockID            *string           `json:"lock_id"`
-	SendLedgerEntryID *int64            `json:"-"`
-	SentAt            *time.Time        `json:"sent_at,omitempty"`
-	VATTreatment      VATTreatment      `json:"vat_treatment"`
-	SettlementTxnRef  *string           `json:"settlement_txn_ref"`
-	SettledDate       *time.Time        `json:"settled_date"`
-	SettledAmount     *Money            `json:"settled_amount"`
-	PDFAsset          *string           `json:"pdf_asset"`
-	Lines             []InvoiceLine     `json:"lines"`
-	Reminders         []InvoiceReminder `json:"reminders,omitempty"`
-	Totals            InvoiceTotals     `json:"totals"`
-	CreatedAt         time.Time         `json:"created_at"`
-	UpdatedAt         time.Time         `json:"updated_at"`
-	sendRateLock      *RateLock
+	ID                  string            `json:"id"`
+	Number              *string           `json:"number"`
+	ClientID            string            `json:"client_id"`
+	Status              InvoiceStatus     `json:"status"`
+	IssueDate           time.Time         `json:"issue_date"`
+	DueDate             time.Time         `json:"due_date"`
+	Currency            Currency          `json:"currency"`
+	LockID              *string           `json:"lock_id"`
+	SendLedgerEntryID   *int64            `json:"-"`
+	SentAt              *time.Time        `json:"sent_at,omitempty"`
+	VATTreatment        VATTreatment      `json:"vat_treatment"`
+	VATRegisteredAtSend *bool             `json:"-"`
+	SettlementTxnRef    *string           `json:"settlement_txn_ref"`
+	SettledDate         *time.Time        `json:"settled_date"`
+	SettledAmount       *Money            `json:"settled_amount"`
+	PDFAsset            *string           `json:"pdf_asset"`
+	Lines               []InvoiceLine     `json:"lines"`
+	Reminders           []InvoiceReminder `json:"reminders,omitempty"`
+	Totals              InvoiceTotals     `json:"totals"`
+	CreatedAt           time.Time         `json:"created_at"`
+	UpdatedAt           time.Time         `json:"updated_at"`
+	sendRateLock        *RateLock
 }
 
 // InvoiceReminder records one manual overdue reminder send.

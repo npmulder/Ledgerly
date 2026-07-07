@@ -437,6 +437,11 @@ func (s *Service) Send(ctx context.Context, id string) (_ Invoice, err error) {
 	if err := validateSendableDraft(draft); err != nil {
 		return Invoice{}, err
 	}
+	vatRegisteredAtSend, err := s.invoiceVATRegisteredForTotals(ctx, draft)
+	if err != nil {
+		return Invoice{}, err
+	}
+	draft.VATRegisteredAtSend = &vatRegisteredAtSend
 	draft, err = s.computeTotals(ctx, draft, false)
 	if err != nil {
 		return Invoice{}, err
@@ -472,7 +477,7 @@ func (s *Service) Send(ctx context.Context, id string) (_ Invoice, err error) {
 	if err != nil {
 		return Invoice{}, fmt.Errorf("invoicing: post send ledger entry: %w", err)
 	}
-	sent, err := s.store.SetInvoiceSent(ctx, tx, draft.ID, number, lock.ID, int64(entryID), s.now())
+	sent, err := s.store.SetInvoiceSent(ctx, tx, draft.ID, number, lock.ID, int64(entryID), s.now(), vatRegisteredAtSend)
 	if err != nil {
 		return Invoice{}, err
 	}
@@ -617,10 +622,12 @@ func (s *Service) InvoicePrintPayload(ctx context.Context, id string, draftWater
 	if err != nil {
 		return InvoicePrintPayload{}, err
 	}
+	vatRegisteredForPrint := invoiceVATRegisteredForPrint(invoice, profile.IsVATRegistered)
 	return InvoicePrintPayload{
 		Invoice:           invoice,
 		Client:            client,
-		Identity:          s.invoicePrintIdentity(ctx, profile),
+		Identity:          s.invoicePrintIdentity(ctx, profile, vatRegisteredForPrint),
+		VATRegistered:     vatRegisteredForPrint,
 		VATRate:           vatRate.String(),
 		VATTaxYear:        vatTaxYear,
 		ReverseChargeNote: reverseChargeNote,
@@ -629,7 +636,7 @@ func (s *Service) InvoicePrintPayload(ctx context.Context, id string, draftWater
 	}, nil
 }
 
-func (s *Service) invoicePrintIdentity(ctx context.Context, profile identity.CompanyProfile) InvoicePrintIdentity {
+func (s *Service) invoicePrintIdentity(ctx context.Context, profile identity.CompanyProfile, vatRegistered bool) InvoicePrintIdentity {
 	var (
 		logoAssetURL *string
 		logoDataURI  *string
@@ -641,6 +648,10 @@ func (s *Service) invoicePrintIdentity(ctx context.Context, profile identity.Com
 			dataURI := "data:" + asset.MIME + ";base64," + base64.StdEncoding.EncodeToString(asset.Bytes)
 			logoDataURI = &dataURI
 		}
+	}
+	vatNumber := profile.VATNumber
+	if !vatRegistered {
+		vatNumber = nil
 	}
 	return InvoicePrintIdentity{
 		TradingName:   profile.TradingName,
@@ -654,7 +665,7 @@ func (s *Service) invoicePrintIdentity(ctx context.Context, profile identity.Com
 			PostalCode: profile.RegisteredOffice.PostalCode,
 			Country:    profile.RegisteredOffice.Country,
 		},
-		VATNumber:    profile.VATNumber,
+		VATNumber:    vatNumber,
 		IBAN:         profile.BankDetails.IBAN,
 		BIC:          profile.BankDetails.BIC,
 		BankName:     profile.BankDetails.BankName,
@@ -1282,12 +1293,16 @@ func (s *Service) computeTotals(ctx context.Context, invoice Invoice, includeDra
 	}
 
 	vat := Money{Currency: string(invoice.Currency)}
-	if !subtotal.IsZero() {
-		vatRate, _, err := jurisdiction.VATStandardRateForDate(invoice.IssueDate)
+	if !subtotal.IsZero() && invoice.VATTreatment == VATTreatmentDomestic {
+		vatRegistered, err := s.invoiceVATRegisteredForTotals(ctx, invoice)
 		if err != nil {
-			return Invoice{}, fmt.Errorf("invoicing: VAT rate: %w", err)
+			return Invoice{}, err
 		}
-		if invoice.VATTreatment == VATTreatmentDomestic {
+		if vatRegistered {
+			vatRate, _, err := jurisdiction.VATStandardRateForDate(invoice.IssueDate)
+			if err != nil {
+				return Invoice{}, fmt.Errorf("invoicing: VAT rate: %w", err)
+			}
 			rat, err := rateRat(vatRate.String())
 			if err != nil {
 				return Invoice{}, err
@@ -1314,6 +1329,40 @@ func (s *Service) computeTotals(ctx context.Context, invoice Invoice, includeDra
 	}
 	invoice.Totals = totals
 	return invoice, nil
+}
+
+func (s *Service) invoiceVATRegisteredForTotals(ctx context.Context, invoice Invoice) (bool, error) {
+	if invoice.VATTreatment != VATTreatmentDomestic {
+		return false, nil
+	}
+	if invoice.Status != InvoiceStatusDraft {
+		return sentInvoiceVATRegistered(invoice), nil
+	}
+	if s.identity == nil {
+		return true, nil
+	}
+	registered, err := s.identity.IsVATRegistered(ctx)
+	if err != nil {
+		if errors.Is(err, identity.ErrProfileNotFound) {
+			return false, nil
+		}
+		return false, fmt.Errorf("invoicing: company VAT registration: %w", err)
+	}
+	return registered, nil
+}
+
+func invoiceVATRegisteredForPrint(invoice Invoice, currentProfileRegistered bool) bool {
+	if invoice.VATTreatment == VATTreatmentDomestic && invoice.Status != InvoiceStatusDraft {
+		return sentInvoiceVATRegistered(invoice)
+	}
+	return currentProfileRegistered
+}
+
+func sentInvoiceVATRegistered(invoice Invoice) bool {
+	if invoice.VATRegisteredAtSend != nil {
+		return *invoice.VATRegisteredAtSend
+	}
+	return true
 }
 
 func (s *Service) approxGBP(ctx context.Context, total Money) (*InvoiceGBPApprox, error) {
