@@ -1,4 +1,10 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -44,7 +50,9 @@ describe("DashboardScreen", () => {
     expect(dlaCard).toHaveClass("dashboard-stat-card--amber");
     expect(dlaCard).toHaveTextContent("£320.00 DR");
 
-    const headroomCard = screen.getByText("Dividend headroom").closest("article");
+    const headroomCard = screen
+      .getByText("Dividend headroom")
+      .closest("article");
     expect(headroomCard).toHaveClass("dashboard-stat-card--muted");
     expect(headroomCard).toHaveTextContent("£17,160.00");
     expect(headroomCard).toHaveTextContent("Not currently distributable");
@@ -58,7 +66,9 @@ describe("DashboardScreen", () => {
     const rateCard = screen.getByText("0.8534").closest("section");
     expect(rateCard).toHaveClass("dashboard-rate-card--stale");
     expect(screen.getByText("STALE")).toBeInTheDocument();
-    expect(screen.getByText("Frozen onto today's postings")).toBeInTheDocument();
+    expect(
+      screen.getByText("Frozen onto today's postings"),
+    ).toBeInTheDocument();
   });
 
   it("creates a retainer draft via create and patch before navigating to the editor", async () => {
@@ -73,7 +83,9 @@ describe("DashboardScreen", () => {
 
     renderDashboard();
 
-    expect(await screen.findByText("Retainer: Contoso GmbH")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Retainer: Contoso GmbH"),
+    ).toBeInTheDocument();
     await user.click(
       await screen.findByRole("button", { name: "Raise July invoice" }),
     );
@@ -139,7 +151,9 @@ describe("DashboardScreen", () => {
 
     renderDashboard();
 
-    await user.click(await screen.findByRole("button", { name: "New invoice" }));
+    await user.click(
+      await screen.findByRole("button", { name: "New invoice" }),
+    );
 
     expect(await screen.findByText("Invoices landed")).toBeInTheDocument();
     expect(api.createRequests).toEqual([]);
@@ -162,13 +176,72 @@ describe("DashboardScreen", () => {
 
     renderDashboard();
 
-    expect(await screen.findByText("Some dashboard sections are unavailable."))
-      .toBeInTheDocument();
+    expect(
+      await screen.findByText("Some dashboard sections are unavailable."),
+    ).toBeInTheDocument();
     const cashCard = screen.getByText("Cash").closest("article");
     expect(cashCard).toHaveTextContent("Unavailable");
     expect(screen.getByText("Recent invoices unavailable")).toBeInTheDocument();
     expect(screen.getAllByText("€4,500.00").length).toBeGreaterThan(0);
     expect(screen.getByText("Director's loan")).toBeInTheDocument();
+  });
+
+  it("keeps stat layout stable when a dashboard insight is dismissed", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal(
+      "fetch",
+      dashboardApi({
+        advisorInsights: [
+          {
+            bindings: {},
+            created_at: "2026-07-06T09:00:00Z",
+            cta: {
+              action: "navigate:/reports",
+              label: "Open reports",
+            },
+            key: "dashboard-filing-warning",
+            rendered_text: "VAT filing window opens soon.",
+            rule_id: "filing_deadline_window",
+            severity: "amber",
+            surfaces: ["dashboard"],
+          },
+        ],
+        clients: clientsFixture(),
+        summary: dashboardSummaryFixture(),
+      }).fetch,
+    );
+
+    renderDashboard();
+
+    const panel = await screen.findByRole("region", {
+      name: "Advisor panel",
+    });
+    await within(panel).findByText("VAT filing window opens soon.");
+    expect(
+      document.querySelectorAll(".dashboard-stat-grid article"),
+    ).toHaveLength(4);
+    expect(screen.getByText("£23,720.68")).toBeInTheDocument();
+    expect(screen.getByText("£320.00 DR")).toBeInTheDocument();
+
+    await user.click(
+      within(panel).getByRole("button", {
+        name: /Dismiss advisor insight: VAT filing window opens soon/,
+      }),
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.queryByText("VAT filing window opens soon."),
+      ).not.toBeInTheDocument();
+    });
+    expect(
+      await within(panel).findByText("No insights — all caught up"),
+    ).toBeVisible();
+    expect(
+      document.querySelectorAll(".dashboard-stat-grid article"),
+    ).toHaveLength(4);
+    expect(screen.getByText("£23,720.68")).toBeInTheDocument();
+    expect(screen.getByText("£320.00 DR")).toBeInTheDocument();
   });
 });
 
@@ -194,13 +267,16 @@ function renderDashboard() {
 }
 
 function dashboardApi({
+  advisorInsights = [],
   clients,
   summary,
 }: {
+  advisorInsights?: DashboardAdvisorInsight[];
   clients: InvoicingClient[];
   summary: DashboardSummary;
 }) {
   const createRequests: unknown[] = [];
+  const dismissedAdvisorKeys = new Set<string>();
   const patchRequests: InvoicingInvoicePatch[] = [];
   const api = {
     createRequests,
@@ -214,6 +290,38 @@ function dashboardApi({
       }
       if (path === "/api/invoicing/clients") {
         return jsonResponse({ clients });
+      }
+      if (path === "/api/advisor/insights" && method === "GET") {
+        return jsonResponse({
+          insights: advisorInsights.filter(
+            (insight) => !dismissedAdvisorKeys.has(insight.key),
+          ),
+        });
+      }
+      if (
+        path.startsWith("/api/advisor/insights/") &&
+        path.endsWith("/dismiss") &&
+        method === "POST"
+      ) {
+        dismissedAdvisorKeys.add(
+          decodeURIComponent(path.split("/").at(-2) ?? ""),
+        );
+        return jsonResponse(undefined, 204);
+      }
+      if (path === "/api/advisor/refresh" && method === "POST") {
+        return jsonResponse({
+          run: {
+            duration_ms: 1,
+            finished_at: "2026-07-06T09:00:01Z",
+            id: 1,
+            insights_created: 0,
+            insights_resolved: 0,
+            insights_superseded: 0,
+            started_at: "2026-07-06T09:00:00Z",
+            trigger: "manual.RefreshNow",
+            warnings: [],
+          },
+        });
       }
       if (path === "/api/invoicing/invoices" && method === "POST") {
         createRequests.push(JSON.parse(String(init?.body)));
@@ -236,6 +344,17 @@ function dashboardApi({
   };
   return api;
 }
+
+type DashboardAdvisorInsight = {
+  bindings: Record<string, unknown>;
+  created_at: string;
+  cta: { action: string; label: string; params?: Record<string, unknown> };
+  key: string;
+  rendered_text: string;
+  rule_id: string;
+  severity: "amber" | "teal";
+  surfaces: string[];
+};
 
 function dashboardSummaryFixture(): DashboardSummary {
   return {
@@ -442,7 +561,11 @@ function pathFromRequest(input: RequestInfo | URL) {
   return new URL(String(input), window.location.origin).pathname;
 }
 
-function jsonResponse(body: unknown, status = 200, contentType = "application/json") {
+function jsonResponse(
+  body: unknown,
+  status = 200,
+  contentType = "application/json",
+) {
   return new Response(JSON.stringify(body), {
     headers: { "Content-Type": contentType },
     status,
