@@ -603,6 +603,17 @@ func (s *Service) validateAt(
 			Distributable: headroom.Available,
 		}
 	}
+	profile, err := s.identity.Profile(ctx)
+	if err != nil {
+		return ValidationResult{}, err
+	}
+	shareholder, err := declarationShareholder(profile)
+	if err != nil {
+		return ValidationResult{}, err
+	}
+	if _, err := perShareAmount(normalized, shareholder.Shares); err != nil {
+		return ValidationResult{}, err
+	}
 	return result, nil
 }
 

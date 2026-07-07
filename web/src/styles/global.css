@@ -867,6 +867,175 @@
   justify-self: start;
 }
 
+.dividends-screen,
+.dividends-main,
+.dividends-rail {
+  display: grid;
+  align-content: start;
+  min-width: 0;
+  gap: var(--layout-grid-gap);
+}
+
+.dividends-screen {
+  gap: var(--layout-grid-gap-large);
+}
+
+.dividends-screen__header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: var(--layout-grid-gap);
+}
+
+.dividends-screen__header > div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.dividends-headroom .ui-card__body {
+  padding-bottom: 16px;
+}
+
+.dividends-headroom dl {
+  display: grid;
+  gap: 0;
+  margin: 0;
+}
+
+.dividends-headroom__line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: var(--layout-grid-gap);
+  min-height: 39px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.dividends-headroom__line dt,
+.dividends-headroom__line dd {
+  margin: 0;
+}
+
+.dividends-headroom__line dt {
+  min-width: 0;
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+
+.dividends-headroom__line dd {
+  white-space: nowrap;
+}
+
+.dividends-headroom__line--total {
+  margin-top: 5px;
+  padding-top: 15px;
+  border-top: 3px solid var(--color-navy);
+  border-bottom: 0;
+  font-weight: 700;
+}
+
+.dividends-headroom__line--total dd {
+  color: var(--color-navy);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.dividends-headroom--negative .dividends-headroom__line--total dd {
+  color: var(--color-danger);
+}
+
+.dividends-headroom__state {
+  margin: 12px 0 0;
+  color: var(--color-text-secondary);
+  font-size: var(--type-secondary-size);
+  font-weight: 700;
+}
+
+.dividends-headroom--negative .dividends-headroom__state {
+  color: var(--color-danger);
+}
+
+.dividends-declare__grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
+  gap: var(--layout-grid-gap);
+  align-items: end;
+}
+
+.dividends-validation-strip {
+  display: flex;
+  min-width: 0;
+  min-height: 38px;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--color-border-input);
+  border-radius: var(--radius-input);
+  background: var(--color-page-bg);
+  color: var(--color-text-secondary);
+  font-size: var(--type-secondary-size);
+}
+
+.dividends-validation-strip span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.dividends-validation-strip--ok {
+  border-color: var(--color-success-bg);
+  background: var(--color-success-tint);
+  color: var(--color-success);
+  font-weight: 700;
+}
+
+.dividends-validation-strip--blocked {
+  border-color: var(--color-danger-bg);
+  background: var(--color-danger-row-tint);
+  color: var(--color-danger);
+  font-weight: 700;
+}
+
+.dividends-submit-state {
+  margin: 12px 0 0;
+  color: var(--color-text-secondary);
+  font-size: var(--type-secondary-size);
+  font-weight: 700;
+}
+
+.dividends-submit-state[role="alert"] {
+  color: var(--color-danger);
+}
+
+.dividends-history-table .ui-table {
+  min-width: 100%;
+}
+
+.dividends-history-table__links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.dividends-document-preview .ui-card__body {
+  height: 356px;
+  overflow: hidden;
+  padding: 0;
+  background: var(--color-page-bg);
+}
+
+.dividends-document-preview iframe {
+  display: block;
+  width: 794px;
+  height: 1123px;
+  border: 0;
+  background: var(--color-card);
+  transform: scale(0.5);
+  transform-origin: top left;
+}
+
 .banking-screen,
 .banking-review,
 .banking-rail {
@@ -2739,6 +2908,7 @@ article.ui-stat-card.dashboard-stat-card--unavailable {
 
   .app-split-main,
   .invoice-editor-layout,
+  .dividends-declare__grid,
   .invoice-field-grid,
   .invoices-screen__grid,
   .settings-shell {
@@ -2763,15 +2933,30 @@ article.ui-stat-card.dashboard-stat-card--unavailable {
     flex-wrap: wrap;
   }
 
+  .dividends-screen__header,
   .dla-screen__header,
   .dla-balance-banner {
     align-items: flex-start;
     flex-direction: column;
   }
 
+  .dividends-declare .ui-button,
   .dla-screen__header .ui-button,
   .dla-entry-form .ui-button {
     width: 100%;
+  }
+
+  .dividends-validation-strip {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .dividends-document-preview .ui-card__body {
+    height: 300px;
+  }
+
+  .dividends-document-preview iframe {
+    transform: scale(0.34);
   }
 
   .reports-screen__header {

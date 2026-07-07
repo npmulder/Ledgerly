@@ -38,6 +38,20 @@ export const queryKeys = {
     ],
     ledgerPages: (): ApiQueryKey => ["dla", "ledgerPages", {}],
   },
+  dividends: {
+    documents: (id: string | null = null): ApiQueryKey => [
+      "dividends",
+      "documents",
+      { id },
+    ],
+    headroom: (): ApiQueryKey => ["dividends", "headroom", {}],
+    history: (): ApiQueryKey => ["dividends", "history", {}],
+    validation: (amountMinor: number | null = null): ApiQueryKey => [
+      "dividends",
+      "validation",
+      { amountMinor },
+    ],
+  },
   identity: {
     me: (): ApiQueryKey => ["identity", "me", {}],
     pats: (): ApiQueryKey => ["identity", "pats", {}],
