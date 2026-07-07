@@ -784,6 +784,9 @@ func (d identityDirectorNames) DirectorNames(ctx context.Context) ([]string, err
 	}
 	profile, err := d.profile.Profile(ctx)
 	if err != nil {
+		if errors.Is(err, identity.ErrProfileNotFound) {
+			return nil, nil
+		}
 		return nil, err
 	}
 	names := make([]string, 0, len(profile.Shareholders))
