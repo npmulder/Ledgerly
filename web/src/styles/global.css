@@ -2448,6 +2448,19 @@ article.ui-stat-card.dashboard-stat-card--unavailable {
   background: var(--color-page-bg);
 }
 
+.dashboard-stat-action {
+  display: inline-flex;
+  width: max-content;
+  color: var(--color-navy);
+  font-size: var(--type-secondary-size);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.dashboard-stat-action:hover {
+  text-decoration: underline;
+}
+
 .dashboard-content-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.6fr) minmax(300px, 1fr);

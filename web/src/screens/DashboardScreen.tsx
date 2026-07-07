@@ -265,6 +265,7 @@ function DividendHeadroomStat({
   if (!headroom) {
     return <UnavailableStat label="Dividend headroom" />;
   }
+  const canDeclare = headroom.distributable && headroom.available.amount > 0;
   return (
     <StatCard
       className={
@@ -274,9 +275,23 @@ function DividendHeadroomStat({
       }
       label="Dividend headroom"
       secondary={
-        headroom.distributable
-          ? "0% CIT · reserves distributable"
-          : "Not currently distributable"
+        canDeclare ? (
+          <>
+            <span>0% CIT · reserves distributable</span>
+            <Link
+              className="dashboard-stat-action"
+              to={`/dividends?amount=${encodeURIComponent(
+                dividendAmountPrefill(headroom.available),
+              )}`}
+            >
+              Declare dividend
+            </Link>
+          </>
+        ) : headroom.distributable ? (
+          "0% CIT · reserves distributable"
+        ) : (
+          "Not currently distributable"
+        )
       }
       value={formatMoney(headroom.available)}
     />
@@ -593,6 +608,10 @@ function addDays(date: string, days: number) {
 
 function retainerLineId(issueDate: string) {
   return `line_retainer_${issueDate.slice(0, 7).replace("-", "_")}`;
+}
+
+function dividendAmountPrefill(money: DashboardMoney) {
+  return (money.amount / 100).toFixed(2);
 }
 
 function formatMoney(

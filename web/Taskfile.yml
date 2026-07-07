@@ -47,6 +47,13 @@ tasks:
     cmds:
       - npm run test
 
+  e2e:
+    desc: Run frontend Playwright tests
+    deps:
+      - deps
+    cmds:
+      - npm run test:e2e -- {{.CLI_ARGS}}
+
   lint:
     desc: Run frontend lint checks
     deps:
