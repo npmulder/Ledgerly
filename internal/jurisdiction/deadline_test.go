@@ -9,14 +9,15 @@ func TestFilingDeadlinesResolvesNextOccurrences(t *testing.T) {
 	pack := loadTestPack(t)
 
 	tests := []struct {
-		name           string
-		facts          CompanyFacts
-		reference      time.Time
-		key            string
-		wantDue        time.Time
-		wantLabel      string
-		wantAuthority  string
-		wantRecurrence string
+		name                        string
+		facts                       CompanyFacts
+		reference                   time.Time
+		key                         string
+		wantDue                     time.Time
+		wantLabel                   string
+		wantAuthority               string
+		wantRecurrence              string
+		wantRequiresVATRegistration bool
 	}{
 		{
 			name: "year end 31 March company tax return compound offset",
@@ -62,26 +63,30 @@ func TestFilingDeadlinesResolvesNextOccurrences(t *testing.T) {
 			facts: CompanyFacts{
 				IncorporationDate: testDate(2020, time.January, 30),
 				YearEnd:           YearEnd{Month: time.March, Day: 31},
+				IsVATRegistered:   true,
 			},
-			reference:      testDate(2026, time.May, 15),
-			key:            "vat_return",
-			wantDue:        testDate(2026, time.July, 30),
-			wantLabel:      "VAT return",
-			wantAuthority:  "Testland Customs",
-			wantRecurrence: "quarterly",
+			reference:                   testDate(2026, time.May, 15),
+			key:                         "vat_return",
+			wantDue:                     testDate(2026, time.July, 30),
+			wantLabel:                   "VAT return",
+			wantAuthority:               "Testland Customs",
+			wantRecurrence:              "quarterly",
+			wantRequiresVATRegistration: true,
 		},
 		{
 			name: "VAT from mid third quarter",
 			facts: CompanyFacts{
 				IncorporationDate: testDate(2020, time.January, 30),
 				YearEnd:           YearEnd{Month: time.March, Day: 31},
+				IsVATRegistered:   true,
 			},
-			reference:      testDate(2026, time.August, 15),
-			key:            "vat_return",
-			wantDue:        testDate(2026, time.October, 30),
-			wantLabel:      "VAT return",
-			wantAuthority:  "Testland Customs",
-			wantRecurrence: "quarterly",
+			reference:                   testDate(2026, time.August, 15),
+			key:                         "vat_return",
+			wantDue:                     testDate(2026, time.October, 30),
+			wantLabel:                   "VAT return",
+			wantAuthority:               "Testland Customs",
+			wantRecurrence:              "quarterly",
+			wantRequiresVATRegistration: true,
 		},
 		{
 			name: "accounting year end ignores periods before incorporation",
@@ -120,7 +125,46 @@ func TestFilingDeadlinesResolvesNextOccurrences(t *testing.T) {
 			if got.Recurrence != tt.wantRecurrence {
 				t.Fatalf("%s Recurrence = %q, want %q", tt.key, got.Recurrence, tt.wantRecurrence)
 			}
+			if got.RequiresVATRegistration != tt.wantRequiresVATRegistration {
+				t.Fatalf("%s RequiresVATRegistration = %v, want %v", tt.key, got.RequiresVATRegistration, tt.wantRequiresVATRegistration)
+			}
 		})
+	}
+}
+
+func TestFilingDeadlinesSkipsVATConditionalWhenUnregistered(t *testing.T) {
+	pack := loadTestPack(t)
+
+	deadlines, err := resolveFilingDeadlines(
+		pack,
+		CompanyFacts{
+			IncorporationDate: testDate(2020, time.January, 30),
+			YearEnd:           YearEnd{Month: time.March, Day: 31},
+			IsVATRegistered:   false,
+		},
+		testDate(2026, time.May, 15),
+	)
+	if err != nil {
+		t.Fatalf("resolveFilingDeadlines() error = %v", err)
+	}
+	if _, ok := deadlineByKey(deadlines, "vat_return"); ok {
+		t.Fatalf("vat_return present for unregistered company: %#v", deadlines)
+	}
+
+	deadlines, err = resolveFilingDeadlines(
+		pack,
+		CompanyFacts{
+			IncorporationDate: testDate(2020, time.January, 30),
+			YearEnd:           YearEnd{Month: time.March, Day: 31},
+			IsVATRegistered:   true,
+		},
+		testDate(2026, time.May, 15),
+	)
+	if err != nil {
+		t.Fatalf("resolveFilingDeadlines(registered) error = %v", err)
+	}
+	if _, ok := deadlineByKey(deadlines, "vat_return"); !ok {
+		t.Fatalf("vat_return missing for registered company: %#v", deadlines)
 	}
 }
 
@@ -132,6 +176,7 @@ func TestFilingDeadlinesPreservesReferenceLocationDate(t *testing.T) {
 		CompanyFacts{
 			IncorporationDate: testDate(2020, time.January, 30),
 			YearEnd:           YearEnd{Month: time.March, Day: 31},
+			IsVATRegistered:   true,
 		},
 		time.Date(2027, time.March, 1, 0, 30, 0, 0, referenceLocation),
 	)
@@ -191,6 +236,7 @@ func TestFilingDeadlinesWithClockUsesActivePack(t *testing.T) {
 		CompanyFacts{
 			IncorporationDate: testDate(2020, time.January, 30),
 			YearEnd:           YearEnd{Month: time.March, Day: 31},
+			IsVATRegistered:   true,
 		},
 		fixedClock{now: testDate(2026, time.May, 15)},
 	)

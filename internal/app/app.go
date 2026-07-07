@@ -357,6 +357,7 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 				Month: facts.YearEnd.Month,
 				Day:   facts.YearEnd.Day,
 			},
+			IsVATRegistered: facts.IsVATRegistered,
 		}, nil
 	}
 
