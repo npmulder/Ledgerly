@@ -238,7 +238,7 @@ func bankingTransactionIDFromSourceRef(sourceModule string, sourceRef string) (B
 func sortedExpenseCategories(categories map[ledger.AccountCode]ExpenseCategory) []ExpenseCategory {
 	out := make([]ExpenseCategory, 0, len(categories))
 	for _, category := range categories {
-		if category.Amount.IsZero() {
+		if category.TransactionCount == 0 {
 			continue
 		}
 		out = append(out, category)

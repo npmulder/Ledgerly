@@ -314,6 +314,39 @@ func TestExpensesByCategoryJoinsBankingTransactionsAndBuildsCSV(t *testing.T) {
 	}
 }
 
+func TestExpensesByCategoryKeepsZeroNetCategoryWithTransactions(t *testing.T) {
+	ctx := context.Background()
+	fakeLedger := newFakeLedger(
+		fakeEntry(10, "2025-05-07", "manual", "software-charge", fakePosting("5010-software", 10_000)),
+		fakeEntry(11, "2025-05-08", "manual", "software-refund", fakePosting("5010-software", -10_000)),
+	)
+	service := New(
+		fakeLedger,
+		fakeIdentity{yearEnd: identity.YearEnd{Month: time.March, Day: 31}},
+		fakeInvoicing{},
+		WithBanking(fakeBanking{}),
+	)
+
+	report, err := service.ExpensesByCategory(ctx, Period{
+		From: testDate(2025, time.May, 1),
+		To:   testDate(2025, time.May, 31),
+	})
+	if err != nil {
+		t.Fatalf("ExpensesByCategory() error = %v", err)
+	}
+	assertReportMoney(t, report.Total, 0)
+	if len(report.Categories) != 1 {
+		t.Fatalf("Categories = %#v, want zero-net Software category", report.Categories)
+	}
+	if report.Categories[0].Category != "Software" || report.Categories[0].TransactionCount != 2 {
+		t.Fatalf("category = %#v, want Software with two transactions", report.Categories[0])
+	}
+	assertReportMoney(t, report.Categories[0].Amount, 0)
+	if len(report.Transactions) != 2 {
+		t.Fatalf("Transactions = %#v, want two drill-down rows", report.Transactions)
+	}
+}
+
 func loadReportsPack(t *testing.T, corporateRateLine string) {
 	t.Helper()
 
