@@ -94,7 +94,7 @@ func TestAdvisorRunEvaluationRulesEndToEnd(t *testing.T) {
 
 	t.Run("filing deadline creates and resolves", func(t *testing.T) {
 		h := harness.New(t, harness.Options{ClockStart: time.Date(2026, 7, 5, 9, 0, 0, 0, time.UTC)})
-		fixtures.Company(t, h)
+		fixtures.Company(t, h, fixtures.CompanyVATRegistered(true))
 		fixtures.Rates(t, h, fixtures.RatesStep(map[time.Time]string{h.Clock.Now(): "0.8500"}))
 
 		runAdvisorRefresh(t, h)

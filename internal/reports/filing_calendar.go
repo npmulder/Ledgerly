@@ -63,7 +63,7 @@ func (s *Service) FilingCalendarContext(ctx context.Context) ([]Filing, error) {
 
 	filings := make([]Filing, 0, len(deadlines))
 	for _, deadline := range deadlines {
-		if deadline.Key == vatReturnFilingKey && !facts.IsVATRegistered {
+		if deadline.RequiresVATRegistration && !facts.IsVATRegistered {
 			continue
 		}
 		if candidate, ok := candidatesByKey[deadline.Key]; ok && candidate.DueDate.Before(today) {
@@ -96,6 +96,7 @@ func toJurisdictionFacts(facts identity.CompanyFacts) jurisdiction.CompanyFacts 
 			Month: facts.YearEnd.Month,
 			Day:   facts.YearEnd.Day,
 		},
+		IsVATRegistered: facts.IsVATRegistered,
 	}
 }
 

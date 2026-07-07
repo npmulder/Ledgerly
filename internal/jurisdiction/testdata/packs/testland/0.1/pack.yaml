@@ -52,6 +52,7 @@ filings:
     due: quarter_end + 1 month
     cadence: quarterly
     authority: Testland Customs
+    requires_vat_registration: true
 director_loans:
   s455_charge: true
   credit:
