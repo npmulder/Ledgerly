@@ -21,6 +21,7 @@ import (
 
 	"github.com/npmulder/ledgerly/internal/advisor"
 	"github.com/npmulder/ledgerly/internal/app"
+	"github.com/npmulder/ledgerly/internal/audit"
 	"github.com/npmulder/ledgerly/internal/banking"
 	"github.com/npmulder/ledgerly/internal/dividends"
 	"github.com/npmulder/ledgerly/internal/dla"
@@ -85,6 +86,7 @@ type Harness struct {
 	DividendsPool   *pgxpool.Pool
 	LedgerPool      *pgxpool.Pool
 	AdvisorPool     *pgxpool.Pool
+	AuditPool       *pgxpool.Pool
 	Clock           *clock.FakeClock
 	Bus             *bus.Bus
 	IdentityDataDir string
@@ -110,6 +112,7 @@ func New(t testing.TB, opts Options) *Harness {
 	moneyFXPool := testdb.AsModule(t, moneyfx.ModuleName)
 	invoicingPool := testdb.AsModule(t, "invoicing")
 	advisorPool := testdb.AsModule(t, advisor.ModuleName)
+	auditPool := testdb.AsModule(t, audit.ModuleName)
 
 	startAt := opts.ClockStart
 	if startAt.IsZero() {
@@ -144,6 +147,7 @@ func New(t testing.TB, opts Options) *Harness {
 		MoneyFXPool:           moneyFXPool,
 		InvoicingPool:         invoicingPool,
 		AdvisorPool:           advisorPool,
+		AuditPool:             auditPool,
 		InvoicingMailSender:   opts.MailSender,
 		AdvisorOptions:        opts.AdvisorOptions,
 		ReportsPDFEngine:      opts.ReportsPDF,
@@ -178,6 +182,7 @@ func New(t testing.TB, opts Options) *Harness {
 		DividendsPool:   dividendsPool,
 		LedgerPool:      ledgerPool,
 		AdvisorPool:     advisorPool,
+		AuditPool:       auditPool,
 		Clock:           fakeClock,
 		Bus:             built.Bus,
 		IdentityDataDir: identityDataDir,

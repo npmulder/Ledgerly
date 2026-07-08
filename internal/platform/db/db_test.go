@@ -37,11 +37,15 @@ func TestWithModuleRejectsUnknownModule(t *testing.T) {
 
 func TestModulesAndRoles(t *testing.T) {
 	modules := Modules()
-	if len(modules) != 10 {
-		t.Fatalf("len(Modules()) = %d, want 10", len(modules))
+	if len(modules) != 11 {
+		t.Fatalf("len(Modules()) = %d, want 11", len(modules))
 	}
 
+	seenAudit := false
 	for _, module := range modules {
+		if module == "audit" {
+			seenAudit = true
+		}
 		role, err := RoleForModule(module)
 		if err != nil {
 			t.Fatalf("RoleForModule(%q) error = %v", module, err)
@@ -49,5 +53,8 @@ func TestModulesAndRoles(t *testing.T) {
 		if want := "ledgerly_" + module; role != want {
 			t.Fatalf("RoleForModule(%q) = %q, want %q", module, role, want)
 		}
+	}
+	if !seenAudit {
+		t.Fatal("Modules() missing audit module")
 	}
 }

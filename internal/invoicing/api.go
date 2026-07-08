@@ -75,6 +75,12 @@ type Config struct {
 	PDFRetryBackoff     time.Duration
 	Mailer              mail.Sender
 	Logger              *slog.Logger
+	AuditRecorder       AuditRecorder
+}
+
+// AuditRecorder records service-layer invoicing mutations in the caller's transaction.
+type AuditRecorder interface {
+	Record(ctx context.Context, tx db.Tx, module, entity, entityID string, before, after any) error
 }
 
 // Module is the invoicing module wiring surface used by the app builder.
@@ -116,6 +122,7 @@ func New(cfg Config) (*Module, error) {
 			WithInvoicePDFRetryBackoff(cfg.PDFRetryBackoff),
 			WithReminderMailer(cfg.Mailer),
 			WithLogger(cfg.Logger),
+			WithAuditRecorder(cfg.AuditRecorder),
 		),
 	}, nil
 }

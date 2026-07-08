@@ -27,6 +27,7 @@ import {
 } from "@/api/invoicing";
 import { queryKeys } from "@/api/queryKeys";
 import {
+  AuditHistoryPanel,
   Badge,
   Button,
   Card,
@@ -173,6 +174,9 @@ function LoadedInvoiceEditor({
   const autosave = useDraftAutosave(invoiceId, (updated) => {
     setInvoice(updated);
     queryClient.setQueryData(queryKeys.invoicing.invoice(updated.id), updated);
+    queryClient.invalidateQueries({
+      queryKey: queryKeys.audit.history("invoicing", "invoice", updated.id),
+    });
   });
 
   const sendMutation = useMutation({
@@ -644,6 +648,11 @@ function LoadedInvoiceEditor({
             />
           )}
           <DocumentPreview invoice={invoice} />
+          <AuditHistoryPanel
+            entity="invoice"
+            entityId={invoice.id}
+            module="invoicing"
+          />
           <ReminderCard
             invoice={invoice}
             onSend={() => reminderMutation.mutate()}
