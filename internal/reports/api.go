@@ -36,6 +36,35 @@ type PL struct {
 	NetProfit       money.Money
 }
 
+// BalanceSheet is the point-in-time statement of financial position in GBP.
+type BalanceSheet struct {
+	AsOf                      time.Time
+	FinancialYear             string
+	Assets                    BalanceSheetSection
+	Liabilities               BalanceSheetSection
+	Equity                    BalanceSheetSection
+	TotalAssets               money.Money
+	TotalLiabilities          money.Money
+	TotalEquity               money.Money
+	TotalLiabilitiesAndEquity money.Money
+	Balanced                  bool
+}
+
+// BalanceSheetSection groups balance-sheet lines by account type.
+type BalanceSheetSection struct {
+	Label string
+	Lines []BalanceSheetLine
+	Total money.Money
+}
+
+// BalanceSheetLine is one report-facing balance-sheet row. AccountCode may be
+// a virtual report row code for derived rows such as current-year profit.
+type BalanceSheetLine struct {
+	AccountCode ledger.AccountCode
+	AccountName string
+	Amount      money.Money
+}
+
 // IncomeLine is a GBP-presentational income row, grouped by client/currency or
 // by the Other income fallback for non-invoice income.
 type IncomeLine struct {
@@ -51,6 +80,45 @@ type ExpenseLine struct {
 	AccountCode ledger.AccountCode
 	AccountName string
 	Amount      money.Money
+}
+
+// ExpensesReport is the accountant drill-down for categorized expense
+// postings in a period.
+type ExpensesReport struct {
+	Period       Period
+	Categories   []ExpenseCategory
+	TopPayees    []ExpensePayeeTotal
+	Transactions []ExpenseTransaction
+	Total        money.Money
+}
+
+// ExpenseCategory is a GBP-presentational expense total grouped by account.
+type ExpenseCategory struct {
+	AccountCode      ledger.AccountCode
+	Category         string
+	Amount           money.Money
+	TransactionCount int
+}
+
+// ExpensePayeeTotal is a GBP-presentational total grouped by transaction payee.
+type ExpensePayeeTotal struct {
+	Payee            string
+	Amount           money.Money
+	TransactionCount int
+}
+
+// ExpenseTransaction is one categorized expense posting with transaction
+// attribution where a banking source reference is available.
+type ExpenseTransaction struct {
+	EntryID      ledger.EntryID
+	Date         time.Time
+	Payee        string
+	Reference    string
+	Amount       money.Money
+	AccountCode  ledger.AccountCode
+	Category     string
+	SourceModule string
+	SourceRef    string
 }
 
 // LineItem is a named GBP-presentational P&L row.
@@ -202,6 +270,8 @@ type ReceiptDocumentProvider interface {
 // Reports is the v1 reports read API.
 type Reports interface {
 	ProfitAndLoss(context.Context, Period) (PL, error)
+	ExpensesByCategory(context.Context, Period) (ExpensesReport, error)
+	BalanceSheet(context.Context, time.Time) (BalanceSheet, error)
 	ProfitYTD(context.Context, string) (money.Money, error)
 	VATPosition(context.Context) (VATPosition, error)
 	FilingCalendarContext(context.Context) ([]Filing, error)
@@ -214,6 +284,21 @@ type Ledger interface {
 	BalancesByType(context.Context, time.Time, time.Time) ([]ledger.AccountBalance, error)
 	Entries(context.Context, ledger.EntryFilter) ([]ledger.JournalEntry, error)
 	Accounts(context.Context) ([]ledger.Account, error)
+}
+
+type BankingTransactionID int64
+
+// BankingTransaction is the banking attribution reports needs for expense
+// drill-downs without importing the banking module implementation.
+type BankingTransaction struct {
+	Date      time.Time
+	Payee     string
+	Reference string
+}
+
+// Banking is the banking read surface reports needs for expense payee detail.
+type Banking interface {
+	Transaction(context.Context, BankingTransactionID) (BankingTransaction, error)
 }
 
 type Identity interface {

@@ -1,9 +1,12 @@
 import { apiClient } from "@/api/client";
 import type { components } from "@/api/generated/schema";
 
+export type ReportsBalanceSheet =
+  components["schemas"]["ReportsBalanceSheetResponse"];
 export type ReportsFiling = components["schemas"]["ReportsFiling"];
 export type ReportsFilingCalendar =
   components["schemas"]["ReportsFilingCalendarResponse"];
+export type ReportsExpenses = components["schemas"]["ReportsExpensesResponse"];
 export type ReportsMoney = components["schemas"]["ReportsMoney"];
 export type ReportsPL = components["schemas"]["ReportsPLResponse"];
 export type ReportsShareResponse =
@@ -20,6 +23,18 @@ export type ReportsPLPrintPayload = {
 export function getReportsPL(from: string, to: string) {
   return apiClient.get("/api/reports/pl", {
     query: { from, to },
+  });
+}
+
+export function getReportsExpenses(from: string, to: string) {
+  return apiClient.get("/api/reports/expenses", {
+    query: { from, to },
+  });
+}
+
+export function getReportsBalanceSheet(asOf: string) {
+  return apiClient.get("/api/reports/balance-sheet", {
+    query: { asOf },
   });
 }
 
@@ -42,6 +57,11 @@ export function getReportsProfitYTD(taxYear: string) {
 export function reportsExportURL(from: string, to: string) {
   const params = new URLSearchParams({ from, to });
   return `/api/reports/export?${params.toString()}`;
+}
+
+export function reportsExpensesCSVURL(from: string, to: string) {
+  const params = new URLSearchParams({ from, to });
+  return `/api/reports/expenses.csv?${params.toString()}`;
 }
 
 export function shareReportsExport(email: string, from: string, to: string) {

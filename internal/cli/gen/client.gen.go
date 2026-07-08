@@ -1816,11 +1816,76 @@ type ReportsArchiveRef struct {
 	Url         string    `json:"url"`
 }
 
+// ReportsBalanceSheetLine defines model for ReportsBalanceSheetLine.
+type ReportsBalanceSheetLine struct {
+	AccountCode string       `json:"account_code"`
+	AccountName string       `json:"account_name"`
+	Amount      ReportsMoney `json:"amount"`
+}
+
+// ReportsBalanceSheetResponse defines model for ReportsBalanceSheetResponse.
+type ReportsBalanceSheetResponse struct {
+	AsOf                      openapi_types.Date         `json:"as_of"`
+	Assets                    ReportsBalanceSheetSection `json:"assets"`
+	Balanced                  bool                       `json:"balanced"`
+	Equity                    ReportsBalanceSheetSection `json:"equity"`
+	FinancialYear             string                     `json:"financial_year"`
+	Liabilities               ReportsBalanceSheetSection `json:"liabilities"`
+	TotalAssets               ReportsMoney               `json:"total_assets"`
+	TotalEquity               ReportsMoney               `json:"total_equity"`
+	TotalLiabilities          ReportsMoney               `json:"total_liabilities"`
+	TotalLiabilitiesAndEquity ReportsMoney               `json:"total_liabilities_and_equity"`
+}
+
+// ReportsBalanceSheetSection defines model for ReportsBalanceSheetSection.
+type ReportsBalanceSheetSection struct {
+	Label string                    `json:"label"`
+	Lines []ReportsBalanceSheetLine `json:"lines"`
+	Total ReportsMoney              `json:"total"`
+}
+
+// ReportsExpenseCategory defines model for ReportsExpenseCategory.
+type ReportsExpenseCategory struct {
+	AccountCode      string       `json:"account_code"`
+	Amount           ReportsMoney `json:"amount"`
+	Category         string       `json:"category"`
+	TransactionCount int32        `json:"transaction_count"`
+}
+
 // ReportsExpenseLine defines model for ReportsExpenseLine.
 type ReportsExpenseLine struct {
 	AccountCode string       `json:"account_code"`
 	AccountName string       `json:"account_name"`
 	Amount      ReportsMoney `json:"amount"`
+}
+
+// ReportsExpensePayee defines model for ReportsExpensePayee.
+type ReportsExpensePayee struct {
+	Amount           ReportsMoney `json:"amount"`
+	Payee            string       `json:"payee"`
+	TransactionCount int32        `json:"transaction_count"`
+}
+
+// ReportsExpenseTransaction defines model for ReportsExpenseTransaction.
+type ReportsExpenseTransaction struct {
+	AccountCode  string             `json:"account_code"`
+	Amount       ReportsMoney       `json:"amount"`
+	Category     string             `json:"category"`
+	Date         openapi_types.Date `json:"date"`
+	EntryId      int64              `json:"entry_id"`
+	Payee        string             `json:"payee"`
+	Reference    string             `json:"reference"`
+	SourceModule string             `json:"source_module"`
+	SourceRef    string             `json:"source_ref"`
+}
+
+// ReportsExpensesResponse defines model for ReportsExpensesResponse.
+type ReportsExpensesResponse struct {
+	Categories   []ReportsExpenseCategory    `json:"categories"`
+	Period       ReportsPeriod               `json:"period"`
+	TopPayees    []ReportsExpensePayee       `json:"top_payees"`
+	Total        ReportsMoney                `json:"total"`
+	Transactions []ReportsExpenseTransaction `json:"transactions"`
 }
 
 // ReportsFiling defines model for ReportsFiling.
@@ -2079,6 +2144,30 @@ type MoneyfxRateOnParams struct {
 type MoneyfxTodayRateParams struct {
 	From string `form:"from" json:"from"`
 	To   string `form:"to" json:"to"`
+}
+
+// ReportsGetBalanceSheetParams defines parameters for ReportsGetBalanceSheet.
+type ReportsGetBalanceSheetParams struct {
+	// AsOf Balance sheet date.
+	AsOf openapi_types.Date `form:"asOf" json:"asOf"`
+}
+
+// ReportsGetExpensesParams defines parameters for ReportsGetExpenses.
+type ReportsGetExpensesParams struct {
+	// From Inclusive posting date lower bound.
+	From openapi_types.Date `form:"from" json:"from"`
+
+	// To Inclusive posting date upper bound.
+	To openapi_types.Date `form:"to" json:"to"`
+}
+
+// ReportsDownloadExpensesCSVParams defines parameters for ReportsDownloadExpensesCSV.
+type ReportsDownloadExpensesCSVParams struct {
+	// From Inclusive posting date lower bound.
+	From openapi_types.Date `form:"from" json:"from"`
+
+	// To Inclusive posting date upper bound.
+	To openapi_types.Date `form:"to" json:"to"`
 }
 
 // ReportsExportPackParams defines parameters for ReportsExportPack.
@@ -3231,8 +3320,17 @@ type ClientInterface interface {
 	// MoneyfxTodayRate request
 	MoneyfxTodayRate(ctx context.Context, params *MoneyfxTodayRateParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ReportsGetBalanceSheet request
+	ReportsGetBalanceSheet(ctx context.Context, params *ReportsGetBalanceSheetParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ReportsGetFilingCalendar request
 	ReportsGetFilingCalendar(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReportsGetExpenses request
+	ReportsGetExpenses(ctx context.Context, params *ReportsGetExpensesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReportsDownloadExpensesCSV request
+	ReportsDownloadExpensesCSV(ctx context.Context, params *ReportsDownloadExpensesCSVParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ReportsExportPack request
 	ReportsExportPack(ctx context.Context, params *ReportsExportPackParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -4446,8 +4544,44 @@ func (c *Client) MoneyfxTodayRate(ctx context.Context, params *MoneyfxTodayRateP
 	return c.Client.Do(req)
 }
 
+func (c *Client) ReportsGetBalanceSheet(ctx context.Context, params *ReportsGetBalanceSheetParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReportsGetBalanceSheetRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) ReportsGetFilingCalendar(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewReportsGetFilingCalendarRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ReportsGetExpenses(ctx context.Context, params *ReportsGetExpensesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReportsGetExpensesRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ReportsDownloadExpensesCSV(ctx context.Context, params *ReportsDownloadExpensesCSVParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReportsDownloadExpensesCSVRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -7675,6 +7809,51 @@ func NewMoneyfxTodayRateRequest(server string, params *MoneyfxTodayRateParams) (
 	return req, nil
 }
 
+// NewReportsGetBalanceSheetRequest generates requests for ReportsGetBalanceSheet
+func NewReportsGetBalanceSheetRequest(server string, params *ReportsGetBalanceSheetParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/reports/balance-sheet")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "asOf", runtime.ParamLocationQuery, params.AsOf); err != nil {
+			return nil, err
+		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+			return nil, err
+		} else {
+			for k, v := range parsed {
+				for _, v2 := range v {
+					queryValues.Add(k, v2)
+				}
+			}
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewReportsGetFilingCalendarRequest generates requests for ReportsGetFilingCalendar
 func NewReportsGetFilingCalendarRequest(server string) (*http.Request, error) {
 	var err error
@@ -7692,6 +7871,120 @@ func NewReportsGetFilingCalendarRequest(server string) (*http.Request, error) {
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewReportsGetExpensesRequest generates requests for ReportsGetExpenses
+func NewReportsGetExpensesRequest(server string, params *ReportsGetExpensesParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/reports/expenses")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "from", runtime.ParamLocationQuery, params.From); err != nil {
+			return nil, err
+		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+			return nil, err
+		} else {
+			for k, v := range parsed {
+				for _, v2 := range v {
+					queryValues.Add(k, v2)
+				}
+			}
+		}
+
+		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "to", runtime.ParamLocationQuery, params.To); err != nil {
+			return nil, err
+		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+			return nil, err
+		} else {
+			for k, v := range parsed {
+				for _, v2 := range v {
+					queryValues.Add(k, v2)
+				}
+			}
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewReportsDownloadExpensesCSVRequest generates requests for ReportsDownloadExpensesCSV
+func NewReportsDownloadExpensesCSVRequest(server string, params *ReportsDownloadExpensesCSVParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/reports/expenses.csv")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "from", runtime.ParamLocationQuery, params.From); err != nil {
+			return nil, err
+		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+			return nil, err
+		} else {
+			for k, v := range parsed {
+				for _, v2 := range v {
+					queryValues.Add(k, v2)
+				}
+			}
+		}
+
+		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "to", runtime.ParamLocationQuery, params.To); err != nil {
+			return nil, err
+		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+			return nil, err
+		} else {
+			for k, v := range parsed {
+				for _, v2 := range v {
+					queryValues.Add(k, v2)
+				}
+			}
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
 	}
 
 	req, err := http.NewRequest("GET", queryURL.String(), nil)
@@ -8318,8 +8611,17 @@ type ClientWithResponsesInterface interface {
 	// MoneyfxTodayRateWithResponse request
 	MoneyfxTodayRateWithResponse(ctx context.Context, params *MoneyfxTodayRateParams, reqEditors ...RequestEditorFn) (*MoneyfxTodayRateResponse, error)
 
+	// ReportsGetBalanceSheetWithResponse request
+	ReportsGetBalanceSheetWithResponse(ctx context.Context, params *ReportsGetBalanceSheetParams, reqEditors ...RequestEditorFn) (*ReportsGetBalanceSheetResponse, error)
+
 	// ReportsGetFilingCalendarWithResponse request
 	ReportsGetFilingCalendarWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ReportsGetFilingCalendarResponse, error)
+
+	// ReportsGetExpensesWithResponse request
+	ReportsGetExpensesWithResponse(ctx context.Context, params *ReportsGetExpensesParams, reqEditors ...RequestEditorFn) (*ReportsGetExpensesResponse, error)
+
+	// ReportsDownloadExpensesCSVWithResponse request
+	ReportsDownloadExpensesCSVWithResponse(ctx context.Context, params *ReportsDownloadExpensesCSVParams, reqEditors ...RequestEditorFn) (*ReportsDownloadExpensesCSVResponse, error)
 
 	// ReportsExportPackWithResponse request
 	ReportsExportPackWithResponse(ctx context.Context, params *ReportsExportPackParams, reqEditors ...RequestEditorFn) (*ReportsExportPackResponse, error)
@@ -10257,6 +10559,31 @@ func (r MoneyfxTodayRateResponse) StatusCode() int {
 	return 0
 }
 
+type ReportsGetBalanceSheetResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON200                   *ReportsBalanceSheetResponse
+	ApplicationproblemJSON400 *Problem
+	ApplicationproblemJSON401 *Problem
+	ApplicationproblemJSON404 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r ReportsGetBalanceSheetResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReportsGetBalanceSheetResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type ReportsGetFilingCalendarResponse struct {
 	Body                      []byte
 	HTTPResponse              *http.Response
@@ -10275,6 +10602,53 @@ func (r ReportsGetFilingCalendarResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r ReportsGetFilingCalendarResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ReportsGetExpensesResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON200                   *ReportsExpensesResponse
+	ApplicationproblemJSON400 *Problem
+	ApplicationproblemJSON401 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r ReportsGetExpensesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReportsGetExpensesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ReportsDownloadExpensesCSVResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	ApplicationproblemJSON400 *Problem
+	ApplicationproblemJSON401 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r ReportsDownloadExpensesCSVResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReportsDownloadExpensesCSVResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -11318,6 +11692,15 @@ func (c *ClientWithResponses) MoneyfxTodayRateWithResponse(ctx context.Context, 
 	return ParseMoneyfxTodayRateResponse(rsp)
 }
 
+// ReportsGetBalanceSheetWithResponse request returning *ReportsGetBalanceSheetResponse
+func (c *ClientWithResponses) ReportsGetBalanceSheetWithResponse(ctx context.Context, params *ReportsGetBalanceSheetParams, reqEditors ...RequestEditorFn) (*ReportsGetBalanceSheetResponse, error) {
+	rsp, err := c.ReportsGetBalanceSheet(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReportsGetBalanceSheetResponse(rsp)
+}
+
 // ReportsGetFilingCalendarWithResponse request returning *ReportsGetFilingCalendarResponse
 func (c *ClientWithResponses) ReportsGetFilingCalendarWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ReportsGetFilingCalendarResponse, error) {
 	rsp, err := c.ReportsGetFilingCalendar(ctx, reqEditors...)
@@ -11325,6 +11708,24 @@ func (c *ClientWithResponses) ReportsGetFilingCalendarWithResponse(ctx context.C
 		return nil, err
 	}
 	return ParseReportsGetFilingCalendarResponse(rsp)
+}
+
+// ReportsGetExpensesWithResponse request returning *ReportsGetExpensesResponse
+func (c *ClientWithResponses) ReportsGetExpensesWithResponse(ctx context.Context, params *ReportsGetExpensesParams, reqEditors ...RequestEditorFn) (*ReportsGetExpensesResponse, error) {
+	rsp, err := c.ReportsGetExpenses(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReportsGetExpensesResponse(rsp)
+}
+
+// ReportsDownloadExpensesCSVWithResponse request returning *ReportsDownloadExpensesCSVResponse
+func (c *ClientWithResponses) ReportsDownloadExpensesCSVWithResponse(ctx context.Context, params *ReportsDownloadExpensesCSVParams, reqEditors ...RequestEditorFn) (*ReportsDownloadExpensesCSVResponse, error) {
+	rsp, err := c.ReportsDownloadExpensesCSV(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReportsDownloadExpensesCSVResponse(rsp)
 }
 
 // ReportsExportPackWithResponse request returning *ReportsExportPackResponse
@@ -14926,6 +15327,53 @@ func ParseMoneyfxTodayRateResponse(rsp *http.Response) (*MoneyfxTodayRateRespons
 	return response, nil
 }
 
+// ParseReportsGetBalanceSheetResponse parses an HTTP response from a ReportsGetBalanceSheetWithResponse call
+func ParseReportsGetBalanceSheetResponse(rsp *http.Response) (*ReportsGetBalanceSheetResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReportsGetBalanceSheetResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ReportsBalanceSheetResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseReportsGetFilingCalendarResponse parses an HTTP response from a ReportsGetFilingCalendarWithResponse call
 func ParseReportsGetFilingCalendarResponse(rsp *http.Response) (*ReportsGetFilingCalendarResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -14960,6 +15408,79 @@ func ParseReportsGetFilingCalendarResponse(rsp *http.Response) (*ReportsGetFilin
 			return nil, err
 		}
 		response.ApplicationproblemJSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseReportsGetExpensesResponse parses an HTTP response from a ReportsGetExpensesWithResponse call
+func ParseReportsGetExpensesResponse(rsp *http.Response) (*ReportsGetExpensesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReportsGetExpensesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ReportsExpensesResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseReportsDownloadExpensesCSVResponse parses an HTTP response from a ReportsDownloadExpensesCSVWithResponse call
+func ParseReportsDownloadExpensesCSVResponse(rsp *http.Response) (*ReportsDownloadExpensesCSVResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReportsDownloadExpensesCSVResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
 
 	}
 

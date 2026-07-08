@@ -51,6 +51,31 @@ type plResponse struct {
 	NetProfit       moneyResponse         `json:"net_profit"`
 }
 
+type balanceSheetResponse struct {
+	AsOf                      string                      `json:"as_of"`
+	FinancialYear             string                      `json:"financial_year"`
+	Assets                    balanceSheetSectionResponse `json:"assets"`
+	Liabilities               balanceSheetSectionResponse `json:"liabilities"`
+	Equity                    balanceSheetSectionResponse `json:"equity"`
+	TotalAssets               moneyResponse               `json:"total_assets"`
+	TotalLiabilities          moneyResponse               `json:"total_liabilities"`
+	TotalEquity               moneyResponse               `json:"total_equity"`
+	TotalLiabilitiesAndEquity moneyResponse               `json:"total_liabilities_and_equity"`
+	Balanced                  bool                        `json:"balanced"`
+}
+
+type balanceSheetSectionResponse struct {
+	Label string                     `json:"label"`
+	Lines []balanceSheetLineResponse `json:"lines"`
+	Total moneyResponse              `json:"total"`
+}
+
+type balanceSheetLineResponse struct {
+	AccountCode string        `json:"account_code"`
+	AccountName string        `json:"account_name"`
+	Amount      moneyResponse `json:"amount"`
+}
+
 type incomeLineResponse struct {
 	Label      string        `json:"label"`
 	ClientID   string        `json:"client_id"`
@@ -63,6 +88,39 @@ type expenseLineResponse struct {
 	AccountCode string        `json:"account_code"`
 	AccountName string        `json:"account_name"`
 	Amount      moneyResponse `json:"amount"`
+}
+
+type expensesResponse struct {
+	Period       periodResponse               `json:"period"`
+	Categories   []expenseCategoryResponse    `json:"categories"`
+	TopPayees    []expensePayeeResponse       `json:"top_payees"`
+	Transactions []expenseTransactionResponse `json:"transactions"`
+	Total        moneyResponse                `json:"total"`
+}
+
+type expenseCategoryResponse struct {
+	AccountCode      string        `json:"account_code"`
+	Category         string        `json:"category"`
+	Amount           moneyResponse `json:"amount"`
+	TransactionCount int           `json:"transaction_count"`
+}
+
+type expensePayeeResponse struct {
+	Payee            string        `json:"payee"`
+	Amount           moneyResponse `json:"amount"`
+	TransactionCount int           `json:"transaction_count"`
+}
+
+type expenseTransactionResponse struct {
+	EntryID      int64         `json:"entry_id"`
+	Date         string        `json:"date"`
+	Payee        string        `json:"payee"`
+	Reference    string        `json:"reference"`
+	Amount       moneyResponse `json:"amount"`
+	AccountCode  string        `json:"account_code"`
+	Category     string        `json:"category"`
+	SourceModule string        `json:"source_module"`
+	SourceRef    string        `json:"source_ref"`
 }
 
 type lineItemResponse struct {
@@ -129,6 +187,9 @@ type shareResponse struct {
 func (m *Module) RegisterRoutes(r chi.Router) {
 	h := reportsHandler{service: m.service}
 	r.Get("/pl", h.getPL)
+	r.Get("/expenses", h.getExpenses)
+	r.Get("/expenses.csv", h.getExpensesCSV)
+	r.Get("/balance-sheet", h.getBalanceSheet)
 	r.Get("/vat", h.getVAT)
 	r.Get("/calendar", h.getCalendar)
 	r.Get("/profit-ytd", h.getProfitYTD)
@@ -148,6 +209,51 @@ func (h reportsHandler) getPL(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 	writeReportsJSON(w, nethttp.StatusOK, plToResponse(pl))
+}
+
+func (h reportsHandler) getExpenses(w nethttp.ResponseWriter, r *nethttp.Request) {
+	period, err := parseReportsPeriod(r)
+	if err != nil {
+		writeReportsBadRequest(w, r, err)
+		return
+	}
+	report, err := h.service.ExpensesByCategory(r.Context(), period)
+	if err != nil {
+		writeReportsError(w, r, err)
+		return
+	}
+	writeReportsJSON(w, nethttp.StatusOK, expensesToResponse(report))
+}
+
+func (h reportsHandler) getExpensesCSV(w nethttp.ResponseWriter, r *nethttp.Request) {
+	period, err := parseReportsPeriod(r)
+	if err != nil {
+		writeReportsBadRequest(w, r, err)
+		return
+	}
+	csvBytes, err := h.service.ExpensesCSV(r.Context(), period)
+	if err != nil {
+		writeReportsError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="ledgerly-expenses-`+periodFilenamePart(period)+`.csv"`)
+	w.WriteHeader(nethttp.StatusOK)
+	_, _ = w.Write(csvBytes)
+}
+
+func (h reportsHandler) getBalanceSheet(w nethttp.ResponseWriter, r *nethttp.Request) {
+	asOf, err := parseRequiredDateQuery(r.URL.Query().Get("asOf"), "asOf")
+	if err != nil {
+		writeReportsBadRequest(w, r, err)
+		return
+	}
+	balanceSheet, err := h.service.BalanceSheet(r.Context(), asOf)
+	if err != nil {
+		writeReportsError(w, r, err)
+		return
+	}
+	writeReportsJSON(w, nethttp.StatusOK, balanceSheetToResponse(balanceSheet))
 }
 
 func (h reportsHandler) getVAT(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -331,6 +437,76 @@ func plToResponse(pl PL) plResponse {
 	}
 	for _, line := range pl.Expenses {
 		response.Expenses = append(response.Expenses, expenseLineResponse{
+			AccountCode: string(line.AccountCode),
+			AccountName: line.AccountName,
+			Amount:      moneyToResponse(line.Amount),
+		})
+	}
+	return response
+}
+
+func expensesToResponse(report ExpensesReport) expensesResponse {
+	response := expensesResponse{
+		Period:       periodToResponse(report.Period),
+		Categories:   make([]expenseCategoryResponse, 0, len(report.Categories)),
+		TopPayees:    make([]expensePayeeResponse, 0, len(report.TopPayees)),
+		Transactions: make([]expenseTransactionResponse, 0, len(report.Transactions)),
+		Total:        moneyToResponse(report.Total),
+	}
+	for _, category := range report.Categories {
+		response.Categories = append(response.Categories, expenseCategoryResponse{
+			AccountCode:      string(category.AccountCode),
+			Category:         category.Category,
+			Amount:           moneyToResponse(category.Amount),
+			TransactionCount: category.TransactionCount,
+		})
+	}
+	for _, payee := range report.TopPayees {
+		response.TopPayees = append(response.TopPayees, expensePayeeResponse{
+			Payee:            payee.Payee,
+			Amount:           moneyToResponse(payee.Amount),
+			TransactionCount: payee.TransactionCount,
+		})
+	}
+	for _, transaction := range report.Transactions {
+		response.Transactions = append(response.Transactions, expenseTransactionResponse{
+			EntryID:      int64(transaction.EntryID),
+			Date:         transaction.Date.UTC().Format(time.DateOnly),
+			Payee:        transaction.Payee,
+			Reference:    transaction.Reference,
+			Amount:       moneyToResponse(transaction.Amount),
+			AccountCode:  string(transaction.AccountCode),
+			Category:     transaction.Category,
+			SourceModule: transaction.SourceModule,
+			SourceRef:    transaction.SourceRef,
+		})
+	}
+	return response
+}
+
+func balanceSheetToResponse(balanceSheet BalanceSheet) balanceSheetResponse {
+	return balanceSheetResponse{
+		AsOf:                      balanceSheet.AsOf.UTC().Format(time.DateOnly),
+		FinancialYear:             balanceSheet.FinancialYear,
+		Assets:                    balanceSheetSectionToResponse(balanceSheet.Assets),
+		Liabilities:               balanceSheetSectionToResponse(balanceSheet.Liabilities),
+		Equity:                    balanceSheetSectionToResponse(balanceSheet.Equity),
+		TotalAssets:               moneyToResponse(balanceSheet.TotalAssets),
+		TotalLiabilities:          moneyToResponse(balanceSheet.TotalLiabilities),
+		TotalEquity:               moneyToResponse(balanceSheet.TotalEquity),
+		TotalLiabilitiesAndEquity: moneyToResponse(balanceSheet.TotalLiabilitiesAndEquity),
+		Balanced:                  balanceSheet.Balanced,
+	}
+}
+
+func balanceSheetSectionToResponse(section BalanceSheetSection) balanceSheetSectionResponse {
+	response := balanceSheetSectionResponse{
+		Label: section.Label,
+		Lines: make([]balanceSheetLineResponse, 0, len(section.Lines)),
+		Total: moneyToResponse(section.Total),
+	}
+	for _, line := range section.Lines {
+		response.Lines = append(response.Lines, balanceSheetLineResponse{
 			AccountCode: string(line.AccountCode),
 			AccountName: line.AccountName,
 			Amount:      moneyToResponse(line.Amount),

@@ -8,7 +8,7 @@ func OpenAPIFragment() httpserver.OpenAPIFragment {
 		Tags: []map[string]any{
 			{
 				"name":        "reports",
-				"description": "Read-only profit and loss, VAT return figures, filing calendar, and profit YTD endpoints.",
+				"description": "Read-only profit and loss, balance sheet, VAT return figures, filing calendar, and profit YTD endpoints.",
 			},
 		},
 		Paths: map[string]any{
@@ -27,6 +27,67 @@ func OpenAPIFragment() httpserver.OpenAPIFragment {
 						"200": reportsJSONResponseRef("Profit and loss report", "ReportsPLResponse"),
 						"400": reportsProblemResponse("Invalid reports P&L query"),
 						"401": reportsProblemResponse("Authentication required"),
+					},
+				},
+			},
+			"/api/reports/expenses": map[string]any{
+				"get": map[string]any{
+					"tags":        []string{"reports"},
+					"summary":     "Return categorized expenses for a period",
+					"description": "Returns expense totals by category, top payees, and transaction-level drill-down rows for an inclusive posting-date range.",
+					"operationId": "reportsGetExpenses",
+					"security":    reportsSessionSecurity(),
+					"parameters": []map[string]any{
+						reportsDateQueryParameter("from", "Inclusive posting date lower bound."),
+						reportsDateQueryParameter("to", "Inclusive posting date upper bound."),
+					},
+					"responses": map[string]any{
+						"200": reportsJSONResponseRef("Categorized expenses report", "ReportsExpensesResponse"),
+						"400": reportsProblemResponse("Invalid reports expenses query"),
+						"401": reportsProblemResponse("Authentication required"),
+					},
+				},
+			},
+			"/api/reports/expenses.csv": map[string]any{
+				"get": map[string]any{
+					"tags":        []string{"reports"},
+					"summary":     "Download categorized expense transactions as CSV",
+					"description": "Returns date, payee, reference, amount, currency, and category for accountant expense drill-down.",
+					"operationId": "reportsDownloadExpensesCSV",
+					"security":    reportsSessionSecurity(),
+					"parameters": []map[string]any{
+						reportsDateQueryParameter("from", "Inclusive posting date lower bound."),
+						reportsDateQueryParameter("to", "Inclusive posting date upper bound."),
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "Categorized expense transactions CSV",
+							"content": map[string]any{
+								"text/csv": map[string]any{
+									"schema": map[string]any{"type": "string", "format": "binary"},
+								},
+							},
+						},
+						"400": reportsProblemResponse("Invalid reports expenses CSV query"),
+						"401": reportsProblemResponse("Authentication required"),
+					},
+				},
+			},
+			"/api/reports/balance-sheet": map[string]any{
+				"get": map[string]any{
+					"tags":        []string{"reports"},
+					"summary":     "Return balance sheet as at a date",
+					"description": "Returns assets, liabilities, and equity grouped from ledger account balances as at a chosen date, including retained earnings carry-forward and current-year profit.",
+					"operationId": "reportsGetBalanceSheet",
+					"security":    reportsSessionSecurity(),
+					"parameters": []map[string]any{
+						reportsDateQueryParameter("asOf", "Balance sheet date."),
+					},
+					"responses": map[string]any{
+						"200": reportsJSONResponseRef("Balance sheet report", "ReportsBalanceSheetResponse"),
+						"400": reportsProblemResponse("Invalid balance sheet query"),
+						"401": reportsProblemResponse("Authentication required"),
+						"404": reportsProblemResponse("Company profile not found"),
 					},
 				},
 			},
@@ -219,6 +280,65 @@ func reportsComponents() map[string]any {
 				},
 				"additionalProperties": false,
 			},
+			"ReportsExpenseCategory": map[string]any{
+				"type":     "object",
+				"required": []string{"account_code", "category", "amount", "transaction_count"},
+				"properties": map[string]any{
+					"account_code":      map[string]any{"type": "string"},
+					"category":          map[string]any{"type": "string"},
+					"amount":            map[string]any{"$ref": "#/components/schemas/ReportsMoney"},
+					"transaction_count": map[string]any{"type": "integer", "format": "int32"},
+				},
+				"additionalProperties": false,
+			},
+			"ReportsExpensePayee": map[string]any{
+				"type":     "object",
+				"required": []string{"payee", "amount", "transaction_count"},
+				"properties": map[string]any{
+					"payee":             map[string]any{"type": "string"},
+					"amount":            map[string]any{"$ref": "#/components/schemas/ReportsMoney"},
+					"transaction_count": map[string]any{"type": "integer", "format": "int32"},
+				},
+				"additionalProperties": false,
+			},
+			"ReportsExpenseTransaction": map[string]any{
+				"type": "object",
+				"required": []string{
+					"entry_id",
+					"date",
+					"payee",
+					"reference",
+					"amount",
+					"account_code",
+					"category",
+					"source_module",
+					"source_ref",
+				},
+				"properties": map[string]any{
+					"entry_id":      map[string]any{"type": "integer", "format": "int64"},
+					"date":          map[string]any{"type": "string", "format": "date"},
+					"payee":         map[string]any{"type": "string"},
+					"reference":     map[string]any{"type": "string"},
+					"amount":        map[string]any{"$ref": "#/components/schemas/ReportsMoney"},
+					"account_code":  map[string]any{"type": "string"},
+					"category":      map[string]any{"type": "string"},
+					"source_module": map[string]any{"type": "string"},
+					"source_ref":    map[string]any{"type": "string"},
+				},
+				"additionalProperties": false,
+			},
+			"ReportsExpensesResponse": map[string]any{
+				"type":     "object",
+				"required": []string{"period", "categories", "top_payees", "transactions", "total"},
+				"properties": map[string]any{
+					"period":       map[string]any{"$ref": "#/components/schemas/ReportsPeriod"},
+					"categories":   reportsArraySchema("ReportsExpenseCategory"),
+					"top_payees":   reportsArraySchema("ReportsExpensePayee"),
+					"transactions": reportsArraySchema("ReportsExpenseTransaction"),
+					"total":        map[string]any{"$ref": "#/components/schemas/ReportsMoney"},
+				},
+				"additionalProperties": false,
+			},
 			"ReportsLineItem": map[string]any{
 				"type":     "object",
 				"required": []string{"label", "amount"},
@@ -236,6 +356,54 @@ func reportsComponents() map[string]any {
 					"tax_year": map[string]any{"type": "string"},
 					"rate":     map[string]any{"type": "string"},
 					"amount":   map[string]any{"$ref": "#/components/schemas/ReportsMoney"},
+				},
+				"additionalProperties": false,
+			},
+			"ReportsBalanceSheetLine": map[string]any{
+				"type":     "object",
+				"required": []string{"account_code", "account_name", "amount"},
+				"properties": map[string]any{
+					"account_code": map[string]any{"type": "string"},
+					"account_name": map[string]any{"type": "string"},
+					"amount":       map[string]any{"$ref": "#/components/schemas/ReportsMoney"},
+				},
+				"additionalProperties": false,
+			},
+			"ReportsBalanceSheetSection": map[string]any{
+				"type":     "object",
+				"required": []string{"label", "lines", "total"},
+				"properties": map[string]any{
+					"label": map[string]any{"type": "string"},
+					"lines": reportsArraySchema("ReportsBalanceSheetLine"),
+					"total": map[string]any{"$ref": "#/components/schemas/ReportsMoney"},
+				},
+				"additionalProperties": false,
+			},
+			"ReportsBalanceSheetResponse": map[string]any{
+				"type": "object",
+				"required": []string{
+					"as_of",
+					"financial_year",
+					"assets",
+					"liabilities",
+					"equity",
+					"total_assets",
+					"total_liabilities",
+					"total_equity",
+					"total_liabilities_and_equity",
+					"balanced",
+				},
+				"properties": map[string]any{
+					"as_of":                        map[string]any{"type": "string", "format": "date"},
+					"financial_year":               map[string]any{"type": "string"},
+					"assets":                       map[string]any{"$ref": "#/components/schemas/ReportsBalanceSheetSection"},
+					"liabilities":                  map[string]any{"$ref": "#/components/schemas/ReportsBalanceSheetSection"},
+					"equity":                       map[string]any{"$ref": "#/components/schemas/ReportsBalanceSheetSection"},
+					"total_assets":                 map[string]any{"$ref": "#/components/schemas/ReportsMoney"},
+					"total_liabilities":            map[string]any{"$ref": "#/components/schemas/ReportsMoney"},
+					"total_equity":                 map[string]any{"$ref": "#/components/schemas/ReportsMoney"},
+					"total_liabilities_and_equity": map[string]any{"$ref": "#/components/schemas/ReportsMoney"},
+					"balanced":                     map[string]any{"type": "boolean"},
 				},
 				"additionalProperties": false,
 			},

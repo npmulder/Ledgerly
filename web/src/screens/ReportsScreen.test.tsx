@@ -11,6 +11,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type {
+  ReportsBalanceSheet,
+  ReportsExpenses,
   ReportsFiling,
   ReportsFilingCalendar,
   ReportsPL,
@@ -25,6 +27,62 @@ afterEach(() => {
 });
 
 describe("ReportsScreen", () => {
+  it("switches between report types showing one report at a time", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal("fetch", reportsFetch());
+    const reportYear = currentReportYear();
+
+    renderReportsScreen();
+
+    await screen.findByLabelText("P&L lines");
+    expect(
+      screen.queryByLabelText("Balance sheet sections"),
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "Balance sheet" }));
+    await screen.findByLabelText("Balance sheet sections");
+    expect(screen.queryByLabelText("P&L lines")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "Expenses" }));
+    await screen.findByText(`Expenses · Apr-Jun ${reportYear}`);
+    expect(
+      screen.queryByLabelText("Balance sheet sections"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders balance sheet sections and refetches the selected as-at date", async () => {
+    const user = userEvent.setup();
+    const fetchImpl = vi.fn(reportsFetchHandler());
+    vi.stubGlobal("fetch", fetchImpl);
+    const reportYear = currentReportYear();
+
+    renderReportsScreen();
+
+    await user.click(await screen.findByRole("tab", { name: "Balance sheet" }));
+
+    const balanceSheet = await screen.findByLabelText("Balance sheet sections");
+    expect(within(balanceSheet).getByText("Cash GBP")).toBeInTheDocument();
+    expect(within(balanceSheet).getByText("VAT control")).toBeInTheDocument();
+    expect(
+      within(balanceSheet).getByText("Current-year profit"),
+    ).toBeInTheDocument();
+    expect(within(balanceSheet).getByText("Assets total")).toBeInTheDocument();
+    expect(screen.getByText("Balanced")).toBeInTheDocument();
+
+    const dateForm = screen.getByRole("form", { name: "Balance sheet date" });
+    fireEvent.change(within(dateForm).getByLabelText("As at"), {
+      target: { value: `${reportYear}-03-31` },
+    });
+    await user.click(within(dateForm).getByRole("button", { name: "Apply" }));
+
+    await waitFor(() => {
+      expect(fetchImpl).toHaveBeenCalledWith(
+        `/api/reports/balance-sheet?asOf=${reportYear}-03-31`,
+        expect.objectContaining({ method: "GET" }),
+      );
+    });
+  });
+
   it("renders P&L fixture grouping, FX gains, CIT, and net total lines", async () => {
     vi.stubGlobal("fetch", reportsFetch());
 
@@ -225,6 +283,50 @@ describe("ReportsScreen", () => {
     );
   });
 
+  it("renders expenses drill-down and downloads the categorized CSV", async () => {
+    const user = userEvent.setup();
+    const clickedHrefs: string[] = [];
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+      this: HTMLAnchorElement,
+    ) {
+      clickedHrefs.push(this.getAttribute("href") ?? "");
+    });
+    vi.stubGlobal("fetch", reportsFetch());
+    const reportYear = currentReportYear();
+
+    renderReportsScreen();
+
+    await user.click(await screen.findByRole("tab", { name: "Expenses" }));
+
+    await screen.findByText(`Expenses · Apr-Jun ${reportYear}`);
+    expect(
+      (await screen.findAllByText("Software & hosting")).length,
+    ).toBeGreaterThan(0);
+    expect((await screen.findAllByText("GitHub")).length).toBeGreaterThan(0);
+    expect(screen.getByText("subscription may")).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", { name: /Telecoms, travel & admin/ }),
+    );
+
+    expect(
+      await screen.findByLabelText("Telecoms, travel & admin transactions"),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText("Steam Packet").length).toBeGreaterThan(0);
+    expect(screen.getByText("ferry")).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", { name: "Download expenses CSV" }),
+    );
+
+    expect(clickedHrefs).toEqual([
+      `/api/reports/expenses.csv?from=${reportYear}-04-01&to=${reportYear}-06-30`,
+    ]);
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Expenses CSV is being prepared.",
+    );
+  });
+
   it("shares an export pack with an accountant email", async () => {
     const user = userEvent.setup();
     const fetchImpl = vi.fn(reportsFetchHandler());
@@ -275,7 +377,8 @@ describe("ReportsScreen", () => {
     fetchImpl.mockClear();
 
     await user.clear(screen.getByLabelText("From"));
-    await user.click(screen.getByRole("button", { name: "Apply" }));
+    const rangeForm = screen.getByRole("form", { name: "Custom report range" });
+    await user.click(within(rangeForm).getByRole("button", { name: "Apply" }));
 
     expect(fetchImpl).not.toHaveBeenCalled();
     expect(
@@ -310,7 +413,8 @@ describe("ReportsScreen", () => {
     fireEvent.change(screen.getByLabelText("To"), {
       target: { value: `${reportYear}-05-31` },
     });
-    await user.click(screen.getByRole("button", { name: "Apply" }));
+    const rangeForm = screen.getByRole("form", { name: "Custom report range" });
+    await user.click(within(rangeForm).getByRole("button", { name: "Apply" }));
 
     expect(
       await screen.findByText(`Profit & loss · May-May ${reportYear}`),
@@ -348,14 +452,18 @@ function reportsFetch(overrides: Partial<ReportsFixtures> = {}) {
 }
 
 type ReportsFixtures = {
+  balanceSheet: ReportsBalanceSheet;
   calendar: ReportsFilingCalendar;
+  expenses: ReportsExpenses;
   pl: ReportsPL;
   vat: ReportsVAT;
 };
 
 function reportsFetchHandler(overrides: Partial<ReportsFixtures> = {}) {
   const fixtures = {
+    balanceSheet: balanceSheetFixture(),
     calendar: calendarFixture(),
+    expenses: expensesFixture(),
     pl: plFixture(),
     vat: vatFixture(),
     ...overrides,
@@ -370,6 +478,21 @@ function reportsFetchHandler(overrides: Partial<ReportsFixtures> = {}) {
           from: url.searchParams.get("from") ?? fixtures.pl.period.from,
           to: url.searchParams.get("to") ?? fixtures.pl.period.to,
         },
+      });
+    }
+    if (url.pathname === "/api/reports/expenses") {
+      return jsonResponse({
+        ...fixtures.expenses,
+        period: {
+          from: url.searchParams.get("from") ?? fixtures.expenses.period.from,
+          to: url.searchParams.get("to") ?? fixtures.expenses.period.to,
+        },
+      });
+    }
+    if (url.pathname === "/api/reports/balance-sheet") {
+      return jsonResponse({
+        ...fixtures.balanceSheet,
+        as_of: url.searchParams.get("asOf") ?? fixtures.balanceSheet.as_of,
       });
     }
     if (url.pathname === "/api/reports/vat") {
@@ -395,6 +518,109 @@ function reportsFetchHandler(overrides: Partial<ReportsFixtures> = {}) {
       { status: 404, title: "Not Found", type: "about:blank" },
       404,
     );
+  };
+}
+
+function expensesFixture(): ReportsExpenses {
+  const year = currentReportYear();
+  return {
+    categories: [
+      {
+        account_code: "5010-software",
+        amount: money(21_430),
+        category: "Software & hosting",
+        transaction_count: 1,
+      },
+      {
+        account_code: "5020-travel",
+        amount: money(74_215),
+        category: "Telecoms, travel & admin",
+        transaction_count: 1,
+      },
+    ],
+    period: { from: `${year}-04-01`, to: `${year}-06-30` },
+    top_payees: [
+      {
+        amount: money(74_215),
+        payee: "Steam Packet",
+        transaction_count: 1,
+      },
+      {
+        amount: money(21_430),
+        payee: "GitHub",
+        transaction_count: 1,
+      },
+    ],
+    total: money(95_645),
+    transactions: [
+      {
+        account_code: "5010-software",
+        amount: money(21_430),
+        category: "Software & hosting",
+        date: `${year}-05-12`,
+        entry_id: 12,
+        payee: "GitHub",
+        reference: "subscription may",
+        source_module: "banking",
+        source_ref: "banking:12:recode",
+      },
+      {
+        account_code: "5020-travel",
+        amount: money(74_215),
+        category: "Telecoms, travel & admin",
+        date: `${year}-05-20`,
+        entry_id: 20,
+        payee: "Steam Packet",
+        reference: "ferry",
+        source_module: "banking",
+        source_ref: "banking:20:recode",
+      },
+    ],
+  };
+}
+
+function balanceSheetFixture(): ReportsBalanceSheet {
+  return {
+    as_of: "2026-06-30",
+    assets: {
+      label: "Assets",
+      lines: [
+        {
+          account_code: "1000-cash-gbp",
+          account_name: "Cash GBP",
+          amount: money(1_588_350),
+        },
+      ],
+      total: money(1_588_350),
+    },
+    balanced: true,
+    equity: {
+      label: "Equity",
+      lines: [
+        {
+          account_code: "current-year-profit",
+          account_name: "Current-year profit",
+          amount: money(1_592_470),
+        },
+      ],
+      total: money(1_592_470),
+    },
+    financial_year: "2026-27",
+    liabilities: {
+      label: "Liabilities",
+      lines: [
+        {
+          account_code: "2200-vat-control",
+          account_name: "VAT control",
+          amount: money(-4_120),
+        },
+      ],
+      total: money(-4_120),
+    },
+    total_assets: money(1_588_350),
+    total_equity: money(1_592_470),
+    total_liabilities: money(-4_120),
+    total_liabilities_and_equity: money(1_588_350),
   };
 }
 

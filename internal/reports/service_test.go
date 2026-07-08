@@ -232,6 +232,179 @@ func TestProfitAndLossReleasesLedgerSnapshotBeforeInvoiceAttribution(t *testing.
 	assertReportMoney(t, pl.Income[0].Amount, 100_000)
 }
 
+func TestExpensesByCategoryJoinsBankingTransactionsAndBuildsCSV(t *testing.T) {
+	ctx := context.Background()
+	fakeLedger := newFakeLedger(
+		fakeEntry(1, "2025-05-02", bankingSourceModule, "banking:10:recode", fakePosting("5010-software", 12_345)),
+		fakeEntry(2, "2025-05-04", bankingSourceModule, "banking:11:recode", fakePosting("6020-travel", 8_000)),
+		fakeEntry(3, "2025-05-05", bankingSourceModule, "banking:12:recode", fakePosting("5010-software", 4_321)),
+		fakeEntry(4, "2025-05-06", "manual", "manual-office", fakePosting("6030-office", 1_000)),
+	)
+	fakeLedger.accounts = append(fakeLedger.accounts,
+		ledger.Account{Code: "6020-travel", Name: "Travel", Type: ledger.AccountTypeExpense},
+		ledger.Account{Code: "6030-office", Name: "Office supplies", Type: ledger.AccountTypeExpense},
+	)
+	service := New(
+		fakeLedger,
+		fakeIdentity{yearEnd: identity.YearEnd{Month: time.March, Day: 31}},
+		fakeInvoicing{},
+		WithBanking(fakeBanking{
+			transactions: map[BankingTransactionID]BankingTransaction{
+				10: {
+					Date:      testDate(2025, time.May, 2),
+					Payee:     "GitHub",
+					Reference: "subscription may",
+				},
+				11: {
+					Date:      testDate(2025, time.May, 4),
+					Payee:     "Steam Packet",
+					Reference: "ferry",
+				},
+				12: {
+					Date:      testDate(2025, time.May, 5),
+					Payee:     "GitHub",
+					Reference: "actions minutes",
+				},
+			},
+		}),
+	)
+
+	report, err := service.ExpensesByCategory(ctx, Period{
+		From: testDate(2025, time.May, 1),
+		To:   testDate(2025, time.May, 31),
+	})
+	if err != nil {
+		t.Fatalf("ExpensesByCategory() error = %v", err)
+	}
+	assertReportMoney(t, report.Total, 25_666)
+	if len(report.Categories) != 3 {
+		t.Fatalf("Categories = %#v, want three", report.Categories)
+	}
+	if report.Categories[0].Category != "Software" || report.Categories[0].TransactionCount != 2 {
+		t.Fatalf("first category = %#v, want Software with two rows", report.Categories[0])
+	}
+	assertReportMoney(t, report.Categories[0].Amount, 16_666)
+	if report.TopPayees[0].Payee != "GitHub" || report.TopPayees[0].TransactionCount != 2 {
+		t.Fatalf("top payee = %#v, want GitHub with two rows", report.TopPayees[0])
+	}
+	assertReportMoney(t, report.TopPayees[0].Amount, 16_666)
+	if got := report.Transactions[0]; got.Payee != unattributedExpensePayee || got.Reference != "manual-office" || got.Category != "Office supplies" {
+		t.Fatalf("newest fallback transaction = %#v, want manual fallback attribution", got)
+	}
+	if got := report.Transactions[1]; got.Payee != "GitHub" || got.Reference != "actions minutes" || got.Category != "Software" {
+		t.Fatalf("second transaction = %#v, want GitHub software detail", got)
+	}
+
+	csvBytes, err := service.ExpensesCSV(ctx, Period{
+		From: testDate(2025, time.May, 1),
+		To:   testDate(2025, time.May, 31),
+	})
+	if err != nil {
+		t.Fatalf("ExpensesCSV() error = %v", err)
+	}
+	csvText := string(csvBytes)
+	for _, want := range []string{
+		"date,payee,reference,amount,currency,category\r\n",
+		"2025-05-05,GitHub,actions minutes,43.21,GBP,Software\r\n",
+		"2025-05-02,GitHub,subscription may,123.45,GBP,Software\r\n",
+	} {
+		if !strings.Contains(csvText, want) {
+			t.Fatalf("expenses CSV missing %q:\n%s", want, csvText)
+		}
+	}
+}
+
+func TestExpensesByCategoryKeepsZeroNetCategoryWithTransactions(t *testing.T) {
+	ctx := context.Background()
+	fakeLedger := newFakeLedger(
+		fakeEntry(10, "2025-05-07", "manual", "software-charge", fakePosting("5010-software", 10_000)),
+		fakeEntry(11, "2025-05-08", "manual", "software-refund", fakePosting("5010-software", -10_000)),
+	)
+	service := New(
+		fakeLedger,
+		fakeIdentity{yearEnd: identity.YearEnd{Month: time.March, Day: 31}},
+		fakeInvoicing{},
+		WithBanking(fakeBanking{}),
+	)
+
+	report, err := service.ExpensesByCategory(ctx, Period{
+		From: testDate(2025, time.May, 1),
+		To:   testDate(2025, time.May, 31),
+	})
+	if err != nil {
+		t.Fatalf("ExpensesByCategory() error = %v", err)
+	}
+	assertReportMoney(t, report.Total, 0)
+	if len(report.Categories) != 1 {
+		t.Fatalf("Categories = %#v, want zero-net Software category", report.Categories)
+	}
+	if report.Categories[0].Category != "Software" || report.Categories[0].TransactionCount != 2 {
+		t.Fatalf("category = %#v, want Software with two transactions", report.Categories[0])
+	}
+	assertReportMoney(t, report.Categories[0].Amount, 0)
+	if len(report.Transactions) != 2 {
+		t.Fatalf("Transactions = %#v, want two drill-down rows", report.Transactions)
+	}
+}
+
+func TestBalanceSheetGroupsSectionsAndCarriesProfitIntoEquity(t *testing.T) {
+	loadReportsPack(t, "")
+	ctx := context.Background()
+	fakeLedger := newFakeLedger(
+		fakeEntry(1, "2025-03-31", "manual", "opening-retained",
+			fakePosting("1000-cash", 50_000),
+			fakePosting(retainedEarningsAccountCode, -50_000),
+		),
+		fakeEntry(2, "2026-03-30", "manual", "prior-year-profit",
+			fakePosting("1000-cash", 100_000),
+			fakePosting("4000-sales", -100_000),
+		),
+		fakeEntry(3, "2026-05-10", "manual", "current-year-sale",
+			fakePosting("1000-cash", 500_000),
+			fakePosting("4000-sales", -500_000),
+		),
+		fakeEntry(4, "2026-05-20", "manual", "current-year-expense",
+			fakePosting("1000-cash", -120_000),
+			fakePosting("5010-software", 120_000),
+		),
+		fakeEntry(5, "2026-06-01", "manual", "vat-liability",
+			fakePosting("1000-cash", 30_000),
+			fakePosting("2200-vat-control", -30_000),
+		),
+	)
+	fakeLedger.accounts = append(fakeLedger.accounts,
+		ledger.Account{Code: "1000-cash", Name: "Cash", Type: ledger.AccountTypeAsset},
+		ledger.Account{Code: "2200-vat-control", Name: "VAT control", Type: ledger.AccountTypeLiability},
+		ledger.Account{Code: retainedEarningsAccountCode, Name: "Retained earnings", Type: ledger.AccountTypeEquity},
+	)
+	service := New(
+		fakeLedger,
+		fakeIdentity{yearEnd: identity.YearEnd{Month: time.March, Day: 31}},
+		fakeInvoicing{},
+	)
+
+	balanceSheet, err := service.BalanceSheet(ctx, testDate(2026, time.June, 30))
+	if err != nil {
+		t.Fatalf("BalanceSheet() error = %v", err)
+	}
+
+	assertDate(t, balanceSheet.AsOf, "2026-06-30")
+	if balanceSheet.FinancialYear != "2026-27" {
+		t.Fatalf("FinancialYear = %q, want 2026-27", balanceSheet.FinancialYear)
+	}
+	assertReportMoney(t, balanceSheet.TotalAssets, 560_000)
+	assertReportMoney(t, balanceSheet.TotalLiabilities, 30_000)
+	assertReportMoney(t, balanceSheet.TotalEquity, 530_000)
+	assertReportMoney(t, balanceSheet.TotalLiabilitiesAndEquity, 560_000)
+	if !balanceSheet.Balanced {
+		t.Fatalf("Balanced = false; balance sheet=%+v", balanceSheet)
+	}
+	assertBalanceSheetLine(t, balanceSheet.Assets.Lines, "1000-cash", "Cash", 560_000)
+	assertBalanceSheetLine(t, balanceSheet.Liabilities.Lines, "2200-vat-control", "VAT control", 30_000)
+	assertBalanceSheetLine(t, balanceSheet.Equity.Lines, retainedEarningsAccountCode, "Retained earnings", 150_000)
+	assertBalanceSheetLine(t, balanceSheet.Equity.Lines, currentYearProfitCode, currentYearProfitLabel, 380_000)
+}
+
 func loadReportsPack(t *testing.T, corporateRateLine string) {
 	t.Helper()
 
@@ -324,6 +497,10 @@ func (f *fakeLedger) Entries(_ context.Context, filter ledger.EntryFilter) ([]le
 	return cloneFakeEntries(entries), nil
 }
 
+func (f *fakeLedger) AccountBalance(_ context.Context, code ledger.AccountCode, asOf time.Time) (ledger.AccountBalance, error) {
+	return fakeAccountBalance(f.accounts, f.entries, code, asOf)
+}
+
 func (f *fakeLedger) addEntry(entry ledger.JournalEntry) {
 	f.entries = append(f.entries, entry)
 	sort.Slice(f.entries, func(i, j int) bool {
@@ -350,8 +527,8 @@ type fakeLedgerSnapshot struct {
 	afterBalances  func()
 }
 
-func (s fakeLedgerSnapshot) AccountBalance(context.Context, ledger.AccountCode, time.Time) (ledger.AccountBalance, error) {
-	return ledger.AccountBalance{}, errors.New("unexpected account balance lookup")
+func (s fakeLedgerSnapshot) AccountBalance(_ context.Context, code ledger.AccountCode, asOf time.Time) (ledger.AccountBalance, error) {
+	return fakeAccountBalance(s.accounts, s.entries, code, asOf)
 }
 
 func (s fakeLedgerSnapshot) Accounts(context.Context) ([]ledger.Account, error) {
@@ -392,19 +569,49 @@ func fakeBalancesByType(accounts []ledger.Account, entries []ledger.JournalEntry
 	for _, account := range accounts {
 		byCode[account.Code] = account
 	}
+	asset := money.Zero(gbpCurrency)
+	liability := money.Zero(gbpCurrency)
+	equity := money.Zero(gbpCurrency)
 	income := money.Zero(gbpCurrency)
 	expense := money.Zero(gbpCurrency)
-	for _, entry := range fakeEntriesInWindow(entries, from, to, nil) {
+	for _, entry := range entries {
+		if !to.IsZero() && entry.Date.After(to) {
+			continue
+		}
 		for _, posting := range entry.Postings {
 			account := byCode[posting.AccountCode]
 			switch account.Type {
+			case ledger.AccountTypeAsset:
+				next, err := asset.Add(posting.AmountGBP)
+				if err != nil {
+					return nil, err
+				}
+				asset = next
+			case ledger.AccountTypeLiability:
+				next, err := liability.Add(posting.AmountGBP)
+				if err != nil {
+					return nil, err
+				}
+				liability = next
+			case ledger.AccountTypeEquity:
+				next, err := equity.Add(posting.AmountGBP)
+				if err != nil {
+					return nil, err
+				}
+				equity = next
 			case ledger.AccountTypeIncome:
+				if entry.Date.Before(from) {
+					continue
+				}
 				next, err := income.Add(posting.AmountGBP)
 				if err != nil {
 					return nil, err
 				}
 				income = next
 			case ledger.AccountTypeExpense:
+				if entry.Date.Before(from) {
+					continue
+				}
 				next, err := expense.Add(posting.AmountGBP)
 				if err != nil {
 					return nil, err
@@ -414,9 +621,57 @@ func fakeBalancesByType(accounts []ledger.Account, entries []ledger.JournalEntry
 		}
 	}
 	return []ledger.AccountBalance{
+		{AccountType: ledger.AccountTypeAsset, AmountGBP: asset},
+		{AccountType: ledger.AccountTypeLiability, AmountGBP: liability},
+		{AccountType: ledger.AccountTypeEquity, AmountGBP: equity},
 		{AccountType: ledger.AccountTypeIncome, AmountGBP: income},
 		{AccountType: ledger.AccountTypeExpense, AmountGBP: expense},
 	}, nil
+}
+
+func fakeAccountBalance(accounts []ledger.Account, entries []ledger.JournalEntry, code ledger.AccountCode, asOf time.Time) (ledger.AccountBalance, error) {
+	var account ledger.Account
+	for _, candidate := range accounts {
+		if candidate.Code == code {
+			account = candidate
+			break
+		}
+	}
+	if account.Code == "" {
+		return ledger.AccountBalance{}, &ledger.AccountNotFoundError{Code: code}
+	}
+	balance := ledger.AccountBalance{
+		AccountCode: account.Code,
+		AccountName: account.Name,
+		AccountType: account.Type,
+		AmountGBP:   money.Zero(gbpCurrency),
+	}
+	nativeByCurrency := map[string]int64{}
+	for _, entry := range entries {
+		if entry.Date.After(asOf) {
+			continue
+		}
+		for _, posting := range entry.Postings {
+			if posting.AccountCode != code {
+				continue
+			}
+			nextGBP, err := balance.AmountGBP.Add(posting.AmountGBP)
+			if err != nil {
+				return ledger.AccountBalance{}, err
+			}
+			balance.AmountGBP = nextGBP
+			nativeByCurrency[posting.Amount.Currency] += posting.Amount.Amount
+		}
+	}
+	currencies := make([]string, 0, len(nativeByCurrency))
+	for currency := range nativeByCurrency {
+		currencies = append(currencies, currency)
+	}
+	sort.Strings(currencies)
+	for _, currency := range currencies {
+		balance.Native = append(balance.Native, money.Money{Amount: nativeByCurrency[currency], Currency: currency})
+	}
+	return balance, nil
 }
 
 func fakeEntriesInWindow(entries []ledger.JournalEntry, from time.Time, to time.Time, after *ledger.EntryCursor) []ledger.JournalEntry {
@@ -507,6 +762,18 @@ func (f fakeInvoicing) Client(ctx context.Context, id string) (invoicing.Client,
 	return invoicing.Client{}, errors.New("unexpected client lookup")
 }
 
+type fakeBanking struct {
+	transactions map[BankingTransactionID]BankingTransaction
+}
+
+func (f fakeBanking) Transaction(_ context.Context, id BankingTransactionID) (BankingTransaction, error) {
+	txn, ok := f.transactions[id]
+	if !ok {
+		return BankingTransaction{}, errors.New("transaction not found")
+	}
+	return txn, nil
+}
+
 func fakeEntry(id ledger.EntryID, date string, sourceModule string, sourceRef string, postings ...ledger.Posting) ledger.JournalEntry {
 	parsed, err := time.ParseInLocation(time.DateOnly, date, time.UTC)
 	if err != nil {
@@ -535,6 +802,21 @@ func assertReportMoney(t testing.TB, got money.Money, wantAmount int64) {
 	if got.Amount != wantAmount || got.Currency != gbpCurrency {
 		t.Fatalf("money = %+v, want %d GBP", got, wantAmount)
 	}
+}
+
+func assertBalanceSheetLine(t testing.TB, lines []BalanceSheetLine, code ledger.AccountCode, name string, amount int64) {
+	t.Helper()
+	for _, line := range lines {
+		if line.AccountCode != code {
+			continue
+		}
+		if line.AccountName != name {
+			t.Fatalf("balance sheet line %s name = %q, want %q", code, line.AccountName, name)
+		}
+		assertReportMoney(t, line.Amount, amount)
+		return
+	}
+	t.Fatalf("balance sheet line %s missing from %+v", code, lines)
 }
 
 func assertDate(t testing.TB, got time.Time, want string) {

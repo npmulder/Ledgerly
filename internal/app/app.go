@@ -82,6 +82,7 @@ type ModuleDeps struct {
 	MailSender     mail.Sender
 	AuditRecorder  *audit.Recorder
 
+	ReportsBanking    reports.Banking
 	ReportsInvoicing  reports.Invoicing
 	ReportsDLA        reports.DLA
 	ReportsDocuments  reports.DividendDocumentProvider
@@ -408,12 +409,6 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		invoicing.WithInvoicePDFEngine(deps.InvoicingPDFEngine),
 		invoicing.WithInvoicePDFBaseURL(pdfBaseURL),
 	)
-	reportsService := reports.New(
-		ledgerService,
-		identityProfile,
-		dashboardInvoicingService,
-		reports.WithClock(clk),
-	)
 	bankingOptions := []banking.ServiceOption{
 		banking.WithLedgerJournal(ledgerService),
 		banking.WithMoneyFX(moneyFXModule),
@@ -435,6 +430,13 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 	bankingHTTPModule := banking.NewHTTPModule(bankingService)
 	modules = append(modules, bankingHTTPModule.HTTPModule())
 	fragments = append(fragments, bankingHTTPModule.OpenAPIFragment())
+	reportsService := reports.New(
+		ledgerService,
+		identityProfile,
+		dashboardInvoicingService,
+		reports.WithClock(clk),
+		reports.WithBanking(reportsBankingAdapter{service: bankingService}),
+	)
 
 	ledgerBuilder := buildLedgerModule
 	if deps.ModuleBuilders != nil && deps.ModuleBuilders[ledger.ModuleName] != nil {
@@ -538,6 +540,7 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		Clock:            clk,
 		Ledger:           ledgerService,
 		Identity:         identityProfile,
+		ReportsBanking:   reportsBankingAdapter{service: bankingService},
 		ReportsInvoicing: dashboardInvoicingService,
 		ReportsDLA:       dlaService,
 		ReportsDocuments: reportsDividendDocumentProvider{
@@ -783,6 +786,7 @@ func buildInvoicingModule(_ context.Context, deps ModuleDeps) (Module, error) {
 func buildReportsModule(_ context.Context, deps ModuleDeps) (Module, error) {
 	reportsModule, err := reports.NewModule(reports.Config{
 		Ledger:            deps.Ledger,
+		Banking:           deps.ReportsBanking,
 		Identity:          deps.Identity,
 		Invoicing:         deps.ReportsInvoicing,
 		DLA:               deps.ReportsDLA,
@@ -1138,6 +1142,22 @@ func identityAssetIDFromURL(assetURL string) (identity.AssetID, error) {
 		return "", fmt.Errorf("app: invalid invoice PDF asset id")
 	}
 	return identity.AssetID(id), nil
+}
+
+type reportsBankingAdapter struct {
+	service *banking.Service
+}
+
+func (a reportsBankingAdapter) Transaction(ctx context.Context, id reports.BankingTransactionID) (reports.BankingTransaction, error) {
+	txn, err := a.service.Transaction(ctx, banking.TransactionID(id))
+	if err != nil {
+		return reports.BankingTransaction{}, err
+	}
+	return reports.BankingTransaction{
+		Date:      txn.Date,
+		Payee:     txn.Payee,
+		Reference: txn.Reference,
+	}, nil
 }
 
 type reportsDividendDocumentProvider struct {
