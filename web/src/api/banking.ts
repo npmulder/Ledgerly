@@ -7,6 +7,8 @@ export type BankingAccountsResponse =
 export type BankingBatchSummary = components["schemas"]["BankingBatchSummary"];
 export type BankingCommandResponse =
   components["schemas"]["BankingCommandResponse"];
+export type BankingCreateAccountRequest =
+  components["schemas"]["BankingCreateAccountRequest"];
 export type BankingFeedResponse = components["schemas"]["BankingFeedResponse"];
 export type BankingInvoiceCandidate =
   components["schemas"]["BankingInvoiceCandidate"];
@@ -30,6 +32,10 @@ export type BankingTransactionState = BankingTransaction["state"];
 
 export function getBankingAccounts() {
   return apiClient.get("/api/banking/accounts");
+}
+
+export function createBankingAccount(account: BankingCreateAccountRequest) {
+  return apiClient.post("/api/banking/accounts", account);
 }
 
 export function getBankingReviewQueue() {

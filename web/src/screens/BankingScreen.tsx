@@ -1,10 +1,17 @@
-import { type ChangeEvent, useMemo, useRef, useState } from "react";
+import {
+  type ChangeEvent,
+  type FormEvent,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 
 import {
   attachBankingReceipt,
   confirmBankingMatch,
+  createBankingAccount,
   deleteBankingReceipt,
   excludeBankingTransaction,
   fileBankingTransactionToDLA,
@@ -16,7 +23,9 @@ import {
   importBankingCSV,
   recodeBankingTransaction,
   type BankingAccount,
+  type BankingAccountsResponse,
   type BankingCommandResponse,
+  type BankingCreateAccountRequest,
   type BankingInvoiceCandidate,
   type BankingMoney,
   type BankingRecentTransaction,
@@ -32,7 +41,10 @@ import {
   Button,
   Card,
   EmptyState,
+  Field,
+  Input,
   PageTitle,
+  Select,
   SplitMain,
   formatMinorUnits,
 } from "@/components";
@@ -45,6 +57,12 @@ import {
 
 const recentLimit = 8;
 const receiptAccept = "application/pdf,image/png,image/jpeg";
+
+const defaultAccountDraft = (): BankingCreateAccountRequest => ({
+  currency: "GBP",
+  name: "",
+  provider: "revolut",
+});
 
 type ToastState = {
   message: string;
@@ -82,6 +100,10 @@ export function BankingScreen() {
   const [selectedAccountID, setSelectedAccountID] = useState<number | null>(
     null,
   );
+  const [isCreateAccountOpen, setCreateAccountOpen] = useState(false);
+  const [accountDraft, setAccountDraft] =
+    useState<BankingCreateAccountRequest>(defaultAccountDraft);
+  const [accountFormError, setAccountFormError] = useState<string | null>(null);
   const [recentKinds, setRecentKinds] = useState<RecentKindByID>({});
   const [toast, setToast] = useState<ToastState | null>(null);
 
@@ -338,6 +360,64 @@ export function BankingScreen() {
     ? `${selectedAccount.name} review queue`
     : "Review queue";
 
+  const createAccountMutation = useMutation({
+    mutationFn: createBankingAccount,
+    onError: (error) => {
+      setAccountFormError(accountCreateErrorMessage(error));
+    },
+    onSuccess: (account) => {
+      queryClient.setQueryData<BankingAccountsResponse>(
+        queryKeys.banking.accounts(),
+        (current) => upsertAccountResponse(current, account),
+      );
+      setSelectedAccountID(account.id);
+      setCreateAccountOpen(false);
+      setAccountDraft(defaultAccountDraft());
+      setAccountFormError(null);
+      setToast({
+        message: `Created ${account.name}. CSV import ready.`,
+        tone: "success",
+      });
+      void refreshBankingData(queryClient);
+    },
+  });
+
+  function openCreateAccount() {
+    setAccountDraft(defaultAccountDraft());
+    setAccountFormError(null);
+    setCreateAccountOpen(true);
+  }
+
+  function closeCreateAccount() {
+    if (createAccountMutation.isPending) {
+      return;
+    }
+    setCreateAccountOpen(false);
+    setAccountFormError(null);
+  }
+
+  function handleCreateAccount(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const draft = normalizeAccountDraft(accountDraft);
+    if (draft.name === "") {
+      setAccountFormError("Enter an account name.");
+      return;
+    }
+
+    const duplicate = accounts.find((account) =>
+      accountMatchesDraft(account, draft),
+    );
+    if (duplicate) {
+      setAccountFormError(
+        `A ${formatProvider(draft.provider)} ${draft.currency} account named "${draft.name}" already exists.`,
+      );
+      return;
+    }
+
+    setAccountFormError(null);
+    createAccountMutation.mutate(draft);
+  }
+
   function handleImportClick() {
     fileInputRef.current?.click();
   }
@@ -434,6 +514,7 @@ export function BankingScreen() {
       <AccountCards
         accounts={accounts}
         isLoading={accountsQuery.isPending}
+        onAddAccount={openCreateAccount}
         onSelect={setSelectedAccountID}
         reviewCounts={reviewCounts}
         selectedAccountID={selectedAccount?.id ?? null}
@@ -458,7 +539,16 @@ export function BankingScreen() {
 
           {!reviewQuery.isPending && accounts.length === 0 ? (
             <EmptyState title="No bank accounts">
-              Add a Revolut bank account before importing statements.
+              <span className="banking-empty-state__content">
+                <span>
+                  Add a Revolut bank account before importing statements.
+                </span>
+                <span className="banking-empty-state__actions">
+                  <Button onClick={openCreateAccount} type="button">
+                    Add account
+                  </Button>
+                </span>
+              </span>
             </EmptyState>
           ) : null}
 
@@ -537,6 +627,17 @@ export function BankingScreen() {
           />
         </aside>
       </SplitMain>
+
+      {isCreateAccountOpen ? (
+        <AccountCreateModal
+          draft={accountDraft}
+          error={accountFormError}
+          isSubmitting={createAccountMutation.isPending}
+          onCancel={closeCreateAccount}
+          onChange={setAccountDraft}
+          onSubmit={handleCreateAccount}
+        />
+      ) : null}
     </div>
   );
 }
@@ -544,6 +645,7 @@ export function BankingScreen() {
 function AccountCards({
   accounts,
   isLoading,
+  onAddAccount,
   onSelect,
   reviewCounts,
   selectedAccountID,
@@ -551,6 +653,7 @@ function AccountCards({
 }: {
   readonly accounts: BankingAccount[];
   readonly isLoading: boolean;
+  readonly onAddAccount: () => void;
   readonly onSelect: (accountID: number) => void;
   readonly reviewCounts: Map<number, number>;
   readonly selectedAccountID: number | null;
@@ -598,7 +701,111 @@ function AccountCards({
           </button>
         );
       })}
+      <button
+        aria-label="Add account"
+        className="banking-account-card banking-account-card--add"
+        onClick={onAddAccount}
+        type="button"
+      >
+        <span className="banking-account-card__meta">
+          <span>New account</span>
+          <strong>Add account</strong>
+          <span>Revolut GBP or EUR</span>
+        </span>
+        <span className="banking-account-card__side" aria-hidden="true">
+          <span className="banking-account-card__add-icon">+</span>
+        </span>
+      </button>
     </section>
+  );
+}
+
+function AccountCreateModal({
+  draft,
+  error,
+  isSubmitting,
+  onCancel,
+  onChange,
+  onSubmit,
+}: {
+  readonly draft: BankingCreateAccountRequest;
+  readonly error: string | null;
+  readonly isSubmitting: boolean;
+  readonly onCancel: () => void;
+  readonly onChange: (draft: BankingCreateAccountRequest) => void;
+  readonly onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  return (
+    <div className="banking-account-modal-backdrop">
+      <form
+        aria-labelledby="banking-account-modal-title"
+        aria-modal="true"
+        className="banking-account-modal"
+        onSubmit={onSubmit}
+        role="dialog"
+      >
+        <h2 id="banking-account-modal-title">Add bank account</h2>
+        <div className="banking-account-modal__fields">
+          <Field label="Account name">
+            <Input
+              autoFocus
+              invalid={error !== null && draft.name.trim() === ""}
+              onChange={(event) =>
+                onChange({ ...draft, name: event.target.value })
+              }
+              value={draft.name}
+            />
+          </Field>
+          <Field label="Provider">
+            <Select
+              onChange={(event) =>
+                onChange({
+                  ...draft,
+                  provider: event.target
+                    .value as BankingCreateAccountRequest["provider"],
+                })
+              }
+              value={draft.provider}
+            >
+              <option value="revolut">Revolut</option>
+            </Select>
+          </Field>
+          <Field label="Currency">
+            <Select
+              onChange={(event) =>
+                onChange({
+                  ...draft,
+                  currency: event.target
+                    .value as BankingCreateAccountRequest["currency"],
+                })
+              }
+              value={draft.currency}
+            >
+              <option value="GBP">GBP</option>
+              <option value="EUR">EUR</option>
+            </Select>
+          </Field>
+        </div>
+        {error ? (
+          <div className="banking-account-modal__error" role="alert">
+            {error}
+          </div>
+        ) : null}
+        <div className="banking-account-modal__actions">
+          <Button
+            disabled={isSubmitting}
+            onClick={onCancel}
+            type="button"
+            variant="secondary"
+          >
+            Cancel
+          </Button>
+          <Button disabled={isSubmitting} type="submit">
+            {isSubmitting ? "Creating" : "Create account"}
+          </Button>
+        </div>
+      </form>
+    </div>
   );
 }
 
@@ -1136,6 +1343,44 @@ function RecentlyReconciled({
   );
 }
 
+function normalizeAccountDraft(
+  draft: BankingCreateAccountRequest,
+): BankingCreateAccountRequest {
+  return {
+    currency: draft.currency
+      .trim()
+      .toUpperCase() as BankingCreateAccountRequest["currency"],
+    name: draft.name.trim(),
+    provider: draft.provider
+      .trim()
+      .toLowerCase() as BankingCreateAccountRequest["provider"],
+  };
+}
+
+function accountMatchesDraft(
+  account: BankingAccount,
+  draft: BankingCreateAccountRequest,
+) {
+  return (
+    account.provider === draft.provider &&
+    account.currency === draft.currency &&
+    account.name === draft.name
+  );
+}
+
+function upsertAccountResponse(
+  current: BankingAccountsResponse | undefined,
+  account: BankingAccount,
+): BankingAccountsResponse {
+  if (!current) {
+    return { accounts: [account] };
+  }
+  const accounts = current.accounts.some((item) => item.id === account.id)
+    ? current.accounts.map((item) => (item.id === account.id ? account : item))
+    : [...current.accounts, account];
+  return { accounts };
+}
+
 function ProblemAlert({
   error,
   fallbackTitle,
@@ -1208,6 +1453,25 @@ function problemMessage(error: unknown) {
     return error.message;
   }
   return "Banking request failed.";
+}
+
+function accountCreateErrorMessage(error: unknown) {
+  if (isApiError(error)) {
+    const detail = error.problem.detail ?? "";
+    const title = error.problem.title ?? "";
+    const text = `${title} ${detail}`.toLowerCase();
+    if (
+      error.status === 409 ||
+      text.includes("duplicate") ||
+      text.includes("already exists")
+    ) {
+      return "That bank account already exists. Choose a different name or currency.";
+    }
+    if (error.status === 422 && text.includes("account name")) {
+      return "Enter an account name.";
+    }
+  }
+  return problemMessage(error);
 }
 
 function reviewCardTitle(card: BankingReviewCard) {

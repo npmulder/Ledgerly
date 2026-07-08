@@ -13,6 +13,7 @@ import { Button, Field, Input, Select } from "@/components";
 type RegisterFormState = {
   readonly companyNumber: string;
   readonly country: string;
+  readonly directors: DirectorFormState[];
   readonly email: string;
   readonly incorporationDate: string;
   readonly legalName: string;
@@ -28,6 +29,13 @@ type RegisterFormState = {
   readonly yearEndMonth: string;
 };
 
+type DirectorFormState = {
+  readonly appointedDate: string;
+  readonly isChair: boolean;
+  readonly name: string;
+};
+
+type RegisterTextField = Exclude<keyof RegisterFormState, "directors">;
 type RegisterField = keyof RegisterFormState | "registeredOffice";
 type RegisterFieldErrors = Partial<Record<RegisterField, string>>;
 type Step = 1 | 2;
@@ -35,6 +43,7 @@ type Step = 1 | 2;
 const initialForm: RegisterFormState = {
   companyNumber: "",
   country: "IM",
+  directors: [{ appointedDate: "", isChair: true, name: "" }],
   email: "",
   incorporationDate: "",
   legalName: "",
@@ -67,6 +76,7 @@ const monthOptions = [
 
 const apiPointerFields: Record<string, RegisterField> = {
   "/company_number": "companyNumber",
+  "/directors": "directors",
   "/email": "email",
   "/incorporation_date": "incorporationDate",
   "/legal_name": "legalName",
@@ -126,7 +136,7 @@ export function RegisterScreen() {
   const isRegistrationClosed =
     isApiError(registerMutation.error) && registerMutation.error.status === 403;
 
-  function handleFieldChange(field: keyof RegisterFormState) {
+  function handleFieldChange(field: RegisterTextField) {
     return (event: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
       const { value } = event.target;
       setForm((current) => ({ ...current, [field]: value }));
@@ -135,6 +145,62 @@ export function RegisterScreen() {
         registerMutation.reset();
       }
     };
+  }
+
+  function handleDirectorFieldChange(
+    index: number,
+    field: "appointedDate" | "name",
+  ) {
+    return (event: ChangeEvent<HTMLInputElement>) => {
+      const { value } = event.target;
+      setForm((current) => ({
+        ...current,
+        directors: current.directors.map((director, directorIndex) =>
+          directorIndex === index
+            ? { ...director, [field]: value }
+            : director,
+        ),
+      }));
+      setFieldErrors((current) => omitFieldError(current, "directors"));
+      if (registerMutation.error) {
+        registerMutation.reset();
+      }
+    };
+  }
+
+  function handleDirectorChairChange(index: number) {
+    return (event: ChangeEvent<HTMLInputElement>) => {
+      const checked = event.target.checked;
+      setForm((current) => ({
+        ...current,
+        directors: current.directors.map((director, directorIndex) => ({
+          ...director,
+          isChair: checked && directorIndex === index,
+        })),
+      }));
+      setFieldErrors((current) => omitFieldError(current, "directors"));
+      if (registerMutation.error) {
+        registerMutation.reset();
+      }
+    };
+  }
+
+  function handleAddDirector() {
+    setForm((current) => ({
+      ...current,
+      directors: [...current.directors, emptyDirectorForm()],
+    }));
+    setFieldErrors((current) => omitFieldError(current, "directors"));
+  }
+
+  function handleRemoveDirector(index: number) {
+    setForm((current) => ({
+      ...current,
+      directors: current.directors.filter(
+        (_director, directorIndex) => directorIndex !== index,
+      ),
+    }));
+    setFieldErrors((current) => omitFieldError(current, "directors"));
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -386,6 +452,66 @@ export function RegisterScreen() {
                 ]),
               )}
             </div>
+            <div className="ui-field register-card__wide-field">
+              <div className="director-editor-heading">
+                <span className="ui-field__label" id="register-directors-label">
+                  Directors
+                </span>
+                <Button onClick={handleAddDirector} size="small" type="button">
+                  + Add director
+                </Button>
+              </div>
+              <div
+                aria-labelledby="register-directors-label"
+                className="director-editor"
+                role="group"
+              >
+                {form.directors.map((director, index) => (
+                  <div className="director-row" key={index}>
+                    <Field label="Name">
+                      <Input
+                        aria-label={`Director ${index + 1} name`}
+                        invalid={Boolean(fieldErrors.directors)}
+                        onChange={handleDirectorFieldChange(index, "name")}
+                        required
+                        value={director.name}
+                      />
+                    </Field>
+                    <Field label="Appointed">
+                      <Input
+                        aria-label={`Director ${index + 1} appointed date`}
+                        onChange={handleDirectorFieldChange(
+                          index,
+                          "appointedDate",
+                        )}
+                        type="date"
+                        value={director.appointedDate}
+                      />
+                    </Field>
+                    <label className="director-chair-toggle">
+                      <input
+                        checked={director.isChair}
+                        onChange={handleDirectorChairChange(index)}
+                        type="checkbox"
+                      />
+                      <span>Chair</span>
+                    </label>
+                    <Button
+                      aria-label={`Remove director ${
+                        director.name.trim() || index + 1
+                      }`}
+                      onClick={() => handleRemoveDirector(index)}
+                      size="small"
+                      type="button"
+                      variant="secondary"
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                ))}
+              </div>
+              {fieldError(fieldErrors.directors)}
+            </div>
           </div>
         )}
 
@@ -502,6 +628,11 @@ function validateProfileStep(form: RegisterFormState): RegisterFieldErrors {
   if (!form.incorporationDate) {
     errors.incorporationDate = "Incorporation date is required.";
   }
+  if (form.directors.length === 0) {
+    errors.directors = "At least one director is required.";
+  } else if (form.directors.some((director) => !director.name.trim())) {
+    errors.directors = "Director name is required.";
+  }
 
   const yearEndMonth = parseIntegerInput(form.yearEndMonth);
   const yearEndDay = parseIntegerInput(form.yearEndDay);
@@ -528,6 +659,11 @@ function formToRequest(
 ): IdentityRegisterWithProfileRequest {
   return {
     company_number: form.companyNumber.trim(),
+    directors: form.directors.map((director) => ({
+      appointed_date: director.appointedDate || undefined,
+      is_chair: director.isChair || undefined,
+      name: director.name.trim(),
+    })),
     email: form.email.trim(),
     incorporation_date: form.incorporationDate,
     legal_name: form.legalName.trim(),
@@ -545,6 +681,10 @@ function formToRequest(
     year_end_day: requiredIntegerInput(form.yearEndDay),
     year_end_month: requiredIntegerInput(form.yearEndMonth),
   };
+}
+
+function emptyDirectorForm(): DirectorFormState {
+  return { appointedDate: "", isChair: false, name: "" };
 }
 
 function parseIntegerInput(value: string) {

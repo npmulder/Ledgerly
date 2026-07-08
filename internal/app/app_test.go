@@ -118,10 +118,13 @@ func TestIdentityDirectorNamesPropagatesUnexpectedProfileError(t *testing.T) {
 	}
 }
 
-func TestIdentityDirectorNamesReturnsTrimmedShareholderNames(t *testing.T) {
+func TestIdentityDirectorNamesReturnsTrimmedDirectorNames(t *testing.T) {
 	names, err := (identityDirectorNames{
 		profile: fakeDirectorNameProfile{profile: identity.CompanyProfile{
 			Shareholders: []identity.Shareholder{
+				{Name: "Shareholder Only"},
+			},
+			Directors: []identity.Director{
 				{Name: "  Neil Mulder  "},
 				{Name: " "},
 				{Name: "Jane Director"},
@@ -139,6 +142,22 @@ func TestIdentityDirectorNamesReturnsTrimmedShareholderNames(t *testing.T) {
 		if names[i] != want[i] {
 			t.Fatalf("DirectorNames()[%d] = %q, want %q", i, names[i], want[i])
 		}
+	}
+}
+
+func TestIdentityDirectorNamesIgnoresShareholders(t *testing.T) {
+	names, err := (identityDirectorNames{
+		profile: fakeDirectorNameProfile{profile: identity.CompanyProfile{
+			Shareholders: []identity.Shareholder{
+				{Name: "Shareholder Only"},
+			},
+		}},
+	}).DirectorNames(context.Background())
+	if err != nil {
+		t.Fatalf("DirectorNames() error = %v", err)
+	}
+	if len(names) != 0 {
+		t.Fatalf("DirectorNames() = %v, want no names without directors", names)
 	}
 }
 

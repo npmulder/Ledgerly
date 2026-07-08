@@ -155,6 +155,71 @@ describe("Company settings", () => {
     expect(screen.queryByText(/VAT number is present/)).not.toBeInTheDocument();
   });
 
+  it("edits company directors", async () => {
+    const user = userEvent.setup();
+    let profile = identityProfile();
+    let savedPatch: IdentityProfilePatch | null = null;
+    const fetchImpl = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = pathFromRequest(input);
+        if (path === "/api/identity/me") {
+          return jsonResponse({
+            created_at: "2026-07-05T12:00:00Z",
+            email: "owner@example.com",
+            id: 1,
+            name: "N. Meyer",
+          });
+        }
+        if (path === "/api/identity/profile" && init?.method === "PATCH") {
+          savedPatch = JSON.parse(String(init.body)) as IdentityProfilePatch;
+          profile = {
+            ...profile,
+            directors: savedPatch.directors ?? profile.directors,
+          };
+          return jsonResponse(profile);
+        }
+        if (path === "/api/identity/profile") {
+          return jsonResponse(profile);
+        }
+        return jsonResponse(
+          { status: 404, title: "Not Found", type: "about:blank" },
+          404,
+          "application/problem+json",
+        );
+      },
+    );
+    vi.stubGlobal("fetch", fetchImpl);
+
+    renderAt("/settings/company");
+
+    const firstDirector = await screen.findByLabelText("Director 1 name");
+    await user.clear(firstDirector);
+    await user.type(firstDirector, "Neil Meyer");
+    await user.click(screen.getByRole("button", { name: "+ Add director" }));
+    await user.type(screen.getByLabelText("Director 2 name"), "Jane Roberts");
+    await user.type(
+      screen.getByLabelText("Director 2 appointed date"),
+      "2024-02-01",
+    );
+    await user.click(
+      within(screen.getByLabelText("Director 2 appointed date").closest(
+        ".director-row",
+      ) as HTMLElement).getByLabelText("Chair"),
+    );
+    await user.click(screen.getByLabelText("Remove director Neil Meyer"));
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => {
+      expect(savedPatch?.directors).toEqual([
+        {
+          appointed_date: "2024-02-01",
+          is_chair: true,
+          name: "Jane Roberts",
+        },
+      ]);
+    });
+  });
+
   it("renders placeholder settings sections as coming soon stubs", async () => {
     vi.stubGlobal("fetch", authenticatedFetch());
 
@@ -678,6 +743,13 @@ function identityProfile(): IdentityProfile {
         class: "ordinary £1",
         name: "N. Meyer",
         shares: 100,
+      },
+    ],
+    directors: [
+      {
+        appointed_date: "2020-07-14",
+        is_chair: true,
+        name: "N. Meyer",
       },
     ],
     trading_name: "NPM Limited",

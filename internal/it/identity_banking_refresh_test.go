@@ -69,27 +69,27 @@ func TestBankingDLASuggestionsRefreshAfterIdentityProfileCreated(t *testing.T) {
 	}))
 	assertHTTPBatchSummary(t, secondSummary, 1, 1, 0)
 	if queue := getReviewQueueViaHTTP(t, h); len(queue.Suggestions) != 1 {
-		t.Fatalf("review queue before shareholder update = %+v, want only existing suggestion", queue.Suggestions)
+		t.Fatalf("review queue before director update = %+v, want only existing suggestion", queue.Suggestions)
 	}
 
 	company.With(func(profile *identity.CompanyProfile) {
-		profile.Shareholders = append(profile.Shareholders, identity.Shareholder{Name: "Jane Roberts", Shares: 1, Class: "ordinary GBP 1"})
+		profile.Directors = append(profile.Directors, identity.Director{Name: "Jane Roberts"})
 	})
 	queue = getReviewQueueViaHTTP(t, h)
 	if len(queue.Suggestions) != 2 {
-		t.Fatalf("review queue after shareholder update suggestions = %d, want 2; queue=%+v", len(queue.Suggestions), queue)
+		t.Fatalf("review queue after director update suggestions = %d, want 2; queue=%+v", len(queue.Suggestions), queue)
 	}
 	updateTxnID := banking.TransactionID(0)
 	for _, suggestion := range queue.Suggestions {
 		if suggestion.Transaction.Reference == "shareholder transfer update" {
 			updateTxnID = banking.TransactionID(suggestion.Transaction.ID)
 			if suggestion.Target.Type != "dla" || suggestion.Target.ID != "director-loan" || !strings.Contains(suggestion.Explanation, "Jane Roberts") {
-				t.Fatalf("updated shareholder DLA suggestion = %+v, want Jane Roberts director-name DLA suggestion", suggestion)
+				t.Fatalf("updated director DLA suggestion = %+v, want Jane Roberts director-name DLA suggestion", suggestion)
 			}
 		}
 	}
 	if updateTxnID == 0 {
-		t.Fatalf("review queue after shareholder update = %+v, want suggestion for update transaction", queue.Suggestions)
+		t.Fatalf("review queue after director update = %+v, want suggestion for update transaction", queue.Suggestions)
 	}
 	assertSuggestionRows(t, ctx, h, txnID, 1, 1)
 	assertSuggestionRows(t, ctx, h, updateTxnID, 1, 1)

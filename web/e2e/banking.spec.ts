@@ -2,6 +2,7 @@ import { expect, test, type Page, type Route } from "@playwright/test";
 
 import type {
   BankingAccount,
+  BankingCreateAccountRequest,
   BankingInvoiceCandidate,
   BankingMoney,
   BankingRecentTransaction,
@@ -10,6 +11,69 @@ import type {
   BankingReviewQueue,
   BankingTransaction,
 } from "@/api/banking";
+import type { LedgerAccount } from "@/api/ledger";
+
+test("creates bank accounts from the Banking screen", async ({ page }) => {
+  const state = bankingState([]);
+  await mockBankingApi(page, state);
+
+  await page.goto("/banking");
+
+  await expect(page.getByText("No bank accounts")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Import CSV" })).toBeDisabled();
+
+  await page.getByRole("button", { name: "Add account" }).click();
+  await page.getByLabel("Account name").fill("Operating GBP");
+  await page.getByRole("button", { name: "Create account" }).click();
+
+  await expect(page.getByRole("status")).toContainText(
+    "Created Operating GBP. CSV import ready.",
+  );
+  await expect(
+    page.getByRole("button", { name: /Revolut Business Operating GBP/ }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("button", { name: "Import CSV" })).toBeEnabled();
+
+  await page.getByRole("button", { name: "Add account" }).click();
+  await page.getByLabel("Account name").fill("Operating EUR");
+  await page.getByLabel("Currency").selectOption("EUR");
+  await page.getByRole("button", { name: "Create account" }).click();
+
+  await expect(page.getByRole("status")).toContainText(
+    "Created Operating EUR. CSV import ready.",
+  );
+  await expect(
+    page.getByRole("button", { name: /Revolut Business Operating EUR/ }),
+  ).toHaveAttribute("aria-pressed", "true");
+
+  await page.getByRole("button", { name: "Add account" }).click();
+  await page.getByLabel("Account name").fill("Operating EUR");
+  await page.getByLabel("Currency").selectOption("EUR");
+  await page.getByRole("button", { name: "Create account" }).click();
+  await expect(page.getByRole("alert")).toContainText(
+    'A Revolut Business EUR account named "Operating EUR" already exists.',
+  );
+
+  await page.getByRole("button", { name: "Cancel" }).click();
+  const chooserPromise = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: "Import CSV" }).click();
+  const chooser = await chooserPromise;
+  await chooser.setFiles({
+    buffer: Buffer.from(
+      "Date,Description,Amount,Currency\n2026-07-06,Seed,1,EUR\n",
+    ),
+    mimeType: "text/csv",
+    name: "created-account.csv",
+  });
+
+  await expect(page.getByRole("status")).toContainText(
+    "created-account.csv: 0 new, 0 duplicates",
+  );
+  await page.screenshot({
+    fullPage: true,
+    path: "test-results/banking-screen-06-account-create.png",
+  });
+});
 
 test("imports CSV and reconciles match, DLA, and recode cards", async ({
   page,
@@ -130,12 +194,39 @@ async function mockBankingApi(page: Page, state: BankingState) {
       });
       return;
     }
-    if (path === "/api/ledger/accounts") {
+    if (path === "/api/ledger/accounts" && request.method() === "GET") {
       await fulfillJson(route, { accounts: expenseAccountsFixture() });
       return;
     }
-    if (path === "/api/banking/accounts") {
+    if (path === "/api/banking/accounts" && request.method() === "GET") {
       await fulfillJson(route, { accounts: state.accounts });
+      return;
+    }
+    if (path === "/api/banking/accounts" && request.method() === "POST") {
+      const body = JSON.parse(
+        request.postData() ?? "{}",
+      ) as BankingCreateAccountRequest;
+      const existing = state.accounts.find(
+        (account) =>
+          account.provider === body.provider &&
+          account.currency === body.currency &&
+          account.name === body.name,
+      );
+      if (existing) {
+        await fulfillJson(route, existing, 201);
+        return;
+      }
+      const nextID =
+        Math.max(0, ...state.accounts.map((account) => account.id)) + 1;
+      const account = bankingAccount({
+        currency: body.currency,
+        id: nextID,
+        ledger_account_code: `1000-cash-revolut-${body.currency.toLowerCase()}`,
+        name: body.name,
+        provider: body.provider,
+      });
+      state.accounts = [...state.accounts, account];
+      await fulfillJson(route, account, 201);
       return;
     }
     if (path === "/api/banking/review") {
@@ -159,20 +250,22 @@ async function mockBankingApi(page: Page, state: BankingState) {
       await fulfillJson(route, { transactions: state.recent });
       return;
     }
-    if (
-      path === "/api/banking/accounts/1/import" &&
-      request.method() === "POST"
-    ) {
+    const importMatch = path.match(/^\/api\/banking\/accounts\/(\d+)\/import$/);
+    if (importMatch && request.method() === "POST") {
+      const accountID = Number(importMatch[1]);
       state.imports += 1;
-      state.queue = reviewQueueFixture();
+      if (accountID === 1) {
+        state.queue = reviewQueueFixture();
+      }
       await fulfillJson(route, {
-        account_id: 1,
+        account_id: accountID,
         batch_id: 301,
-        duplicates: 1,
-        filename: "banking-fixture.csv",
+        duplicates: accountID === 1 ? 1 : 0,
+        filename:
+          accountID === 1 ? "banking-fixture.csv" : "created-account.csv",
         imported_at: "2026-07-06T10:00:00Z",
-        new: 3,
-        total: 4,
+        new: accountID === 1 ? 3 : 0,
+        total: accountID === 1 ? 4 : 0,
       });
       return;
     }
@@ -287,9 +380,11 @@ type BankingState = {
   recodeRequests: Array<{ account_code: string }>;
 };
 
-function bankingState(): BankingState {
+function bankingState(
+  accounts: BankingAccount[] = accountsFixture(),
+): BankingState {
   return {
-    accounts: accountsFixture(),
+    accounts,
     candidates: {},
     feed: [],
     imports: 0,
@@ -301,25 +396,51 @@ function bankingState(): BankingState {
 
 function accountsFixture(): BankingAccount[] {
   return [
-    {
-      created_at: "2026-07-01T09:00:00Z",
+    bankingAccount({
       currency: "GBP",
       id: 1,
       ledger_account_code: "1000-cash-gbp",
       name: "Revolut GBP",
-      provider: "revolut",
-      unreconciled_count: 0,
-    },
-    {
-      created_at: "2026-07-01T09:00:00Z",
+    }),
+    bankingAccount({
       currency: "EUR",
       id: 2,
       ledger_account_code: "1001-cash-eur",
       name: "Revolut EUR",
-      provider: "revolut",
-      unreconciled_count: 0,
-    },
+    }),
   ];
+}
+
+function bankingAccount(overrides: Partial<BankingAccount>): BankingAccount {
+  return {
+    created_at: "2026-07-01T09:00:00Z",
+    currency: "GBP",
+    id: 1,
+    ledger_account_code: "1000-cash-gbp",
+    name: "Revolut GBP",
+    provider: "revolut",
+    unreconciled_count: 0,
+    ...overrides,
+  };
+}
+
+function expenseAccountsFixture(): LedgerAccount[] {
+  return [
+    ledgerAccount({ code: "5010-software", name: "Software" }),
+    ledgerAccount({ code: "5020-travel", name: "Travel" }),
+  ];
+}
+
+function ledgerAccount(overrides: Partial<LedgerAccount>): LedgerAccount {
+  return {
+    code: "5010-software",
+    created_at: "2026-07-06T10:00:00Z",
+    currency: null,
+    id: 5010,
+    name: "Software",
+    type: "expense",
+    ...overrides,
+  };
 }
 
 function reviewQueueFixture(): BankingReviewQueue {
@@ -411,25 +532,6 @@ function receiptFixture(transactionID: number): BankingReceipt {
     size: 33,
     uploaded_at: "2026-07-06T10:03:00Z",
     url: `/api/banking/transactions/${transactionID}/receipt`,
-  };
-}
-
-function expenseAccountsFixture() {
-  return [
-    ledgerAccount({ code: "5010-software", name: "Software" }),
-    ledgerAccount({ code: "5020-travel", name: "Travel" }),
-  ];
-}
-
-function ledgerAccount(overrides: Record<string, unknown>) {
-  return {
-    code: "5010-software",
-    created_at: "2026-07-06T10:00:00Z",
-    currency: null,
-    id: 5010,
-    name: "Software",
-    type: "expense",
-    ...overrides,
   };
 }
 

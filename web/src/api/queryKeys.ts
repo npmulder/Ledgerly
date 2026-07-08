@@ -12,6 +12,13 @@ export type InvoicesQueryParams = {
 };
 
 export const queryKeys = {
+  audit: {
+    history: (
+      module: string,
+      entity: string,
+      entityId: string,
+    ): ApiQueryKey => ["audit", "history", { entity, entityId, module }],
+  },
   advisor: {
     insights: (surface: string): ApiQueryKey => [
       "advisor",

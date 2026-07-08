@@ -64,6 +64,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/audit/history/{module}/{entity}/{entity_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read entity audit history
+         * @description Returns newest-first mutation history for one non-ledger entity.
+         */
+        get: operations["auditGetEntityHistory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/banking/accounts": {
         parameters: {
             query?: never;
@@ -1411,6 +1431,26 @@ export interface components {
             message: string;
             rule_id: string;
         };
+        AuditChange: {
+            after: unknown;
+            before: unknown;
+        };
+        AuditEntry: {
+            actor: string;
+            diff: {
+                [key: string]: components["schemas"]["AuditChange"];
+            };
+            entity: string;
+            entity_id: string;
+            /** Format: int64 */
+            id: number;
+            module: string;
+            /** Format: date-time */
+            occurred_at: string;
+        };
+        AuditHistoryResponse: {
+            entries: components["schemas"]["AuditEntry"][];
+        };
         BankDetails: {
             bank_name: string;
             bic: string;
@@ -1767,6 +1807,12 @@ export interface components {
             accounts: components["schemas"]["DashboardReconcileAccount"][];
             review_queue: components["schemas"]["DashboardReviewQueueItem"][];
         };
+        Director: {
+            /** Format: date */
+            appointed_date?: string;
+            is_chair?: boolean;
+            name: string;
+        };
         DividendsAddress: {
             country: string;
             line1: string;
@@ -1943,6 +1989,7 @@ export interface components {
         IdentityProfile: {
             bank_details: components["schemas"]["BankDetails"];
             company_number: string;
+            directors: components["schemas"]["Director"][];
             /** Format: date */
             incorporation_date: string;
             is_vat_registered: boolean;
@@ -1960,6 +2007,7 @@ export interface components {
         IdentityProfilePatch: {
             bank_details?: components["schemas"]["BankDetails"];
             company_number?: string;
+            directors?: components["schemas"]["Director"][];
             /** Format: date */
             incorporation_date?: string;
             is_vat_registered?: boolean;
@@ -1981,6 +2029,7 @@ export interface components {
         };
         IdentityRegisterWithProfileRequest: {
             company_number: string;
+            directors?: components["schemas"]["Director"][];
             /** Format: email */
             email: string;
             /** Format: date */
@@ -2600,6 +2649,54 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AdvisorRefreshResponse"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    auditGetEntityHistory: {
+        parameters: {
+            query?: {
+                /** @description Maximum history rows. */
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Owning module name. */
+                module: string;
+                /** @description Entity kind. */
+                entity: string;
+                /** @description Entity identifier. */
+                entity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Entity audit history */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditHistoryResponse"];
+                };
+            };
+            /** @description Invalid audit history query */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
                 };
             };
             /** @description Authentication required */

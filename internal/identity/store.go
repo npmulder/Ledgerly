@@ -405,6 +405,7 @@ INSERT INTO identity.company_profile (
 	vat_number,
 	bank_details,
 	shareholders,
+	directors,
 	logo_asset_id
 ) VALUES (
 	1,
@@ -419,7 +420,8 @@ INSERT INTO identity.company_profile (
 	$9,
 	$10::jsonb,
 	$11::jsonb,
-	$12
+	$12::jsonb,
+	$13
 )`,
 		profile.TradingName,
 		profile.LegalName,
@@ -432,6 +434,7 @@ INSERT INTO identity.company_profile (
 		values.vatNumber,
 		string(values.bankDetails),
 		string(values.shareholders),
+		string(values.directors),
 		values.logoAssetID,
 	)
 	if err != nil {
@@ -459,7 +462,8 @@ SET trading_name = $1,
 	vat_number = $9,
 	bank_details = $10::jsonb,
 	shareholders = $11::jsonb,
-	logo_asset_id = $12,
+	directors = $12::jsonb,
+	logo_asset_id = $13,
 	updated_at = now()
 WHERE id = 1`,
 		profile.TradingName,
@@ -473,6 +477,7 @@ WHERE id = 1`,
 		values.vatNumber,
 		string(values.bankDetails),
 		string(values.shareholders),
+		string(values.directors),
 		values.logoAssetID,
 	)
 	if err != nil {
@@ -596,6 +601,7 @@ type profileStorageValues struct {
 	office       []byte
 	bankDetails  []byte
 	shareholders []byte
+	directors    []byte
 	vatNumber    sql.NullString
 	logoAssetID  pgtype.UUID
 }
@@ -617,6 +623,14 @@ func profileStorageValuesFrom(profile CompanyProfile) (profileStorageValues, err
 	if err != nil {
 		return profileStorageValues{}, fmt.Errorf("marshal shareholders: %w", err)
 	}
+	directorsValue := profile.Directors
+	if directorsValue == nil {
+		directorsValue = []Director{}
+	}
+	directors, err := json.Marshal(directorsValue)
+	if err != nil {
+		return profileStorageValues{}, fmt.Errorf("marshal directors: %w", err)
+	}
 	logoAssetID, err := nullableUUID(profile.LogoAssetID)
 	if err != nil {
 		return profileStorageValues{}, err
@@ -625,6 +639,7 @@ func profileStorageValuesFrom(profile CompanyProfile) (profileStorageValues, err
 		office:       office,
 		bankDetails:  bankDetails,
 		shareholders: shareholders,
+		directors:    directors,
 		vatNumber:    nullableText(profile.VATNumber),
 		logoAssetID:  logoAssetID,
 	}, nil
@@ -636,6 +651,7 @@ func scanProfile(ctx context.Context, tx db.Tx, lockClause string) (CompanyProfi
 		office           []byte
 		bankDetails      []byte
 		shareholders     []byte
+		directors        []byte
 		yearEndMonth     int
 		vatNumber        sql.NullString
 		logoAssetID      pgtype.UUID
@@ -654,6 +670,7 @@ SELECT trading_name,
 	vat_number,
 	bank_details,
 	shareholders,
+	directors,
 	logo_asset_id
 FROM identity.company_profile
 WHERE id = 1`+lockClause).
@@ -669,6 +686,7 @@ WHERE id = 1`+lockClause).
 			&vatNumber,
 			&bankDetails,
 			&shareholders,
+			&directors,
 			&logoAssetID,
 		)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -699,6 +717,9 @@ WHERE id = 1`+lockClause).
 	}
 	if err := json.Unmarshal(shareholders, &profile.Shareholders); err != nil {
 		return CompanyProfile{}, fmt.Errorf("unmarshal shareholders: %w", err)
+	}
+	if err := json.Unmarshal(directors, &profile.Directors); err != nil {
+		return CompanyProfile{}, fmt.Errorf("unmarshal directors: %w", err)
 	}
 	if err := profile.YearEnd.validate(); err != nil {
 		return CompanyProfile{}, err
