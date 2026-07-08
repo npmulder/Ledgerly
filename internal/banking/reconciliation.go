@@ -97,7 +97,7 @@ func (s *Service) confirmMatch(ctx context.Context, txnID TransactionID, explici
 	if err = s.store.SupersedeActiveSuggestion(ctx, tx, txn.ID); err != nil {
 		return ConfirmMatchResult{}, err
 	}
-	if _, err = s.store.transitionTransactionStateLocked(ctx, tx, txn, TransactionStateReconciled, reconciliationActor); err != nil {
+	if err = s.transitionConfirmMatchStateLocked(ctx, tx, txn); err != nil {
 		return ConfirmMatchResult{}, err
 	}
 	if err = callReconciliationHook(ctx, s.reconciliationHooks.AfterConfirmStateTransition); err != nil {
@@ -116,6 +116,19 @@ func (s *Service) confirmMatch(ctx context.Context, txnID TransactionID, explici
 		InvoiceID:     invoiceID,
 		RealisedFXGBP: realisedFX,
 	}, nil
+}
+
+func (s *Service) transitionConfirmMatchStateLocked(ctx context.Context, tx db.Tx, txn Transaction) error {
+	if txn.State == TransactionStateUnreconciled {
+		if _, err := s.store.transitionTransactionStateLocked(ctx, tx, txn, TransactionStateSuggested, reconciliationActor); err != nil {
+			return err
+		}
+		txn.State = TransactionStateSuggested
+	}
+	if _, err := s.store.transitionTransactionStateLocked(ctx, tx, txn, TransactionStateReconciled, reconciliationActor); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s *Service) lockConfirmMatchTarget(ctx context.Context, tx db.Tx, txnID TransactionID, explicitInvoiceID string) (Transaction, BankAccount, string, error) {

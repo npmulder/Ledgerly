@@ -860,6 +860,15 @@ function ReviewCardActions({
   readonly onMatchInvoice: (transactionID: number, invoiceID?: string) => void;
   readonly onRecode: (transactionID: number, accountCode: string) => void;
 }) {
+  const manualInvoicePicker = canManuallyAllocateSuggestedTransaction(card) ? (
+    <ManualInvoicePicker
+      busy={busy}
+      buttonLabel="Match selected"
+      onConfirm={(invoiceID) => onMatchInvoice(card.transaction.id, invoiceID)}
+      transaction={card.transaction}
+    />
+  ) : null;
+
   if (card.kind === "match") {
     return (
       <div className="banking-review-card__actions">
@@ -900,6 +909,7 @@ function ReviewCardActions({
           label="DLA recode"
           onRecode={(accountCode) => onRecode(card.transaction.id, accountCode)}
         />
+        {manualInvoicePicker}
       </div>
     );
   }
@@ -924,6 +934,7 @@ function ReviewCardActions({
         label="Rule recode"
         onRecode={(accountCode) => onRecode(card.transaction.id, accountCode)}
       />
+      {manualInvoicePicker}
     </div>
   );
 }
@@ -1305,6 +1316,10 @@ function hasNonZeroMoney(
   value: BankingMoney | undefined,
 ): value is BankingMoney {
   return value !== undefined && value.amount_minor !== 0;
+}
+
+function canManuallyAllocateSuggestedTransaction(card: BankingReviewCard) {
+  return card.kind !== "match" && card.transaction.amount.amount_minor > 0;
 }
 
 function formatFXResult(value: BankingMoney) {

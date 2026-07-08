@@ -240,6 +240,83 @@ describe("BankingScreen", () => {
     });
   });
 
+  it("matches an inbound payee-rule suggestion to a selected invoice", async () => {
+    const user = userEvent.setup();
+    const api = bankingApi({
+      accounts: accountsFixture(),
+      candidates: {
+        104: [
+          invoiceCandidate({
+            amount: money(450000, "GBP"),
+            client: "Rule Client",
+            invoice_id: "inv_rule_manual",
+            invoice_number: "INV-RULE",
+          }),
+        ],
+      },
+      queue: {
+        matches: [],
+        rules: [
+          reviewCard({
+            confidence: 0.91,
+            explanation: "Recurring payee matched the software rule.",
+            kind: "rule",
+            suggestion_id: 9004,
+            target: {
+              account_code: "5010-software",
+              times_applied: 11,
+              type: "account",
+            },
+            transaction: transactionFixture({
+              amount: money(450000, "GBP"),
+              id: 104,
+              payee: "CLIENT RULE PAYMENT",
+              reference: "invoice paid",
+            }),
+          }),
+        ],
+        suggestions: [],
+      },
+      recent: [],
+    });
+    vi.stubGlobal("fetch", api.fetch);
+
+    renderBanking();
+
+    const card = (await screen.findByText("Payee rule")).closest("article");
+    expect(card).not.toBeNull();
+    expect(
+      within(card as HTMLElement).getByRole("button", { name: "Apply" }),
+    ).toBeInTheDocument();
+    expect(
+      within(card as HTMLElement).getByText("Recode ▾"),
+    ).toBeInTheDocument();
+    await user.click(
+      within(card as HTMLElement).getByText("Match to invoice ▾"),
+    );
+    await user.selectOptions(
+      within(card as HTMLElement).getByLabelText("Invoice"),
+      "inv_rule_manual",
+    );
+    await user.click(
+      within(card as HTMLElement).getByRole("button", {
+        name: "Match selected",
+      }),
+    );
+
+    await waitFor(() => {
+      const confirmCall = api.fetch.mock.calls.find(
+        ([input, init]) =>
+          urlFromRequest(input).pathname ===
+            "/api/banking/transactions/104/confirm" && init?.method === "POST",
+      );
+      expect(confirmCall).toBeDefined();
+      expect(JSON.parse(String(confirmCall?.[1]?.body))).toMatchObject({
+        invoice_id: "inv_rule_manual",
+      });
+    });
+  });
+
   it("requests recently reconciled rows for the selected account", async () => {
     const api = bankingApi({
       accounts: accountsFixture(),

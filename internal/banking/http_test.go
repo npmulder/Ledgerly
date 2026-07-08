@@ -215,7 +215,7 @@ func TestHTTPInvoiceCandidatesAndManualConfirm(t *testing.T) {
 	defer cancel()
 
 	ledger := &recordingBankingLedger{}
-	candidates := &mutableInvoiceCandidates{items: []InvoiceMatchCandidate{
+	candidateItems := []InvoiceMatchCandidate{
 		{
 			InvoiceID:  "invoice-manual-1",
 			Number:     "INV-MANUAL-1",
@@ -234,7 +234,8 @@ func TestHTTPInvoiceCandidatesAndManualConfirm(t *testing.T) {
 			Amount:     money.Money{Amount: 75000, Currency: "GBP"},
 			Status:     "sent",
 		},
-	}}
+	}
+	candidates := &mutableInvoiceCandidates{}
 	settler := &recordingInvoiceSettler{}
 	service := NewService(
 		pool,
@@ -254,6 +255,9 @@ func TestHTTPInvoiceCandidatesAndManualConfirm(t *testing.T) {
 		Reference: "manual",
 		Amount:    money.Money{Amount: 50000, Currency: "GBP"},
 	})
+	assertStoredTransactionState(t, ctx, pool, manualTxn, TransactionStateUnreconciled)
+
+	candidates.items = candidateItems
 	suggestedTxn := importSingleBankingTxn(t, ctx, pool, service, AccountID(account.ID), revolutTestTxn{
 		Date:      time.Date(2026, 11, 6, 9, 0, 0, 0, time.UTC),
 		ID:        "http-manual-override",
