@@ -437,7 +437,7 @@ func (s *Server) dlaBalance(ctx context.Context, raw json.RawMessage) (any, erro
 	if err := decodeNoArgs("dla_balance", raw); err != nil {
 		return nil, err
 	}
-	response, err := s.client.DlaGetBalanceWithResponse(ctx)
+	response, err := s.client.DlaGetBalanceWithResponse(ctx, nil)
 	if err != nil {
 		return nil, apiUnavailable(err)
 	}

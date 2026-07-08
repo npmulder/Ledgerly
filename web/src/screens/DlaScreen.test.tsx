@@ -35,6 +35,7 @@ describe("DlaScreen", () => {
     expect(
       screen.getByText("In credit — tax-free to withdraw"),
     ).toBeInTheDocument();
+    expect(screen.queryByRole("tablist", { name: "DLA director" })).toBeNull();
 
     const ledger = screen.getByLabelText("DLA running ledger");
     expect(within(ledger).getAllByText("Drawing")).toHaveLength(2);
@@ -92,7 +93,90 @@ describe("DlaScreen", () => {
       await screen.findByText("Second page repayment"),
     ).toBeInTheDocument();
     expect(fetchImpl).toHaveBeenCalledWith(
-      "/api/dla/ledger?cursor=page-2",
+      "/api/dla/ledger?cursor=page-2&director=director-1",
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
+  it("switches between director-specific balances and ledger rows", async () => {
+    const user = userEvent.setup();
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const url = urlFromRequest(input);
+      const directorID = url.searchParams.get("director") ?? "director-1";
+      if (url.pathname === "/api/identity/profile") {
+        return jsonResponse(
+          identityProfile([
+            {
+              appointed_date: "2020-07-14",
+              id: "director-1",
+              is_chair: true,
+              name: "N. Meyer",
+            },
+            {
+              appointed_date: "2021-04-01",
+              id: "director-2",
+              is_chair: false,
+              name: "A. Patel",
+            },
+          ]),
+        );
+      }
+      if (url.pathname === "/api/dla/balance") {
+        return jsonResponse(
+          directorID === "director-2"
+            ? overdrawnBalance(
+                {},
+                { director_id: "director-2", director_name: "A. Patel" },
+              )
+            : creditBalance(),
+        );
+      }
+      if (url.pathname === "/api/dla/ledger") {
+        return jsonResponse(
+          directorID === "director-2"
+            ? overdrawnLedger("director-2")
+            : creditLedger(),
+        );
+      }
+      if (url.pathname === "/api/ledger/accounts") {
+        return jsonResponse({ accounts: expenseAccountsFixture() });
+      }
+      return jsonResponse(
+        { status: 404, title: "Not Found", type: "about:blank" },
+        404,
+      );
+    });
+    vi.stubGlobal("fetch", fetchImpl);
+
+    renderDlaScreen();
+
+    expect(
+      await screen.findByRole("heading", {
+        level: 1,
+        name: "Director's loan · N. Meyer",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "N. Meyer" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+
+    await user.click(screen.getByRole("tab", { name: "A. Patel" }));
+
+    expect(
+      await screen.findByRole("heading", {
+        level: 1,
+        name: "Director's loan · A. Patel",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("£3,000.00 DR");
+    expect(await screen.findByText("Director drawing")).toBeInTheDocument();
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "/api/dla/balance?director=director-2",
+      expect.objectContaining({ method: "GET" }),
+    );
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "/api/dla/ledger?director=director-2",
       expect.objectContaining({ method: "GET" }),
     );
   });
@@ -182,6 +266,7 @@ describe("DlaScreen", () => {
       amount: { amount_minor: 10000, currency: "GBP" },
       cash_account_code: "1000-cash-gbp",
       description: "Director repayment",
+      director_id: "director-1",
       kind: "repayment",
     });
   });
@@ -223,6 +308,7 @@ describe("DlaScreen", () => {
       expect(JSON.parse(String(postCall?.[1]?.body))).toMatchObject({
         amount: { amount_minor: 4200, currency: "GBP" },
         description: "Training course",
+        director_id: "director-1",
         expense_category: "5040-training",
         kind: "expense-owed",
       });
@@ -257,6 +343,7 @@ describe("DlaScreen", () => {
       expect(JSON.parse(String(postCall?.[1]?.body))).toMatchObject({
         amount: { amount_minor: 4200, currency: "GBP" },
         description: "Software renewal",
+        director_id: "director-1",
         expense_category: "5010-software",
         kind: "expense-owed",
       });
@@ -378,6 +465,8 @@ function ledgerAccount(overrides: Partial<LedgerAccount>): LedgerAccount {
 function creditBalance() {
   return {
     balance: { amount_minor: 215000, currency: "GBP" },
+    director_id: "director-1",
+    director_name: "N. Meyer",
     policy: policyPayload(),
     status: "credit" as const,
     suggested_clearance: null,
@@ -386,12 +475,16 @@ function creditBalance() {
 
 function overdrawnBalance(
   policyOverrides: Partial<ReturnType<typeof policyPayload>> = {},
+  balanceOverrides: Partial<DLABalance> = {},
 ) {
   return {
     balance: { amount_minor: -300000, currency: "GBP" },
+    director_id: "director-1",
+    director_name: "N. Meyer",
     policy: policyPayload(policyOverrides),
     status: "overdrawn" as const,
     suggested_clearance: { amount_minor: 300000, currency: "GBP" },
+    ...balanceOverrides,
   };
 }
 
@@ -460,7 +553,7 @@ function creditLedger() {
   };
 }
 
-function overdrawnLedger() {
+function overdrawnLedger(directorID = "director-1") {
   return {
     entries: [
       ledgerEntry({
@@ -468,6 +561,7 @@ function overdrawnLedger() {
         date: "2026-07-01",
         description: "Director drawing",
         drawn: { amount_minor: 300000, currency: "GBP" },
+        director_id: directorID,
         id: 1,
         kind: "drawing",
         running_balance: { amount_minor: -300000, currency: "GBP" },
@@ -484,6 +578,7 @@ function ledgerEntry(overrides: Partial<DLAEntry>): DLAEntry {
     created_at: "2026-07-06T12:00:00Z",
     date: "2026-07-06",
     description: "DLA entry",
+    director_id: "director-1",
     drawn: { amount_minor: 0, currency: "GBP" },
     id: 1,
     kind: "expense-owed",
@@ -494,7 +589,16 @@ function ledgerEntry(overrides: Partial<DLAEntry>): DLAEntry {
   };
 }
 
-function identityProfile() {
+function identityProfile(
+  directors = [
+    {
+      appointed_date: "2020-07-14",
+      id: "director-1",
+      is_chair: true,
+      name: "N. Meyer",
+    },
+  ],
+) {
   return {
     bank_details: { bank_name: "", bic: "", iban: "" },
     company_number: "137792C",
@@ -517,7 +621,7 @@ function identityProfile() {
         shares: 100,
       },
     ],
-    directors: [{ appointed_date: "2020-07-14", is_chair: true, name: "N. Meyer" }],
+    directors,
     trading_name: "NPM Limited",
     vat_number: null,
     year_end: { day: 31, month: 3 },

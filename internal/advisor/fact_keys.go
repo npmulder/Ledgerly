@@ -21,6 +21,9 @@ const (
 	FactRuleDLAStatus         FactKey = "status"
 	FactRuleDLAClearance      FactKey = "clearance_amount"
 	FactRuleDLAClearanceMinor FactKey = "clearance_amount_minor_units"
+	FactRuleDLADirectorID     FactKey = "director_id"
+	FactRuleDLADirectorName   FactKey = "director_name"
+	FactDLADirectorStatuses   FactKey = "dla.statuses"
 
 	FactDividendsHeadroom      FactKey = "dividends.headroom"
 	FactDividendsDistributable FactKey = "dividends.distributable"
@@ -58,6 +61,17 @@ type OverdueInvoiceFact struct {
 	Client      string      `json:"client"`
 	Amount      money.Money `json:"amount"`
 	DaysOverdue int         `json:"daysOverdue"`
+}
+
+// DLADirectorStatusFact is one director's DLA status for per-person advisor
+// evaluation.
+type DLADirectorStatusFact struct {
+	DirectorID     string      `json:"director_id"`
+	DirectorName   string      `json:"director_name"`
+	Balance        money.Money `json:"balance"`
+	Status         string      `json:"status"`
+	Clearance      money.Money `json:"clearance_amount"`
+	ClearanceMinor int64       `json:"clearance_amount_minor_units"`
 }
 
 // FilingFact is the advisor contract shape for filings[].

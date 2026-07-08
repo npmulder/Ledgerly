@@ -109,6 +109,7 @@ type CompanyFormState = {
 
 type DirectorFormState = {
   appointedDate: string;
+  id: string;
   isChair: boolean;
   name: string;
 };
@@ -1397,6 +1398,7 @@ function profileToForm(profile: IdentityProfile | undefined): CompanyFormState {
     country: profile?.registered_office.country ?? "",
     directors: (profile?.directors ?? []).map((director) => ({
       appointedDate: director.appointed_date ?? "",
+      id: director.id ?? "",
       isChair: director.is_chair ?? false,
       name: director.name,
     })),
@@ -1420,6 +1422,7 @@ function formToPatch(form: CompanyFormState): IdentityProfilePatch {
     company_number: form.companyNumber.trim(),
     directors: form.directors.map((director) => ({
       appointed_date: director.appointedDate || undefined,
+      id: director.id || undefined,
       is_chair: director.isChair || undefined,
       name: director.name.trim(),
     })),
@@ -1491,6 +1494,7 @@ function applyProfilePatch(
 function emptyDirectorForm(): DirectorFormState {
   return {
     appointedDate: "",
+    id: "",
     isChair: false,
     name: "",
   };

@@ -17,6 +17,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/npmulder/ledgerly/internal/dla"
 	"github.com/npmulder/ledgerly/internal/ledger"
 	"github.com/npmulder/ledgerly/internal/moneyfx/money"
 	httpserver "github.com/npmulder/ledgerly/internal/platform/http"
@@ -155,6 +156,7 @@ type commandResponse struct {
 	Kind             string               `json:"kind,omitempty"`
 	RealisedFXAmount *moneyResponse       `json:"realised_fx_amount,omitempty"`
 	AmountGBP        *moneyResponse       `json:"amount_gbp,omitempty"`
+	DirectorID       string               `json:"director_id,omitempty"`
 	Rule             *payeeRuleResponse   `json:"rule,omitempty"`
 	StateChange      *stateChangeResponse `json:"state_change,omitempty"`
 }
@@ -182,6 +184,10 @@ type stateChangeResponse struct {
 type recodeRequest struct {
 	AccountCode      string `json:"account_code"`
 	AccountCodeCamel string `json:"accountCode"`
+}
+
+type fileDLARequest struct {
+	DirectorID string `json:"director_id"`
 }
 
 type payeeRuleRequest struct {
@@ -513,7 +519,14 @@ func (h bankingHandler) fileTransactionToDLA(w nethttp.ResponseWriter, r *nethtt
 	if !ok {
 		return
 	}
-	result, err := h.service.FileToDLA(r.Context(), txnID)
+	var request fileDLARequest
+	if r.ContentLength != 0 {
+		if err := decodeBankingJSON(w, r, &request); err != nil {
+			writeBankingDecodeError(w, r, err)
+			return
+		}
+	}
+	result, err := h.service.FileToDLA(r.Context(), txnID, dla.DirectorID(request.DirectorID))
 	if err != nil {
 		writeBankingError(w, r, err)
 		return
@@ -528,6 +541,7 @@ func (h bankingHandler) fileTransactionToDLA(w nethttp.ResponseWriter, r *nethtt
 		Transaction: &transaction,
 		Kind:        cardKindForSuggestion(result.Kind),
 		AmountGBP:   &amountGBP,
+		DirectorID:  string(result.DirectorID),
 	})
 }
 

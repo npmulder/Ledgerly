@@ -20,23 +20,24 @@ const defaultDrawingDescription = "Director drawing"
 
 // Service orchestrates DLA entry filing and read-side queries.
 type Service struct {
-	pool   *pgxpool.Pool
-	ledger ledgerapi.Ledger
-	bus    *bus.Bus
-	store  Store
-	clock  clock.Clock
+	pool           *pgxpool.Pool
+	ledger         ledgerapi.Ledger
+	bus            *bus.Bus
+	store          Store
+	clock          clock.Clock
+	directorSource DirectorSource
 }
 
 // New creates a DLA service. If ledgerService is nil or omitted, a ledger
 // service backed by pool is used for transaction-scoped postings.
 func New(pool *pgxpool.Pool, ledgerService ...ledgerapi.Ledger) *Service {
-	return newService(pool, nil, nil, ledgerService...)
+	return newService(pool, nil, nil, nil, ledgerService...)
 }
 
 // NewWithBus creates a DLA service that publishes DLA transition events through
 // eventBus.
 func NewWithBus(pool *pgxpool.Pool, eventBus *bus.Bus, ledgerService ...ledgerapi.Ledger) *Service {
-	return newService(pool, eventBus, nil, ledgerService...)
+	return newService(pool, eventBus, nil, nil, ledgerService...)
 }
 
 // NewWithBusAndClock creates a DLA service with explicit event and time
@@ -47,10 +48,28 @@ func NewWithBusAndClock(
 	clk clock.Clock,
 	ledgerService ...ledgerapi.Ledger,
 ) *Service {
-	return newService(pool, eventBus, clk, ledgerService...)
+	return newService(pool, eventBus, clk, nil, ledgerService...)
 }
 
-func newService(pool *pgxpool.Pool, eventBus *bus.Bus, clk clock.Clock, ledgerService ...ledgerapi.Ledger) *Service {
+// NewWithBusClockAndDirectors creates a DLA service with explicit event, time,
+// and director-source dependencies.
+func NewWithBusClockAndDirectors(
+	pool *pgxpool.Pool,
+	eventBus *bus.Bus,
+	clk clock.Clock,
+	directorSource DirectorSource,
+	ledgerService ...ledgerapi.Ledger,
+) *Service {
+	return newService(pool, eventBus, clk, directorSource, ledgerService...)
+}
+
+func newService(
+	pool *pgxpool.Pool,
+	eventBus *bus.Bus,
+	clk clock.Clock,
+	directorSource DirectorSource,
+	ledgerService ...ledgerapi.Ledger,
+) *Service {
 	var l ledgerapi.Ledger
 	if len(ledgerService) > 0 {
 		l = ledgerService[0]
@@ -61,7 +80,7 @@ func newService(pool *pgxpool.Pool, eventBus *bus.Bus, clk clock.Clock, ledgerSe
 	if clk == nil {
 		clk = clock.New()
 	}
-	return &Service{pool: pool, ledger: l, bus: eventBus, clock: clk}
+	return &Service{pool: pool, ledger: l, bus: eventBus, clock: clk, directorSource: directorSource}
 }
 
 // FileDrawing appends a banking-origin drawing and posts Dr DLA / Cr Cash
@@ -76,6 +95,7 @@ func (s *Service) FileDrawing(ctx context.Context, tx db.Tx, src TxnRef) error {
 		description = defaultDrawingDescription
 	}
 	return s.appendEntry(ctx, tx, NewEntry{
+		Director:        src.Director,
 		Date:            src.Date,
 		Kind:            EntryKindDrawing,
 		Description:     description,
@@ -91,6 +111,7 @@ func (s *Service) FileDrawing(ctx context.Context, tx db.Tx, src TxnRef) error {
 func (s *Service) RecordExternalCredit(
 	ctx context.Context,
 	tx db.Tx,
+	director DirectorID,
 	ref string,
 	date time.Time,
 	amount money.Money,
@@ -99,11 +120,42 @@ func (s *Service) RecordExternalCredit(
 	if tx == nil {
 		return fmt.Errorf("dla: record external credit requires transaction: %w", ErrInvalidEntry)
 	}
-	normalized, err := normalizeExternalCredit(ref, date, amount, description)
+	normalized, err := normalizeExternalCredit(director, ref, date, amount, description)
 	if err != nil {
 		return err
 	}
 	return s.appendPresentationEntry(ctx, tx, normalized)
+}
+
+// EnsureDirectorAccount creates the director-specific DLA account when needed.
+func (s *Service) EnsureDirectorAccount(ctx context.Context, tx db.Tx, director Director) (ledgerapi.AccountCode, error) {
+	if s.ledger == nil {
+		return "", fmt.Errorf("dla: ensure director account requires ledger")
+	}
+	if tx == nil {
+		return "", fmt.Errorf("dla: ensure director account requires transaction: %w", ErrInvalidEntry)
+	}
+	normalized, _, err := normalizeDirectorID(director.ID)
+	if err != nil {
+		return "", err
+	}
+	code, err := AccountCodeForDirector(normalized)
+	if err != nil {
+		return "", err
+	}
+	if normalized == DefaultDirectorID {
+		return s.ledger.EnsureAccount(ctx, tx, ledgerapi.AccountSpec{
+			Code: code,
+			Name: "Director's loan account",
+			Type: ledgerapi.AccountTypeLiability,
+		})
+	}
+	name := fmt.Sprintf("Director's loan account %s", strings.TrimPrefix(string(normalized), "director-"))
+	return s.ledger.EnsureAccount(ctx, tx, ledgerapi.AccountSpec{
+		Code: code,
+		Name: name,
+		Type: ledgerapi.AccountTypeLiability,
+	})
 }
 
 // AddEntry appends a manual repayment or expense-owed entry in its own transaction.
@@ -144,15 +196,19 @@ func (s *Service) Ledger(ctx context.Context, filter LedgerFilter) ([]Entry, err
 }
 
 // CurrentBalance returns the current DLA balance and advisor-facing status.
-func (s *Service) CurrentBalance(ctx context.Context) (money.Money, Status, error) {
+func (s *Service) CurrentBalance(ctx context.Context, director DirectorID) (money.Money, Status, error) {
 	if s.pool == nil {
 		return money.Money{}, "", fmt.Errorf("dla: current balance requires pool")
+	}
+	normalized, _, err := normalizeDirectorID(director)
+	if err != nil {
+		return money.Money{}, "", err
 	}
 	asOf, err := s.currentDate()
 	if err != nil {
 		return money.Money{}, "", err
 	}
-	balance, err := s.store.CurrentBalanceAsOf(ctx, s.pool, asOf)
+	balance, err := s.store.CurrentBalanceAsOf(ctx, s.pool, normalized, asOf)
 	if err != nil {
 		return money.Money{}, "", err
 	}
@@ -160,12 +216,17 @@ func (s *Service) CurrentBalance(ctx context.Context) (money.Money, Status, erro
 }
 
 // CurrentStatus returns the current DLA fact payload for advisor/UI consumers.
-func (s *Service) CurrentStatus(ctx context.Context) (StatusPayload, error) {
-	balance, status, err := s.CurrentBalance(ctx)
+func (s *Service) CurrentStatus(ctx context.Context, director DirectorID) (StatusPayload, error) {
+	normalized, _, err := normalizeDirectorID(director)
+	if err != nil {
+		return StatusPayload{}, err
+	}
+	balance, status, err := s.CurrentBalance(ctx, normalized)
 	if err != nil {
 		return StatusPayload{}, err
 	}
 	return StatusPayload{
+		DirectorID:               normalized,
 		Balance:                  balance,
 		Status:                   status,
 		Policy:                   policyPayloadFromJurisdiction(),
@@ -173,10 +234,28 @@ func (s *Service) CurrentStatus(ctx context.Context) (StatusPayload, error) {
 	}, nil
 }
 
+// Statuses returns one current status payload per known director.
+func (s *Service) Statuses(ctx context.Context) ([]StatusPayload, error) {
+	directors, err := s.directors(ctx)
+	if err != nil {
+		return nil, err
+	}
+	statuses := make([]StatusPayload, 0, len(directors))
+	for _, director := range directors {
+		status, err := s.CurrentStatus(ctx, director.ID)
+		if err != nil {
+			return nil, err
+		}
+		status.DirectorName = strings.TrimSpace(director.Name)
+		statuses = append(statuses, status)
+	}
+	return statuses, nil
+}
+
 // SuggestedClearanceAmount returns the positive DR amount needed to return the
 // DLA to zero; in-credit balances return GBP zero.
-func (s *Service) SuggestedClearanceAmount(ctx context.Context) (money.Money, error) {
-	balance, _, err := s.CurrentBalance(ctx)
+func (s *Service) SuggestedClearanceAmount(ctx context.Context, director DirectorID) (money.Money, error) {
+	balance, _, err := s.CurrentBalance(ctx, director)
 	if err != nil {
 		return money.Money{}, err
 	}
@@ -198,7 +277,7 @@ func (s *Service) appendEntry(ctx context.Context, tx db.Tx, entry NewEntry, all
 	if err != nil {
 		return err
 	}
-	preBalance, err := s.store.CurrentBalanceAsOf(ctx, tx, currentDate)
+	preBalance, err := s.store.CurrentBalanceAsOf(ctx, tx, normalized.Director, currentDate)
 	if err != nil {
 		return err
 	}
@@ -213,13 +292,16 @@ func (s *Service) appendEntry(ctx context.Context, tx db.Tx, entry NewEntry, all
 	if _, err := s.store.InsertEntry(ctx, tx, normalized); err != nil {
 		return err
 	}
+	if _, err := s.EnsureDirectorAccount(ctx, tx, Director{ID: normalized.Director}); err != nil {
+		return err
+	}
 	if _, err := s.ledger.Post(ctx, tx, journalEntryFor(normalized)); err != nil {
 		return err
 	}
 	if !publishTransition {
 		return nil
 	}
-	if err := s.publishTransition(ctx, tx, preBalance, postBalance); err != nil {
+	if err := s.publishTransition(ctx, tx, normalized.Director, preBalance, postBalance); err != nil {
 		return err
 	}
 	return nil
@@ -233,7 +315,7 @@ func (s *Service) appendPresentationEntry(ctx context.Context, tx db.Tx, normali
 	if err != nil {
 		return err
 	}
-	preBalance, err := s.store.CurrentBalanceAsOf(ctx, tx, currentDate)
+	preBalance, err := s.store.CurrentBalanceAsOf(ctx, tx, normalized.Director, currentDate)
 	if err != nil {
 		return err
 	}
@@ -248,10 +330,13 @@ func (s *Service) appendPresentationEntry(ctx context.Context, tx db.Tx, normali
 	if _, err := s.store.InsertEntry(ctx, tx, normalized); err != nil {
 		return err
 	}
+	if _, err := s.EnsureDirectorAccount(ctx, tx, Director{ID: normalized.Director}); err != nil {
+		return err
+	}
 	if !publishTransition {
 		return nil
 	}
-	if err := s.publishTransition(ctx, tx, preBalance, postBalance); err != nil {
+	if err := s.publishTransition(ctx, tx, normalized.Director, preBalance, postBalance); err != nil {
 		return err
 	}
 	return nil
@@ -272,7 +357,7 @@ func lockBalanceMutation(ctx context.Context, tx db.Tx) error {
 	return nil
 }
 
-func (s *Service) publishTransition(ctx context.Context, tx db.Tx, preBalance, postBalance money.Money) error {
+func (s *Service) publishTransition(ctx context.Context, tx db.Tx, director DirectorID, preBalance, postBalance money.Money) error {
 	if s.bus == nil {
 		return nil
 	}
@@ -281,11 +366,11 @@ func (s *Service) publishTransition(ctx context.Context, tx db.Tx, preBalance, p
 	postStatus := statusForBalance(postBalance)
 	switch {
 	case preStatus == StatusCredit && postStatus == StatusOverdrawn:
-		if err := s.bus.Publish(ctx, tx, WentOverdrawn{Balance: postBalance}); err != nil {
+		if err := s.bus.Publish(ctx, tx, WentOverdrawn{Director: director, Balance: postBalance}); err != nil {
 			return fmt.Errorf("dla: publish went overdrawn: %w", err)
 		}
 	case preStatus == StatusOverdrawn && postStatus == StatusCredit:
-		if err := s.bus.Publish(ctx, tx, BackInCredit{Balance: postBalance}); err != nil {
+		if err := s.bus.Publish(ctx, tx, BackInCredit{Director: director, Balance: postBalance}); err != nil {
 			return fmt.Errorf("dla: publish back in credit: %w", err)
 		}
 	}
@@ -310,6 +395,10 @@ func balanceAfterEntry(balance money.Money, entry NewEntry) (money.Money, error)
 
 func journalEntryFor(entry NewEntry) ledgerapi.NewJournalEntry {
 	postingAmountGBP := entry.Amount
+	dlaAccountCode, err := AccountCodeForDirector(entry.Director)
+	if err != nil {
+		panic(err)
+	}
 
 	journal := ledgerapi.NewJournalEntry{
 		Date:         entry.Date,
@@ -327,26 +416,30 @@ func journalEntryFor(entry NewEntry) ledgerapi.NewJournalEntry {
 		negativeCashAmount := money.Money{Amount: -cashAmount.Amount, Currency: cashAmount.Currency}
 		negativeAmountGBP := money.Money{Amount: -postingAmountGBP.Amount, Currency: postingAmountGBP.Currency}
 		journal.Postings = []ledgerapi.NewPosting{
-			{AccountCode: DLAAccountCode, Amount: cashAmount, AmountGBP: postingAmountGBP},
+			{AccountCode: dlaAccountCode, Amount: cashAmount, AmountGBP: postingAmountGBP},
 			{AccountCode: entry.CashAccountCode, Amount: negativeCashAmount, AmountGBP: negativeAmountGBP},
 		}
 	case EntryKindRepayment:
 		negativeAmount := money.Money{Amount: -entry.Amount.Amount, Currency: entry.Amount.Currency}
 		journal.Postings = []ledgerapi.NewPosting{
 			{AccountCode: entry.CashAccountCode, Amount: entry.Amount, AmountGBP: entry.Amount},
-			{AccountCode: DLAAccountCode, Amount: negativeAmount, AmountGBP: negativeAmount},
+			{AccountCode: dlaAccountCode, Amount: negativeAmount, AmountGBP: negativeAmount},
 		}
 	case EntryKindExpenseOwed:
 		negativeAmount := money.Money{Amount: -entry.Amount.Amount, Currency: entry.Amount.Currency}
 		journal.Postings = []ledgerapi.NewPosting{
 			{AccountCode: entry.ExpenseAccountCode, Amount: entry.Amount, AmountGBP: entry.Amount},
-			{AccountCode: DLAAccountCode, Amount: negativeAmount, AmountGBP: negativeAmount},
+			{AccountCode: dlaAccountCode, Amount: negativeAmount, AmountGBP: negativeAmount},
 		}
 	}
 	return journal
 }
 
 func normalizeNewEntry(entry NewEntry, allowDrawing bool) (NewEntry, error) {
+	director, _, err := normalizeDirectorID(entry.Director)
+	if err != nil {
+		return NewEntry{}, err
+	}
 	date, err := normalizeDate(entry.Date)
 	if err != nil {
 		return NewEntry{}, err
@@ -373,6 +466,7 @@ func normalizeNewEntry(entry NewEntry, allowDrawing bool) (NewEntry, error) {
 	}
 
 	normalized := NewEntry{
+		Director:    director,
 		Date:        date,
 		Kind:        kind,
 		Description: description,
@@ -408,7 +502,11 @@ func normalizeNewEntry(entry NewEntry, allowDrawing bool) (NewEntry, error) {
 	return normalized, nil
 }
 
-func normalizeExternalCredit(ref string, date time.Time, amount money.Money, description string) (NewEntry, error) {
+func normalizeExternalCredit(director DirectorID, ref string, date time.Time, amount money.Money, description string) (NewEntry, error) {
+	normalizedDirector, _, err := normalizeDirectorID(director)
+	if err != nil {
+		return NewEntry{}, err
+	}
 	normalizedDate, err := normalizeDate(date)
 	if err != nil {
 		return NewEntry{}, err
@@ -426,6 +524,7 @@ func normalizeExternalCredit(ref string, date time.Time, amount money.Money, des
 		return NewEntry{}, fmt.Errorf("dla: description is required: %w", ErrInvalidEntry)
 	}
 	return NewEntry{
+		Director:    normalizedDirector,
 		Date:        normalizedDate,
 		Kind:        EntryKindExpenseOwed,
 		Description: normalizedDescription,
@@ -436,6 +535,11 @@ func normalizeExternalCredit(ref string, date time.Time, amount money.Money, des
 
 func normalizeLedgerFilter(filter LedgerFilter) (LedgerFilter, error) {
 	normalized := LedgerFilter{Limit: filter.Limit}
+	director, _, err := normalizeDirectorID(filter.Director)
+	if err != nil {
+		return LedgerFilter{}, err
+	}
+	normalized.Director = director
 	if filter.From != nil {
 		from, err := normalizeDate(*filter.From)
 		if err != nil {
@@ -477,6 +581,40 @@ func normalizeLedgerFilter(filter LedgerFilter) (LedgerFilter, error) {
 		normalized.Limit = MaxLedgerLimit
 	}
 	return normalized, nil
+}
+
+func (s *Service) directors(ctx context.Context) ([]Director, error) {
+	if s.directorSource == nil {
+		return []Director{{ID: DefaultDirectorID, Name: "Director"}}, nil
+	}
+	directors, err := s.directorSource.Directors(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("dla: directors: %w", err)
+	}
+	if len(directors) == 0 {
+		return []Director{{ID: DefaultDirectorID, Name: "Director"}}, nil
+	}
+	out := make([]Director, 0, len(directors))
+	seen := map[DirectorID]bool{}
+	for index, director := range directors {
+		id := director.ID
+		if strings.TrimSpace(string(id)) == "" {
+			id = DirectorIDForIndex(index)
+		}
+		normalized, _, err := normalizeDirectorID(id)
+		if err != nil {
+			return nil, err
+		}
+		if seen[normalized] {
+			return nil, fmt.Errorf("dla: director %q is duplicated: %w", normalized, ErrInvalidDirector)
+		}
+		seen[normalized] = true
+		out = append(out, Director{
+			ID:   normalized,
+			Name: strings.TrimSpace(director.Name),
+		})
+	}
+	return out, nil
 }
 
 func normalizeEntryKind(kind EntryKind) (EntryKind, error) {

@@ -85,8 +85,17 @@ export function confirmBankingMatch(transactionID: number) {
   return apiClient.post(transactionCommandPath(transactionID, "confirm"));
 }
 
-export function fileBankingTransactionToDLA(transactionID: number) {
-  return apiClient.post(transactionCommandPath(transactionID, "file-dla"));
+export function fileBankingTransactionToDLA({
+  directorID,
+  transactionID,
+}: {
+  directorID?: string;
+  transactionID: number;
+}) {
+  return apiClient.post(
+    transactionFileDLAPath(transactionID),
+    directorID ? { director_id: directorID } : undefined,
+  );
 }
 
 export function recodeBankingTransaction(
@@ -121,15 +130,20 @@ function payeeRulePath(ruleID: number) {
 
 function transactionCommandPath(
   transactionID: number,
-  command: "confirm" | "exclude" | "file-dla" | "recode",
+  command: "confirm" | "exclude" | "recode",
 ) {
   return `/api/banking/transactions/${encodeURIComponent(
     String(transactionID),
   )}/${command}` as
     | "/api/banking/transactions/{id}/confirm"
     | "/api/banking/transactions/{id}/exclude"
-    | "/api/banking/transactions/{id}/file-dla"
     | "/api/banking/transactions/{id}/recode";
+}
+
+function transactionFileDLAPath(transactionID: number) {
+  return `/api/banking/transactions/${encodeURIComponent(
+    String(transactionID),
+  )}/file-dla` as "/api/banking/transactions/{id}/file-dla";
 }
 
 function transactionReceiptPath(transactionID: number) {

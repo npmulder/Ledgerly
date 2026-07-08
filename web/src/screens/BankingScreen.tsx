@@ -30,6 +30,7 @@ import {
   type BankingReviewQueue,
 } from "@/api/banking";
 import { isApiError } from "@/api/client";
+import { getIdentityProfile } from "@/api/identity";
 import { queryKeys } from "@/api/queryKeys";
 import {
   AdvisorStrip,
@@ -74,6 +75,11 @@ type ExcludeContext = {
   previousQueue?: BankingReviewQueue;
 };
 
+type BankingDirector = {
+  id: string;
+  name: string;
+};
+
 type RecentKindByID = Partial<Record<number, BankingReviewCard["kind"]>>;
 
 type AttachReceiptVariables = {
@@ -106,6 +112,14 @@ export function BankingScreen() {
     queryFn: getBankingReviewQueue,
     queryKey: queryKeys.banking.review(),
   });
+  const profileQuery = useQuery({
+    queryFn: getIdentityProfile,
+    queryKey: queryKeys.identity.profile(),
+  });
+  const directors = useMemo(
+    () => profileDirectors(profileQuery.data?.directors),
+    [profileQuery.data?.directors],
+  );
   const accounts = accountsQuery.data?.accounts ?? [];
   const selectedAccount = selectedAccountID
     ? (accounts.find((account) => account.id === selectedAccountID) ??
@@ -506,6 +520,7 @@ export function BankingScreen() {
             <ReviewCard
               busy={isCommandPending}
               card={card}
+              directors={directors}
               key={`${card.kind}-${card.suggestion_id}`}
               onAttachReceipt={(transactionID, file) =>
                 attachReceiptMutation.mutate({ file, transactionID })
@@ -519,7 +534,9 @@ export function BankingScreen() {
               onExclude={(selectedCard, reason) =>
                 excludeMutation.mutate({ card: selectedCard, reason })
               }
-              onFileDLA={(transactionID) => dlaMutation.mutate(transactionID)}
+              onFileDLA={(transactionID, directorID) =>
+                dlaMutation.mutate({ directorID, transactionID })
+              }
               onRecode={(transactionID, accountCode) =>
                 recodeMutation.mutate({ accountCode, transactionID })
               }
@@ -745,6 +762,7 @@ function AccountCreateModal({
 function ReviewCard({
   busy,
   card,
+  directors,
   onAttachReceipt,
   onConfirm,
   onDeleteReceipt,
@@ -754,11 +772,12 @@ function ReviewCard({
 }: {
   readonly busy: boolean;
   readonly card: BankingReviewCard;
+  readonly directors: BankingDirector[];
   readonly onAttachReceipt: (transactionID: number, file: File) => void;
   readonly onConfirm: (transactionID: number) => void;
   readonly onDeleteReceipt: (transactionID: number) => void;
   readonly onExclude: (card: BankingReviewCard, reason: string) => void;
-  readonly onFileDLA: (transactionID: number) => void;
+  readonly onFileDLA: (transactionID: number, directorID?: string) => void;
   readonly onRecode: (transactionID: number, accountCode: string) => void;
 }) {
   const title = reviewCardTitle(card);
@@ -773,6 +792,7 @@ function ReviewCard({
         <ReviewCardActions
           busy={busy}
           card={card}
+          directors={directors}
           onConfirm={onConfirm}
           onFileDLA={onFileDLA}
           onRecode={onRecode}
@@ -928,16 +948,23 @@ function RuleDetails({ card }: { readonly card: BankingReviewCard }) {
 function ReviewCardActions({
   busy,
   card,
+  directors,
   onConfirm,
   onFileDLA,
   onRecode,
 }: {
   readonly busy: boolean;
   readonly card: BankingReviewCard;
+  readonly directors: BankingDirector[];
   readonly onConfirm: (transactionID: number) => void;
-  readonly onFileDLA: (transactionID: number) => void;
+  readonly onFileDLA: (transactionID: number, directorID?: string) => void;
   readonly onRecode: (transactionID: number, accountCode: string) => void;
 }) {
+  const needsDirector = card.target.id === "director-loan" && directors.length > 1;
+  const [selectedDirectorID, setSelectedDirectorID] = useState(
+    directors[0]?.id ?? "director-1",
+  );
+
   if (card.kind === "match") {
     return (
       <div className="banking-review-card__actions">
@@ -956,9 +983,27 @@ function ReviewCardActions({
   if (card.kind === "suggestion") {
     return (
       <div className="banking-review-card__actions">
+        {needsDirector ? (
+          <Select
+            aria-label="DLA director"
+            onChange={(event) => setSelectedDirectorID(event.target.value)}
+            value={selectedDirectorID}
+          >
+            {directors.map((director) => (
+              <option key={director.id} value={director.id}>
+                {director.name}
+              </option>
+            ))}
+          </Select>
+        ) : null}
         <Button
           disabled={busy}
-          onClick={() => onFileDLA(card.transaction.id)}
+          onClick={() =>
+            onFileDLA(
+              card.transaction.id,
+              needsDirector ? selectedDirectorID : undefined,
+            )
+          }
           size="small"
           type="button"
         >
@@ -1315,6 +1360,19 @@ function recentKindLabel(
     return "Rule";
   }
   return "Match";
+}
+
+function profileDirectors(
+  directors: readonly { id?: string; name?: string }[] | undefined,
+): BankingDirector[] {
+  const mapped =
+    directors
+      ?.map((director, index) => ({
+        id: director.id?.trim() || `director-${index + 1}`,
+        name: director.name?.trim() || `Director ${index + 1}`,
+      }))
+      .filter((director) => director.name !== "") ?? [];
+  return mapped.length > 0 ? mapped : [{ id: "director-1", name: "Director" }];
 }
 
 function commandKind(response: BankingCommandResponse) {

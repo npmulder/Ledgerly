@@ -459,6 +459,7 @@ func identityComponents() map[string]any {
 				"type":     "object",
 				"required": []string{"name"},
 				"properties": map[string]any{
+					"id":             map[string]any{"type": "string", "pattern": "^director-[1-9][0-9]*$"},
 					"name":           map[string]any{"type": "string"},
 					"appointed_date": map[string]any{"type": "string", "format": "date"},
 					"is_chair":       map[string]any{"type": "boolean"},

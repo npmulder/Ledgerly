@@ -68,8 +68,12 @@ func TestInvoicingFactProviderMapsOverdueInvoices(t *testing.T) {
 
 func TestDLAFactProviderMapsOverdrawnStatus(t *testing.T) {
 	provider := NewDLAFactProvider(fakeDLAReadAPI{
-		balance: money.Money{Amount: -50000, Currency: "GBP"},
-		status:  dla.StatusOverdrawn,
+		statuses: []dla.StatusPayload{{
+			DirectorID:   dla.DefaultDirectorID,
+			DirectorName: "N. Meyer",
+			Balance:      money.Money{Amount: -50000, Currency: "GBP"},
+			Status:       dla.StatusOverdrawn,
+		}},
 	})
 
 	facts, err := provider.Gather(context.Background())
@@ -90,6 +94,13 @@ func TestDLAFactProviderMapsOverdrawnStatus(t *testing.T) {
 	}
 	if got := facts[FactRuleDLAStatus]; got != "overdrawn" {
 		t.Fatalf("status = %#v, want overdrawn", got)
+	}
+	if got := facts[FactRuleDLADirectorName]; got != "N. Meyer" {
+		t.Fatalf("director_name = %#v, want N. Meyer", got)
+	}
+	statuses := facts[FactDLADirectorStatuses].([]DLADirectorStatusFact)
+	if len(statuses) != 1 || statuses[0].DirectorID != "director-1" || statuses[0].DirectorName != "N. Meyer" {
+		t.Fatalf("dla.statuses = %#v, want N. Meyer director-1", statuses)
 	}
 }
 
@@ -357,13 +368,12 @@ func (f fakeInvoicingReadAPI) OverdueInvoices(context.Context) ([]invoicing.Over
 }
 
 type fakeDLAReadAPI struct {
-	balance money.Money
-	status  dla.Status
-	err     error
+	statuses []dla.StatusPayload
+	err      error
 }
 
-func (f fakeDLAReadAPI) CurrentBalance(context.Context) (money.Money, dla.Status, error) {
-	return f.balance, f.status, f.err
+func (f fakeDLAReadAPI) Statuses(context.Context) ([]dla.StatusPayload, error) {
+	return f.statuses, f.err
 }
 
 type fakeDividendsReadAPI struct {

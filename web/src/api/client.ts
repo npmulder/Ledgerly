@@ -60,10 +60,12 @@ type QueryParameters<Operation> = Operation extends {
   ? Query
   : never;
 
-type JsonRequestBody<Operation> = Operation extends {
-  requestBody: { content: { "application/json": infer Body } };
-}
-  ? Body
+type JsonRequestBody<Operation> = "requestBody" extends keyof Operation
+  ? Operation extends {
+      requestBody?: { content: { "application/json": infer Body } };
+    }
+    ? Body
+    : never
   : never;
 
 export type ProblemDetails = components["schemas"]["Problem"] &

@@ -111,7 +111,7 @@ func (s *Service) ConfirmMatch(ctx context.Context, txnID TransactionID) (_ Conf
 	}, nil
 }
 
-func (s *Service) FileToDLA(ctx context.Context, txnID TransactionID) (_ FileToDLAResult, err error) {
+func (s *Service) FileToDLA(ctx context.Context, txnID TransactionID, selectedDirector ...dla.DirectorID) (_ FileToDLAResult, err error) {
 	if err := s.requireReconciliationDeps(false, true, true); err != nil {
 		return FileToDLAResult{}, err
 	}
@@ -122,7 +122,7 @@ func (s *Service) FileToDLA(ctx context.Context, txnID TransactionID) (_ FileToD
 	}
 	defer rollbackOnError(ctx, tx, &err)
 
-	txn, account, _, err := s.lockSuggestedCommandTransaction(ctx, tx, txnID, SuggestionKindDLA)
+	txn, account, suggestion, err := s.lockSuggestedCommandTransaction(ctx, tx, txnID, SuggestionKindDLA)
 	if err != nil {
 		return FileToDLAResult{}, err
 	}
@@ -138,7 +138,12 @@ func (s *Service) FileToDLA(ctx context.Context, txnID TransactionID) (_ FileToD
 	if err != nil {
 		return FileToDLAResult{}, fmt.Errorf("banking: DLA GBP conversion: %w", err)
 	}
+	directorID, err := s.resolveDLADirector(ctx, suggestion, selectedDirector)
+	if err != nil {
+		return FileToDLAResult{}, err
+	}
 	if err = s.dla.FileDrawing(ctx, tx, dla.TxnRef{
+		Director:        directorID,
 		Ref:             bankingTxnRef(txn.ID),
 		Date:            txn.Date,
 		Amount:          drawingGBP,
@@ -164,7 +169,29 @@ func (s *Service) FileToDLA(ctx context.Context, txnID TransactionID) (_ FileToD
 		return FileToDLAResult{}, fmt.Errorf("banking: commit file to DLA transaction: %w", err)
 	}
 	txn.State = TransactionStateReconciled
-	return FileToDLAResult{Transaction: txn, Kind: SuggestionKindDLA, AmountGBP: drawingGBP}, nil
+	return FileToDLAResult{Transaction: txn, Kind: SuggestionKindDLA, AmountGBP: drawingGBP, DirectorID: directorID}, nil
+}
+
+func (s *Service) resolveDLADirector(ctx context.Context, suggestion Suggestion, selected []dla.DirectorID) (dla.DirectorID, error) {
+	if len(selected) > 0 && strings.TrimSpace(string(selected[0])) != "" {
+		return selected[0], nil
+	}
+	target := strings.TrimSpace(suggestion.Target)
+	if target != "" && target != dlaSuggestionTarget {
+		return dla.DirectorID(target), nil
+	}
+	directors, err := directorTargets(ctx, s.directorNames)
+	if err != nil {
+		return "", fmt.Errorf("banking: DLA directors: %w", err)
+	}
+	switch len(directors) {
+	case 0:
+		return dla.DefaultDirectorID, nil
+	case 1:
+		return directors[0].ID, nil
+	default:
+		return "", fmt.Errorf("banking: choose a director before filing generic DLA suggestion: %w", ErrDLADirectorRequired)
+	}
 }
 
 func (s *Service) Recode(ctx context.Context, txnID TransactionID, accountCode ledger.AccountCode) (_ RecodeResult, err error) {

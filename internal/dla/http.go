@@ -45,6 +45,7 @@ type ledgerResponse struct {
 
 type entryResponse struct {
 	ID             int64         `json:"id"`
+	DirectorID     string        `json:"director_id"`
 	Date           string        `json:"date"`
 	Kind           string        `json:"kind"`
 	Description    string        `json:"description"`
@@ -58,6 +59,8 @@ type entryResponse struct {
 }
 
 type balanceResponse struct {
+	DirectorID         string         `json:"director_id"`
+	DirectorName       string         `json:"director_name,omitempty"`
 	Balance            moneyResponse  `json:"balance"`
 	Status             string         `json:"status"`
 	Policy             policyResponse `json:"policy"`
@@ -78,6 +81,7 @@ type entryCreatedResponse struct {
 }
 
 type entryRequest struct {
+	DirectorID      string        `json:"director_id"`
 	Date            string        `json:"date"`
 	Kind            EntryKind     `json:"kind"`
 	Description     string        `json:"description"`
@@ -107,6 +111,7 @@ func (m *Module) RegisterRoutes(r chi.Router) {
 	h := dlaHandler{service: m.service, clock: m.clock}
 	r.Get("/ledger", h.listLedger)
 	r.Get("/balance", h.getBalance)
+	r.Get("/statuses", h.listStatuses)
 	r.Post("/entries", h.createEntry)
 }
 
@@ -135,12 +140,30 @@ func (h dlaHandler) listLedger(w nethttp.ResponseWriter, r *nethttp.Request) {
 }
 
 func (h dlaHandler) getBalance(w nethttp.ResponseWriter, r *nethttp.Request) {
-	status, err := h.service.CurrentStatus(r.Context())
+	director, err := directorFromQuery(r)
+	if err != nil {
+		writeDLABadRequest(w, r, err)
+		return
+	}
+	status, err := h.service.CurrentStatus(r.Context(), director)
 	if err != nil {
 		writeDLAError(w, r, err, "")
 		return
 	}
 	writeDLAJSON(w, nethttp.StatusOK, statusToResponse(status))
+}
+
+func (h dlaHandler) listStatuses(w nethttp.ResponseWriter, r *nethttp.Request) {
+	statuses, err := h.service.Statuses(r.Context())
+	if err != nil {
+		writeDLAError(w, r, err, "")
+		return
+	}
+	response := make([]balanceResponse, 0, len(statuses))
+	for _, status := range statuses {
+		response = append(response, statusToResponse(status))
+	}
+	writeDLAJSON(w, nethttp.StatusOK, map[string]any{"statuses": response})
 }
 
 func (h dlaHandler) createEntry(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -194,8 +217,12 @@ func (h dlaHandler) today() time.Time {
 func parseLedgerFilter(r *nethttp.Request) (LedgerFilter, error) {
 	query := r.URL.Query()
 	var filter LedgerFilter
+	director, err := directorFromQuery(r)
+	if err != nil {
+		return LedgerFilter{}, err
+	}
+	filter.Director = director
 
-	var err error
 	if value := strings.TrimSpace(query.Get("from")); value != "" {
 		filter.From, err = parseDatePointer("from", value)
 		if err != nil {
@@ -224,6 +251,18 @@ func parseDatePointer(name string, value string) (*time.Time, error) {
 		return nil, fmt.Errorf("%s must be a date in YYYY-MM-DD format", name)
 	}
 	return &parsed, nil
+}
+
+func directorFromQuery(r *nethttp.Request) (DirectorID, error) {
+	value := strings.TrimSpace(r.URL.Query().Get("director"))
+	if value == "" {
+		return DefaultDirectorID, nil
+	}
+	director, _, err := normalizeDirectorID(DirectorID(value))
+	if err != nil {
+		return "", err
+	}
+	return director, nil
 }
 
 func encodeEntryCursor(entry Entry) string {
@@ -265,6 +304,10 @@ func (r entryRequest) newEntry(today time.Time) (NewEntry, []fieldError, bool) {
 		fields = append(fields, fieldError{Pointer: "/kind", Detail: "must be repayment or expense-owed"})
 	}
 
+	director, _, err := normalizeDirectorID(DirectorID(r.DirectorID))
+	if err != nil {
+		fields = append(fields, fieldError{Pointer: "/director_id", Detail: "must be a director-N identifier"})
+	}
 	date, ok := parseEntryRequestDate(r.Date, today, &fields)
 	description := strings.TrimSpace(r.Description)
 	if description == "" {
@@ -277,6 +320,7 @@ func (r entryRequest) newEntry(today time.Time) (NewEntry, []fieldError, bool) {
 		fields = append(fields, fieldError{Pointer: "/source_ref", Detail: "must be omitted or start with manual:"})
 	}
 	entry := NewEntry{
+		Director:    director,
 		Date:        date,
 		Kind:        kind,
 		Description: description,
@@ -365,7 +409,7 @@ func validateManualCounterparty(
 	detail string,
 ) []fieldError {
 	normalized := normalizeAccountCode(code)
-	if normalized == DLAAccountCode {
+	if normalized == DLAAccountCode || strings.HasPrefix(string(normalized), string(DLAAccountCode)+"-") {
 		return []fieldError{{Pointer: pointer, Detail: "must not be the DLA control account"}}
 	}
 	account, ok := accounts[normalized]
@@ -414,6 +458,7 @@ func ledgerToResponse(entries []Entry, nextCursor *string) ledgerResponse {
 func entryToResponse(entry Entry) entryResponse {
 	return entryResponse{
 		ID:             int64(entry.ID),
+		DirectorID:     string(entry.Director),
 		Date:           entry.Date.UTC().Format(time.DateOnly),
 		Kind:           string(entry.Kind),
 		Description:    entry.Description,
@@ -429,8 +474,10 @@ func entryToResponse(entry Entry) entryResponse {
 
 func statusToResponse(status StatusPayload) balanceResponse {
 	response := balanceResponse{
-		Balance: moneyToResponse(status.Balance),
-		Status:  string(status.Status),
+		DirectorID:   string(status.DirectorID),
+		DirectorName: status.DirectorName,
+		Balance:      moneyToResponse(status.Balance),
+		Status:       string(status.Status),
 		Policy: policyResponse{
 			S455Charge:               status.Policy.S455Charge,
 			CreditStatusText:         status.Policy.CreditStatusText,
@@ -530,6 +577,10 @@ func writeDLAError(w nethttp.ResponseWriter, r *nethttp.Request, err error, acco
 	}
 	if errors.Is(err, ErrInvalidLedgerFilter) {
 		writeDLABadRequest(w, r, err)
+		return
+	}
+	if errors.Is(err, ErrInvalidDirector) {
+		writeDLAValidation(w, r, []fieldError{{Pointer: "/director_id", Detail: err.Error()}})
 		return
 	}
 	httpserver.WriteError(w, r, err)

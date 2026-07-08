@@ -224,8 +224,8 @@ func TestIsleOfManAccessorsReturnHandoffValues2025_26(t *testing.T) {
 					"dla_overdrawn_bik": {
 						severity:     "amber",
 						surfaces:     []string{"dashboard", "dla"},
-						factQuery:    []string{"balance", "clearance_amount_minor_units", "status"},
-						textTemplate: "Your loan account is {{ balance }} overdrawn. The Isle of Man has no UK-style s455 charge, but an interest-free loan can create a taxable benefit in kind - charge interest at the official rate or clear it with a dividend.",
+						factQuery:    []string{"balance", "clearance_amount_minor_units", "director_name", "status"},
+						textTemplate: "{{ director_name }} loan account is {{ balance }} overdrawn. The Isle of Man has no UK-style s455 charge, but an interest-free loan can create a taxable benefit in kind - charge interest at the official rate or clear it with a dividend.",
 						ctaLabel:     "Clear with dividend",
 						ctaAction:    "navigate:/dividends?amount={{ clearance_amount_minor_units }}",
 					},

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/npmulder/ledgerly/internal/jurisdiction"
@@ -17,6 +19,25 @@ const ModuleName = "dla"
 
 // DLAAccountCode is the seeded liability account backing the director's loan.
 const DLAAccountCode ledger.AccountCode = "2300-directors-loan"
+
+// DefaultDirectorID is the migration-safe director identifier used for legacy
+// single-director installs and rows that predate per-director DLA tracking.
+const DefaultDirectorID DirectorID = "director-1"
+
+// DirectorID identifies one director from the identity profile.
+type DirectorID string
+
+// Director is the minimum identity payload DLA needs to create/read
+// per-director accounts without importing the identity module.
+type Director struct {
+	ID   DirectorID `json:"id"`
+	Name string     `json:"name"`
+}
+
+// DirectorSource supplies the current profile director list in profile order.
+type DirectorSource interface {
+	Directors(context.Context) ([]Director, error)
+}
 
 // EntryID identifies an immutable DLA presentation-ledger entry.
 type EntryID int64
@@ -60,6 +81,8 @@ type PolicyPayload struct {
 
 // StatusPayload is the advisor fact payload for the current DLA state.
 type StatusPayload struct {
+	DirectorID               DirectorID    `json:"director_id"`
+	DirectorName             string        `json:"director_name"`
 	Balance                  money.Money   `json:"balance"`
 	Status                   Status        `json:"status"`
 	Policy                   PolicyPayload `json:"policy"`
@@ -70,6 +93,7 @@ type StatusPayload struct {
 // Amount is the GBP DLA presentation amount. CashAmount is the positive native
 // amount that left the bank account; zero defaults to Amount for GBP cash.
 type TxnRef struct {
+	Director        DirectorID
 	Ref             string
 	Date            time.Time
 	Amount          money.Money
@@ -81,6 +105,7 @@ type TxnRef struct {
 // NewEntry describes a manual DLA entry. AddEntry accepts repayment and
 // expense-owed entries; banking-origin drawings use FileDrawing.
 type NewEntry struct {
+	Director           DirectorID
 	Date               time.Time
 	Kind               EntryKind
 	Description        string
@@ -100,10 +125,11 @@ type EntryCursor struct {
 
 // LedgerFilter constrains DLA presentation-ledger browsing.
 type LedgerFilter struct {
-	From  *time.Time
-	To    *time.Time
-	After *EntryCursor
-	Limit int
+	Director DirectorID
+	From     *time.Time
+	To       *time.Time
+	After    *EntryCursor
+	Limit    int
 }
 
 const (
@@ -118,6 +144,7 @@ const (
 // RunningBalance is signed using DLA convention: positive is CR, negative is DR.
 type Entry struct {
 	ID             EntryID
+	Director       DirectorID
 	Date           time.Time
 	Kind           EntryKind
 	Description    string
@@ -133,12 +160,14 @@ type Entry struct {
 // DLA exposes the director's loan core API.
 type DLA interface {
 	FileDrawing(ctx context.Context, tx db.Tx, src TxnRef) error
-	RecordExternalCredit(ctx context.Context, tx db.Tx, ref string, date time.Time, amount money.Money, description string) error
+	EnsureDirectorAccount(ctx context.Context, tx db.Tx, director Director) (ledger.AccountCode, error)
+	RecordExternalCredit(ctx context.Context, tx db.Tx, director DirectorID, ref string, date time.Time, amount money.Money, description string) error
 	AddEntry(ctx context.Context, e NewEntry) error
 	Ledger(ctx context.Context, filter LedgerFilter) ([]Entry, error)
-	CurrentBalance(ctx context.Context) (money.Money, Status, error)
-	CurrentStatus(ctx context.Context) (StatusPayload, error)
-	SuggestedClearanceAmount(ctx context.Context) (money.Money, error)
+	CurrentBalance(ctx context.Context, director DirectorID) (money.Money, Status, error)
+	CurrentStatus(ctx context.Context, director DirectorID) (StatusPayload, error)
+	Statuses(ctx context.Context) ([]StatusPayload, error)
+	SuggestedClearanceAmount(ctx context.Context, director DirectorID) (money.Money, error)
 }
 
 var (
@@ -154,6 +183,9 @@ var (
 	// ErrConsistencyViolation reports that the DLA presentation ledger and
 	// ledger account disagree.
 	ErrConsistencyViolation = errors.New("dla: consistency invariant violation")
+
+	// ErrInvalidDirector reports malformed or unknown director identifiers.
+	ErrInvalidDirector = errors.New("dla: invalid director")
 )
 
 // DuplicateSourceError carries the duplicated source ref.
@@ -193,4 +225,50 @@ func clearanceAmountForBalance(balance money.Money) money.Money {
 		return money.Zero(balance.Currency)
 	}
 	return money.Money{Amount: -balance.Amount, Currency: balance.Currency}
+}
+
+// DirectorIDForIndex returns the canonical profile-order identifier for a
+// zero-based director index.
+func DirectorIDForIndex(index int) DirectorID {
+	if index < 0 {
+		index = 0
+	}
+	return DirectorID(fmt.Sprintf("director-%d", index+1))
+}
+
+// AccountCodeForDirector returns the DLA ledger account backing director.
+// director-1 intentionally aliases the legacy account for migration safety.
+func AccountCodeForDirector(director DirectorID) (ledger.AccountCode, error) {
+	normalized, ordinal, err := normalizeDirectorID(director)
+	if err != nil {
+		return "", err
+	}
+	if normalized == DefaultDirectorID {
+		return DLAAccountCode, nil
+	}
+	return ledger.AccountCode(fmt.Sprintf("%s-%d", DLAAccountCode, ordinal)), nil
+}
+
+func normalizeDirectorID(director DirectorID) (DirectorID, int, error) {
+	value := strings.TrimSpace(string(director))
+	if value == "" {
+		value = string(DefaultDirectorID)
+	}
+	if !strings.HasPrefix(value, "director-") {
+		return "", 0, fmt.Errorf("dla: director %q: %w", director, ErrInvalidDirector)
+	}
+	suffix := strings.TrimPrefix(value, "director-")
+	if suffix == "" || suffix[0] == '0' {
+		return "", 0, fmt.Errorf("dla: director %q: %w", director, ErrInvalidDirector)
+	}
+	for _, r := range suffix {
+		if r < '0' || r > '9' {
+			return "", 0, fmt.Errorf("dla: director %q: %w", director, ErrInvalidDirector)
+		}
+	}
+	ordinal, err := strconv.Atoi(suffix)
+	if err != nil || ordinal <= 0 {
+		return "", 0, fmt.Errorf("dla: director %q: %w", director, ErrInvalidDirector)
+	}
+	return DirectorID(value), ordinal, nil
 }

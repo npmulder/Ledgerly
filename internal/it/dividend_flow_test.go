@@ -189,7 +189,7 @@ func testDividendFlowClearWithDividend(t *testing.T) {
 	backInCredit := subscribeBackInCredit(t, f.h)
 
 	f.fileDLADrawing(t, "banking:clear-with-dividend-drawing", gbp(150_000))
-	status, err := f.dla.CurrentStatus(f.ctx)
+	status, err := f.dla.CurrentStatus(f.ctx, dla.DefaultDirectorID)
 	if err != nil {
 		t.Fatalf("CurrentStatus() overdrawn error = %v", err)
 	}
@@ -203,7 +203,7 @@ func testDividendFlowClearWithDividend(t *testing.T) {
 	}
 	assertDividendFlowDLAEntry(t, f, dividendSourceRef(declaration.ID), 150_000, gbp(0), dla.BalanceSideZero)
 
-	balance, currentStatus, err := f.dla.CurrentBalance(f.ctx)
+	balance, currentStatus, err := f.dla.CurrentBalance(f.ctx, dla.DefaultDirectorID)
 	if err != nil {
 		t.Fatalf("CurrentBalance() after clearance error = %v", err)
 	}

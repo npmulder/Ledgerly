@@ -11,6 +11,7 @@ of Man pack fact queries that pre-date collection expansion.
 | `dla.balance` | `money.Money` | dla | Source fact for `dla_overdrawn_bik` |
 | `dla.status` | `string` (`credit`, `overdrawn`) | dla | Source fact for `dla_overdrawn_bik` |
 | `dla.suggestedClearance` | `money.Money` | dla | DLA clearance templates and CTAs |
+| `dla.statuses` | `[]advisor.DLADirectorStatusFact` | dla | Per-director source collection for `dla_overdrawn_bik` |
 | `dividends.headroom` | `money.Money` | dividends | Source fact for `dividend_set_aside` |
 | `dividends.distributable` | `bool` | dividends | Dividend availability rules |
 | `vat.position` | `reports.VATPosition` | reports | VAT return advisor rules |
@@ -31,6 +32,8 @@ of Man pack fact queries that pre-date collection expansion.
 | `status` | `string` | dla compatibility binding from `dla.status` | `dla_overdrawn_bik` |
 | `clearance_amount` | `money.Money` | dla compatibility binding from `dla.suggestedClearance` | `dla_overdrawn_bik` |
 | `clearance_amount_minor_units` | `int64` | dla compatibility binding from `dla.suggestedClearance` | `dla_overdrawn_bik` |
+| `director_id` | `string` | dla compatibility binding from `dla.statuses[].director_id` | `dla_overdrawn_bik` |
+| `director_name` | `string` | dla compatibility binding from `dla.statuses[].director_name` | `dla_overdrawn_bik` |
 | `authority` | `string` | reports compatibility binding from `filings[].authority` | `filing_deadline_window` |
 | `due_date` | `date` | reports compatibility binding from `filings[].dueDate` | `filing_deadline_window` |
 | `days_until` | `int` | reports compatibility binding from `filings[].daysUntil` | `filing_deadline_window` |

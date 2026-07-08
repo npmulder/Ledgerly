@@ -13,7 +13,8 @@ const (
 // WentOverdrawn is published inside the balance-changing transaction when the
 // current DLA balance first becomes overdrawn.
 type WentOverdrawn struct {
-	Balance money.Money
+	Director DirectorID
+	Balance  money.Money
 }
 
 // Name implements bus.Event.
@@ -24,7 +25,8 @@ func (WentOverdrawn) Name() string {
 // BackInCredit is published inside the balance-changing transaction when the
 // current DLA balance returns to zero or credit.
 type BackInCredit struct {
-	Balance money.Money
+	Director DirectorID
+	Balance  money.Money
 }
 
 // Name implements bus.Event.

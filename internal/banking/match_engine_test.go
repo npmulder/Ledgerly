@@ -134,8 +134,8 @@ func TestDLADetectionUsesDirectorNameFixture(t *testing.T) {
 	if decision == nil {
 		t.Fatal("dlaDecision() = nil, want DLA suggestion")
 	}
-	if decision.input.Kind != SuggestionKindDLA || decision.input.Target != dlaSuggestionTarget {
-		t.Fatalf("DLA decision = %#v, want kind dla and target %q", decision.input, dlaSuggestionTarget)
+	if decision.input.Kind != SuggestionKindDLA || decision.input.Target != "director-1" {
+		t.Fatalf("DLA decision = %#v, want kind dla and target director-1", decision.input)
 	}
 	if !strings.Contains(decision.input.Explanation, "N. Meyer") {
 		t.Fatalf("DLA explanation = %q, want director name", decision.input.Explanation)
@@ -206,7 +206,7 @@ func TestDirectorNameRefreshCreatesUpdatesAndIsIdempotent(t *testing.T) {
 		t.Fatalf("director refresh run = %#v, want identity profile trigger evaluating and suggesting txn", run)
 	}
 	active := activeSuggestion(t, mustSuggestions(t, ctx, service, txnID))
-	if active.Kind != SuggestionKindDLA || active.Target != dlaSuggestionTarget || !strings.Contains(active.Explanation, "Jane Roberts") {
+	if active.Kind != SuggestionKindDLA || active.Target != "director-1" || !strings.Contains(active.Explanation, "Jane Roberts") {
 		t.Fatalf("active suggestion = %#v, want Jane Roberts DLA suggestion", active)
 	}
 	assertStoredTransactionState(t, ctx, pool, txnID, TransactionStateSuggested)

@@ -819,6 +819,30 @@
   gap: 4px;
 }
 
+.dla-director-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.dla-director-tabs__tab {
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--color-border-input);
+  border-radius: var(--radius-button);
+  background: var(--color-card);
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.dla-director-tabs__tab--active {
+  border-color: var(--color-navy);
+  background: var(--color-navy-tint);
+  color: var(--color-navy);
+}
+
 .dla-balance-banner {
   display: flex;
   align-items: center;
