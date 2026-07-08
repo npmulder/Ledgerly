@@ -121,6 +121,29 @@ func OpenAPIFragment() httpserver.OpenAPIFragment {
 					},
 				},
 			},
+			"/api/banking/reconciled-history": map[string]any{
+				"get": map[string]any{
+					"tags":        []string{"banking"},
+					"summary":     "Search reconciled transaction history",
+					"description": "Returns offset-paginated reconciled transactions with account, transaction date, payee/reference search, and reconciliation-kind filters.",
+					"operationId": "bankingGetReconciledHistory",
+					"security":    bankingSessionSecurity(),
+					"parameters": []map[string]any{
+						bankingQueryParameter("account", "Filter by bank account ID.", map[string]any{"type": "integer", "format": "int64"}),
+						bankingQueryParameter("from", "Filter to transactions on or after this date.", map[string]any{"type": "string", "format": "date"}),
+						bankingQueryParameter("to", "Filter to transactions on or before this date.", map[string]any{"type": "string", "format": "date"}),
+						bankingQueryParameter("search", "Search transaction payee and reference.", map[string]any{"type": "string"}),
+						bankingQueryParameter("kind", "Filter by reconciliation kind.", bankingReconciliationKindSchema()),
+						bankingQueryParameter("limit", "Maximum history rows.", map[string]any{"type": "integer", "minimum": 1, "maximum": MaxReconciledHistoryLimit, "default": DefaultReconciledHistoryLimit}),
+						bankingQueryParameter("offset", "Zero-based row offset.", map[string]any{"type": "integer", "minimum": 0, "default": 0}),
+					},
+					"responses": map[string]any{
+						"200": bankingJSONResponseRef("Reconciled transaction history", "BankingReconciledHistoryResponse"),
+						"400": bankingProblemResponse("Invalid history query"),
+						"401": bankingProblemResponse("Authentication required"),
+					},
+				},
+			},
 			"/api/banking/payee-rules": map[string]any{
 				"get": map[string]any{
 					"tags":        []string{"banking"},
@@ -374,14 +397,17 @@ func bankingComponents() map[string]any {
 				},
 				"additionalProperties": false,
 			},
-			"BankingBatchSummary":   bankingBatchSummarySchema(),
-			"BankingReceipt":        bankingReceiptSchema(),
-			"BankingTransaction":    bankingTransactionSchema(),
-			"BankingReviewTarget":   bankingReviewTargetSchema(),
-			"BankingReviewCard":     bankingReviewCardSchema(),
-			"BankingReviewQueue":    bankingReviewQueueSchema(),
-			"BankingFeedResponse":   bankingFeedResponseSchema(),
-			"BankingRecentResponse": bankingRecentResponseSchema(),
+			"BankingBatchSummary":                 bankingBatchSummarySchema(),
+			"BankingReceipt":                      bankingReceiptSchema(),
+			"BankingTransaction":                  bankingTransactionSchema(),
+			"BankingReviewTarget":                 bankingReviewTargetSchema(),
+			"BankingReviewCard":                   bankingReviewCardSchema(),
+			"BankingReviewQueue":                  bankingReviewQueueSchema(),
+			"BankingFeedResponse":                 bankingFeedResponseSchema(),
+			"BankingRecentResponse":               bankingRecentResponseSchema(),
+			"BankingReconciliationKind":           bankingReconciliationKindSchema(),
+			"BankingReconciledHistoryResponse":    bankingReconciledHistoryResponseSchema(),
+			"BankingReconciledHistoryTransaction": bankingReconciledHistoryTransactionSchema(),
 			"BankingRecentTransaction": map[string]any{
 				"type":     "object",
 				"required": []string{"transaction", "reconciled_at", "actor"},
@@ -648,6 +674,49 @@ func bankingRecentResponseSchema() map[string]any {
 			},
 		},
 		"additionalProperties": false,
+	}
+}
+
+func bankingReconciledHistoryResponseSchema() map[string]any {
+	return map[string]any{
+		"type":     "object",
+		"required": []string{"transactions", "total_count", "limit", "offset"},
+		"properties": map[string]any{
+			"transactions": map[string]any{
+				"type":  "array",
+				"items": map[string]any{"$ref": "#/components/schemas/BankingReconciledHistoryTransaction"},
+			},
+			"total_count": map[string]any{"type": "integer"},
+			"limit":       map[string]any{"type": "integer"},
+			"offset":      map[string]any{"type": "integer"},
+		},
+		"additionalProperties": false,
+	}
+}
+
+func bankingReconciledHistoryTransactionSchema() map[string]any {
+	return map[string]any{
+		"type":     "object",
+		"required": []string{"transaction", "reconciled_at", "actor", "kind"},
+		"properties": map[string]any{
+			"transaction":   map[string]any{"$ref": "#/components/schemas/BankingTransaction"},
+			"reconciled_at": map[string]any{"type": "string", "format": "date-time"},
+			"actor":         map[string]any{"type": "string"},
+			"kind":          map[string]any{"$ref": "#/components/schemas/BankingReconciliationKind"},
+		},
+		"additionalProperties": false,
+	}
+}
+
+func bankingReconciliationKindSchema() map[string]any {
+	return map[string]any{
+		"type": "string",
+		"enum": []string{
+			string(ReconciliationKindMatch),
+			string(ReconciliationKindSuggestion),
+			string(ReconciliationKindRule),
+			string(ReconciliationKindManual),
+		},
 	}
 }
 

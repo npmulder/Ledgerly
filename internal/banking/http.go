@@ -150,6 +150,20 @@ type recentTransactionResponse struct {
 	Actor        string              `json:"actor"`
 }
 
+type reconciledHistoryResponse struct {
+	Transactions []reconciledHistoryTransactionResponse `json:"transactions"`
+	TotalCount   int                                    `json:"total_count"`
+	Limit        int                                    `json:"limit"`
+	Offset       int                                    `json:"offset"`
+}
+
+type reconciledHistoryTransactionResponse struct {
+	Transaction  transactionResponse `json:"transaction"`
+	ReconciledAt string              `json:"reconciled_at"`
+	Actor        string              `json:"actor"`
+	Kind         ReconciliationKind  `json:"kind"`
+}
+
 type commandResponse struct {
 	Transaction      *transactionResponse `json:"transaction,omitempty"`
 	Kind             string               `json:"kind,omitempty"`
@@ -209,6 +223,7 @@ func (m *Module) RegisterRoutes(r chi.Router) {
 	r.Get("/review", h.getReviewQueue)
 	r.Get("/feed", h.getFeed)
 	r.Get("/recent", h.getRecent)
+	r.Get("/reconciled-history", h.getReconciledHistory)
 	r.Get("/payee-rules", h.listPayeeRules)
 	r.Post("/payee-rules", h.createPayeeRule)
 	r.Put("/payee-rules/{id}", h.updatePayeeRule)
@@ -401,6 +416,29 @@ func (h bankingHandler) getRecent(w nethttp.ResponseWriter, r *nethttp.Request) 
 		return
 	}
 	writeBankingJSON(w, nethttp.StatusOK, recentToResponse(recent))
+}
+
+func (h bankingHandler) getReconciledHistory(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if h.service == nil {
+		httpserver.WriteError(w, r, errors.New("banking: service is required"))
+		return
+	}
+	filter, err := parseReconciledHistoryFilter(r)
+	if err != nil {
+		writeBankingBadRequest(w, r, err)
+		return
+	}
+	page, err := h.service.ReconciledHistory(r.Context(), filter)
+	if err != nil {
+		writeBankingError(w, r, err)
+		return
+	}
+	page.Transactions, err = h.recentWithReceiptMetadata(r.Context(), page.Transactions)
+	if err != nil {
+		writeBankingError(w, r, err)
+		return
+	}
+	writeBankingJSON(w, nethttp.StatusOK, reconciledHistoryToResponse(page))
 }
 
 func (h bankingHandler) listPayeeRules(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -719,6 +757,58 @@ func parseFeedFilter(r *nethttp.Request) (FeedFilter, error) {
 		filter.After = &cursor
 	}
 	return filter, nil
+}
+
+func parseReconciledHistoryFilter(r *nethttp.Request) (ReconciledHistoryFilter, error) {
+	query := r.URL.Query()
+	filter := ReconciledHistoryFilter{
+		Search: strings.TrimSpace(query.Get("search")),
+		Kind:   ReconciliationKind(strings.TrimSpace(query.Get("kind"))),
+	}
+	if value := strings.TrimSpace(query.Get("account")); value != "" {
+		id, err := parsePositiveInt64(value, "account")
+		if err != nil {
+			return ReconciledHistoryFilter{}, err
+		}
+		filter.AccountID = AccountID(id)
+	}
+	var err error
+	filter.From, err = parseOptionalDate(query.Get("from"), "from")
+	if err != nil {
+		return ReconciledHistoryFilter{}, err
+	}
+	filter.To, err = parseOptionalDate(query.Get("to"), "to")
+	if err != nil {
+		return ReconciledHistoryFilter{}, err
+	}
+	if value := strings.TrimSpace(query.Get("limit")); value != "" {
+		filter.Limit, err = strconv.Atoi(value)
+		if err != nil {
+			return ReconciledHistoryFilter{}, fmt.Errorf("limit must be an integer")
+		}
+	}
+	if value := strings.TrimSpace(query.Get("offset")); value != "" {
+		filter.Offset, err = strconv.Atoi(value)
+		if err != nil {
+			return ReconciledHistoryFilter{}, fmt.Errorf("offset must be an integer")
+		}
+	}
+	if _, err := normalizeReconciledHistoryFilter(filter); err != nil {
+		return ReconciledHistoryFilter{}, err
+	}
+	return filter, nil
+}
+
+func parseOptionalDate(value string, label string) (*time.Time, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, nil
+	}
+	parsed, err := time.ParseInLocation(time.DateOnly, value, time.UTC)
+	if err != nil {
+		return nil, fmt.Errorf("%s must be a date in YYYY-MM-DD format", label)
+	}
+	return &parsed, nil
 }
 
 func parsePositiveInt64(value string, label string) (int64, error) {
@@ -1062,6 +1152,24 @@ func recentToResponse(recent []ReconciledTransaction) recentResponse {
 			Transaction:  transactionToResponse(item.Transaction),
 			ReconciledAt: item.ReconciledAt.UTC().Format(time.RFC3339Nano),
 			Actor:        item.Actor,
+		})
+	}
+	return response
+}
+
+func reconciledHistoryToResponse(page ReconciledHistoryPage) reconciledHistoryResponse {
+	response := reconciledHistoryResponse{
+		Transactions: make([]reconciledHistoryTransactionResponse, 0, len(page.Transactions)),
+		TotalCount:   page.TotalCount,
+		Limit:        page.Limit,
+		Offset:       page.Offset,
+	}
+	for _, item := range page.Transactions {
+		response.Transactions = append(response.Transactions, reconciledHistoryTransactionResponse{
+			Transaction:  transactionToResponse(item.Transaction),
+			ReconciledAt: item.ReconciledAt.UTC().Format(time.RFC3339Nano),
+			Actor:        item.Actor,
+			Kind:         item.Kind,
 		})
 	}
 	return response

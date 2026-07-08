@@ -11,6 +11,16 @@ export type InvoicesQueryParams = {
   readonly status?: string;
 };
 
+export type BankingHistoryQueryParams = {
+  readonly accountId?: number | null;
+  readonly from?: string;
+  readonly kind?: string;
+  readonly limit?: number;
+  readonly offset?: number;
+  readonly search?: string;
+  readonly to?: string;
+};
+
 export const queryKeys = {
   audit: {
     history: (
@@ -37,6 +47,19 @@ export const queryKeys = {
       "banking",
       "recent",
       { accountId, limit },
+    ],
+    history: ({
+      accountId = null,
+      from = "",
+      kind = "",
+      limit = 25,
+      offset = 0,
+      search = "",
+      to = "",
+    }: BankingHistoryQueryParams = {}): ApiQueryKey => [
+      "banking",
+      "history",
+      { accountId, from, kind, limit, offset, search, to },
     ],
     payeeRules: (): ApiQueryKey => ["banking", "payeeRules", {}],
     review: (): ApiQueryKey => ["banking", "review", {}],

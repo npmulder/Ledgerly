@@ -66,6 +66,8 @@ const (
 	MaxFeedLimit                   = 500
 	DefaultRecentlyReconciledLimit = 10
 	MaxRecentlyReconciledLimit     = 100
+	DefaultReconciledHistoryLimit  = 25
+	MaxReconciledHistoryLimit      = 100
 	MaxReceiptBytes                = 2 * 1024 * 1024
 )
 
@@ -250,6 +252,33 @@ type ReconciledTransaction struct {
 	Transaction  Transaction
 	ReconciledAt time.Time
 	Actor        string
+	Kind         ReconciliationKind
+}
+
+type ReconciliationKind string
+
+const (
+	ReconciliationKindMatch      ReconciliationKind = "match"
+	ReconciliationKindSuggestion ReconciliationKind = "suggestion"
+	ReconciliationKindRule       ReconciliationKind = "rule"
+	ReconciliationKindManual     ReconciliationKind = "manual"
+)
+
+type ReconciledHistoryFilter struct {
+	AccountID AccountID
+	From      *time.Time
+	To        *time.Time
+	Search    string
+	Kind      ReconciliationKind
+	Limit     int
+	Offset    int
+}
+
+type ReconciledHistoryPage struct {
+	Transactions []ReconciledTransaction
+	TotalCount   int
+	Limit        int
+	Offset       int
 }
 
 type Receipt struct {

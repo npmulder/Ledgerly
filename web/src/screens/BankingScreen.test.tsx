@@ -15,6 +15,7 @@ import type {
   BankingCommandResponse,
   BankingMoney,
   BankingRecentTransaction,
+  BankingReconciledHistoryTransaction,
   BankingReceipt,
   BankingReviewCard,
   BankingReviewQueue,
@@ -307,6 +308,57 @@ describe("BankingScreen", () => {
     });
     expect(await screen.findByText("EUR Client")).toBeInTheDocument();
     expect(screen.queryByText("Fabrikam Ltd")).not.toBeInTheDocument();
+  });
+
+  it("browses reconciled history with filters and pagination", async () => {
+    const user = userEvent.setup();
+    const api = bankingApi({
+      accounts: accountsFixture(),
+      history: historyFixture(),
+      queue: reviewQueueFixture(),
+      recent: recentFixture(),
+    });
+    vi.stubGlobal("fetch", api.fetch);
+
+    renderBanking();
+
+    await user.click(
+      await screen.findByRole("tab", { name: "Reconciled history" }),
+    );
+
+    expect(
+      await screen.findByLabelText("Reconciled transaction history"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("1-10 of 12")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Next" }));
+    expect(await screen.findByText("11-12 of 12")).toBeInTheDocument();
+    expect(screen.getByText("History Payee 11")).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText("Account"), "2");
+    await user.selectOptions(screen.getByLabelText("Kind"), "rule");
+    await user.type(screen.getByLabelText("Search"), "subscription");
+
+    await waitFor(() => {
+      expect(screen.getByText("1-1 of 1")).toBeInTheDocument();
+    });
+    const historyTable = screen.getByLabelText("Reconciled transaction history");
+    expect(within(historyTable).getByText("HETZNER ONLINE")).toBeInTheDocument();
+    expect(within(historyTable).getByText("Payee rule")).toBeInTheDocument();
+    expect(within(historyTable).getAllByText("Receipt")).toHaveLength(2);
+    expect(within(historyTable).getByRole("link", { name: "Preview" })).toHaveAttribute(
+      "href",
+      "/api/banking/transactions/212/receipt",
+    );
+
+    const finalHistoryRequest = historyRequests(api.fetch).at(-1);
+    expect(finalHistoryRequest?.searchParams.get("account")).toBe("2");
+    expect(finalHistoryRequest?.searchParams.get("kind")).toBe("rule");
+    expect(finalHistoryRequest?.searchParams.get("search")).toBe(
+      "subscription",
+    );
+    expect(finalHistoryRequest?.searchParams.get("limit")).toBe("10");
+    expect(finalHistoryRequest?.searchParams.get("offset")).toBe("0");
   });
 
   it("hides zero-value realised FX notices when confirming matches", async () => {
@@ -602,12 +654,14 @@ function bankingApi({
   accounts,
   confirmResponse,
   excludeStatus = 200,
+  history = [],
   queue,
   recent,
 }: {
   accounts: BankingAccount[];
   confirmResponse?: BankingCommandResponse;
   excludeStatus?: number;
+  history?: BankingReconciledHistoryTransaction[];
   queue: BankingReviewQueue;
   recent: BankingRecentTransaction[];
 }) {
@@ -671,6 +725,32 @@ function bankingApi({
                 (item) => item.transaction.account_id === Number(accountID),
               )
             : recent,
+        });
+      }
+      if (path === "/api/banking/reconciled-history") {
+        const accountID = url.searchParams.get("account");
+        const kind = url.searchParams.get("kind");
+        const search = url.searchParams.get("search")?.toLowerCase() ?? "";
+        const from = url.searchParams.get("from") ?? "";
+        const to = url.searchParams.get("to") ?? "";
+        const limit = Number(url.searchParams.get("limit") ?? "10");
+        const offset = Number(url.searchParams.get("offset") ?? "0");
+        const rows = history.filter((item) => {
+          const txn = item.transaction;
+          const haystack = `${txn.payee} ${txn.reference}`.toLowerCase();
+          return (
+            (!accountID || txn.account_id === Number(accountID)) &&
+            (!kind || item.kind === kind) &&
+            (!search || haystack.includes(search)) &&
+            (!from || txn.date >= from) &&
+            (!to || txn.date <= to)
+          );
+        });
+        return jsonResponse({
+          limit,
+          offset,
+          total_count: rows.length,
+          transactions: rows.slice(offset, offset + limit),
         });
       }
       if (
@@ -858,6 +938,41 @@ function recentFixture(): BankingRecentTransaction[] {
   ];
 }
 
+function historyFixture(): BankingReconciledHistoryTransaction[] {
+  const rows: BankingReconciledHistoryTransaction[] = Array.from(
+    { length: 11 },
+    (_, index) => ({
+      actor: "reconciliation-command",
+      kind: index % 2 === 0 ? "match" : "manual",
+      reconciled_at: `2026-07-${String(index + 1).padStart(2, "0")}T10:00:00Z`,
+      transaction: transactionFixture({
+        amount: money(10000 + index, "GBP"),
+        date: `2026-07-${String(index + 1).padStart(2, "0")}`,
+        id: 201 + index,
+        payee: `History Payee ${index + 1}`,
+        reference: `HISTORY-${index + 1}`,
+        state: "reconciled",
+      }),
+    }),
+  );
+  rows.push({
+    actor: "reconciliation-command",
+    kind: "rule",
+    reconciled_at: "2026-07-12T10:00:00Z",
+    transaction: transactionFixture({
+      account_id: 2,
+      amount: money(-890, "EUR"),
+      date: "2026-07-12",
+      id: 212,
+      payee: "HETZNER ONLINE",
+      receipt: receiptFixture(212),
+      reference: "subscription",
+      state: "reconciled",
+    }),
+  });
+  return rows;
+}
+
 function reviewCard(card: BankingReviewCard): BankingReviewCard {
   return card;
 }
@@ -881,13 +996,13 @@ function transactionFixture(
   };
 }
 
-function receiptFixture(): BankingReceipt {
+function receiptFixture(transactionID = 101): BankingReceipt {
   return {
     content_type: "application/pdf",
     filename: "receipt.pdf",
     size: 31,
     uploaded_at: "2026-07-06T09:15:00Z",
-    url: "/api/banking/transactions/101/receipt",
+    url: `/api/banking/transactions/${transactionID}/receipt`,
   };
 }
 
@@ -899,6 +1014,12 @@ function recentRequestAccounts(fetchMock: ReturnType<typeof vi.fn>) {
   return fetchMock.mock.calls
     .map(([input]) => urlFromRequest(input).searchParams.get("account"))
     .filter((accountID): accountID is string => accountID !== null);
+}
+
+function historyRequests(fetchMock: ReturnType<typeof vi.fn>) {
+  return fetchMock.mock.calls
+    .map(([input]) => urlFromRequest(input))
+    .filter((url) => url.pathname === "/api/banking/reconciled-history");
 }
 
 function urlFromRequest(input: RequestInfo | URL) {

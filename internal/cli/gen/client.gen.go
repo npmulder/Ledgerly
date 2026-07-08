@@ -64,8 +64,8 @@ const (
 
 // Defines values for BankingPayeeRuleCreatedFrom.
 const (
-	Manual BankingPayeeRuleCreatedFrom = "manual"
-	Recode BankingPayeeRuleCreatedFrom = "recode"
+	BankingPayeeRuleCreatedFromManual BankingPayeeRuleCreatedFrom = "manual"
+	BankingPayeeRuleCreatedFromRecode BankingPayeeRuleCreatedFrom = "recode"
 )
 
 // Defines values for BankingPayeeRuleMatchMode.
@@ -87,11 +87,19 @@ const (
 	Imagepng       BankingReceiptContentType = "image/png"
 )
 
+// Defines values for BankingReconciliationKind.
+const (
+	BankingReconciliationKindManual     BankingReconciliationKind = "manual"
+	BankingReconciliationKindMatch      BankingReconciliationKind = "match"
+	BankingReconciliationKindRule       BankingReconciliationKind = "rule"
+	BankingReconciliationKindSuggestion BankingReconciliationKind = "suggestion"
+)
+
 // Defines values for BankingReviewCardKind.
 const (
-	BankingReviewCardKindMatch      BankingReviewCardKind = "match"
-	BankingReviewCardKindRule       BankingReviewCardKind = "rule"
-	BankingReviewCardKindSuggestion BankingReviewCardKind = "suggestion"
+	Match      BankingReviewCardKind = "match"
+	Rule       BankingReviewCardKind = "rule"
+	Suggestion BankingReviewCardKind = "suggestion"
 )
 
 // Defines values for BankingReviewTargetType.
@@ -413,6 +421,14 @@ const (
 	BankingGetFeedParamsStateUnreconciled BankingGetFeedParamsState = "unreconciled"
 )
 
+// Defines values for BankingGetReconciledHistoryParamsKind.
+const (
+	BankingGetReconciledHistoryParamsKindManual     BankingGetReconciledHistoryParamsKind = "manual"
+	BankingGetReconciledHistoryParamsKindMatch      BankingGetReconciledHistoryParamsKind = "match"
+	BankingGetReconciledHistoryParamsKindRule       BankingGetReconciledHistoryParamsKind = "rule"
+	BankingGetReconciledHistoryParamsKindSuggestion BankingGetReconciledHistoryParamsKind = "suggestion"
+)
+
 // Defines values for InvoicingListInvoicesParamsStatus.
 const (
 	InvoicingListInvoicesParamsStatusDraft   InvoicingListInvoicesParamsStatus = "draft"
@@ -648,6 +664,25 @@ type BankingRecentTransaction struct {
 type BankingRecodeRequest struct {
 	AccountCode string `json:"account_code"`
 }
+
+// BankingReconciledHistoryResponse defines model for BankingReconciledHistoryResponse.
+type BankingReconciledHistoryResponse struct {
+	Limit        int                                   `json:"limit"`
+	Offset       int                                   `json:"offset"`
+	TotalCount   int                                   `json:"total_count"`
+	Transactions []BankingReconciledHistoryTransaction `json:"transactions"`
+}
+
+// BankingReconciledHistoryTransaction defines model for BankingReconciledHistoryTransaction.
+type BankingReconciledHistoryTransaction struct {
+	Actor        string                    `json:"actor"`
+	Kind         BankingReconciliationKind `json:"kind"`
+	ReconciledAt time.Time                 `json:"reconciled_at"`
+	Transaction  BankingTransaction        `json:"transaction"`
+}
+
+// BankingReconciliationKind defines model for BankingReconciliationKind.
+type BankingReconciliationKind string
 
 // BankingReviewCard defines model for BankingReviewCard.
 type BankingReviewCard struct {
@@ -1947,6 +1982,33 @@ type BankingGetRecentParams struct {
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// BankingGetReconciledHistoryParams defines parameters for BankingGetReconciledHistory.
+type BankingGetReconciledHistoryParams struct {
+	// Account Filter by bank account ID.
+	Account *int64 `form:"account,omitempty" json:"account,omitempty"`
+
+	// From Filter to transactions on or after this date.
+	From *openapi_types.Date `form:"from,omitempty" json:"from,omitempty"`
+
+	// To Filter to transactions on or before this date.
+	To *openapi_types.Date `form:"to,omitempty" json:"to,omitempty"`
+
+	// Search Search transaction payee and reference.
+	Search *string `form:"search,omitempty" json:"search,omitempty"`
+
+	// Kind Filter by reconciliation kind.
+	Kind *BankingGetReconciledHistoryParamsKind `form:"kind,omitempty" json:"kind,omitempty"`
+
+	// Limit Maximum history rows.
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Offset Zero-based row offset.
+	Offset *int `form:"offset,omitempty" json:"offset,omitempty"`
+}
+
+// BankingGetReconciledHistoryParamsKind defines parameters for BankingGetReconciledHistory.
+type BankingGetReconciledHistoryParamsKind string
+
 // BankingPutReceiptMultipartBody defines parameters for BankingPutReceipt.
 type BankingPutReceiptMultipartBody struct {
 	Receipt openapi_types.File `json:"receipt"`
@@ -2952,6 +3014,9 @@ type ClientInterface interface {
 	// BankingGetRecent request
 	BankingGetRecent(ctx context.Context, params *BankingGetRecentParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// BankingGetReconciledHistory request
+	BankingGetReconciledHistory(ctx context.Context, params *BankingGetReconciledHistoryParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// BankingGetReviewQueue request
 	BankingGetReviewQueue(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -3386,6 +3451,18 @@ func (c *Client) BankingUpdatePayeeRule(ctx context.Context, id int64, body Bank
 
 func (c *Client) BankingGetRecent(ctx context.Context, params *BankingGetRecentParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewBankingGetRecentRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) BankingGetReconciledHistory(ctx context.Context, params *BankingGetReconciledHistoryParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBankingGetReconciledHistoryRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -5029,6 +5106,151 @@ func NewBankingGetRecentRequest(server string, params *BankingGetRecentParams) (
 		if params.Limit != nil {
 
 			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "limit", runtime.ParamLocationQuery, *params.Limit); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewBankingGetReconciledHistoryRequest generates requests for BankingGetReconciledHistory
+func NewBankingGetReconciledHistoryRequest(server string, params *BankingGetReconciledHistoryParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/banking/reconciled-history")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Account != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "account", runtime.ParamLocationQuery, *params.Account); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.From != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "from", runtime.ParamLocationQuery, *params.From); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.To != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "to", runtime.ParamLocationQuery, *params.To); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Search != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "search", runtime.ParamLocationQuery, *params.Search); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Kind != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "kind", runtime.ParamLocationQuery, *params.Kind); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "limit", runtime.ParamLocationQuery, *params.Limit); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Offset != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "offset", runtime.ParamLocationQuery, *params.Offset); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
 				return nil, err
@@ -7963,6 +8185,9 @@ type ClientWithResponsesInterface interface {
 	// BankingGetRecentWithResponse request
 	BankingGetRecentWithResponse(ctx context.Context, params *BankingGetRecentParams, reqEditors ...RequestEditorFn) (*BankingGetRecentResponse, error)
 
+	// BankingGetReconciledHistoryWithResponse request
+	BankingGetReconciledHistoryWithResponse(ctx context.Context, params *BankingGetReconciledHistoryParams, reqEditors ...RequestEditorFn) (*BankingGetReconciledHistoryResponse, error)
+
 	// BankingGetReviewQueueWithResponse request
 	BankingGetReviewQueueWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*BankingGetReviewQueueResponse, error)
 
@@ -8529,6 +8754,30 @@ func (r BankingGetRecentResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r BankingGetRecentResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type BankingGetReconciledHistoryResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON200                   *BankingReconciledHistoryResponse
+	ApplicationproblemJSON400 *Problem
+	ApplicationproblemJSON401 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r BankingGetReconciledHistoryResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r BankingGetReconciledHistoryResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -10434,6 +10683,15 @@ func (c *ClientWithResponses) BankingGetRecentWithResponse(ctx context.Context, 
 	return ParseBankingGetRecentResponse(rsp)
 }
 
+// BankingGetReconciledHistoryWithResponse request returning *BankingGetReconciledHistoryResponse
+func (c *ClientWithResponses) BankingGetReconciledHistoryWithResponse(ctx context.Context, params *BankingGetReconciledHistoryParams, reqEditors ...RequestEditorFn) (*BankingGetReconciledHistoryResponse, error) {
+	rsp, err := c.BankingGetReconciledHistory(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseBankingGetReconciledHistoryResponse(rsp)
+}
+
 // BankingGetReviewQueueWithResponse request returning *BankingGetReviewQueueResponse
 func (c *ClientWithResponses) BankingGetReviewQueueWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*BankingGetReviewQueueResponse, error) {
 	rsp, err := c.BankingGetReviewQueue(ctx, reqEditors...)
@@ -11777,6 +12035,46 @@ func ParseBankingGetRecentResponse(rsp *http.Response) (*BankingGetRecentRespons
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest BankingRecentResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseBankingGetReconciledHistoryResponse parses an HTTP response from a BankingGetReconciledHistoryWithResponse call
+func ParseBankingGetReconciledHistoryResponse(rsp *http.Response) (*BankingGetReconciledHistoryResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &BankingGetReconciledHistoryResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest BankingReconciledHistoryResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

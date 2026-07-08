@@ -1060,6 +1060,7 @@
 
 .banking-screen,
 .banking-review,
+.banking-history,
 .banking-rail {
   display: grid;
   align-content: start;
@@ -1105,6 +1106,38 @@
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 10px;
+}
+
+.banking-view-tabs {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--color-border-input);
+  border-radius: var(--radius-input);
+  background: var(--color-panel);
+}
+
+.banking-view-tab {
+  min-height: 34px;
+  padding: 7px 12px;
+  border: 0;
+  border-radius: calc(var(--radius-input) - 2px);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--type-secondary-size);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.banking-view-tab[aria-selected="true"] {
+  background: var(--color-card);
+  color: var(--color-navy);
+  box-shadow: var(--shadow-soft);
 }
 
 .banking-import-input {
@@ -1539,6 +1572,85 @@
   display: flex;
   align-items: center;
   flex-wrap: wrap;
+  gap: 8px;
+}
+
+.banking-history-filters {
+  display: grid;
+  grid-template-columns:
+    minmax(150px, 0.9fr) repeat(2, minmax(130px, 0.7fr))
+    minmax(180px, 1.2fr) minmax(150px, 0.8fr) auto;
+  align-items: end;
+  gap: var(--layout-grid-gap);
+}
+
+.banking-history-filters .ui-button {
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.banking-history {
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.banking-history-table {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.banking-history-table .ui-table {
+  min-width: 1080px;
+}
+
+.banking-history-table__copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.banking-history-table__copy strong {
+  overflow-wrap: anywhere;
+}
+
+.banking-history-table__copy span {
+  color: var(--color-text-secondary);
+  font-size: var(--type-secondary-size);
+}
+
+.banking-history-table__receipt {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.banking-history-table__receipt a {
+  color: var(--color-navy);
+  font-size: var(--type-secondary-size);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.banking-history-table__actions {
+  display: block;
+  width: 84px;
+  min-height: 32px;
+}
+
+.banking-history-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--layout-grid-gap);
+}
+
+.banking-history-pagination__actions {
+  display: inline-flex;
+  align-items: center;
   gap: 8px;
 }
 
@@ -3618,6 +3730,14 @@ article.ui-stat-card.dashboard-stat-card--unavailable {
     width: 100%;
   }
 
+  .banking-view-tabs {
+    width: 100%;
+  }
+
+  .banking-view-tab {
+    flex: 1 1 0;
+  }
+
   .banking-account-cards {
     grid-template-columns: 1fr;
   }
@@ -3635,6 +3755,75 @@ article.ui-stat-card.dashboard-stat-card--unavailable {
 
   .banking-rule-form {
     grid-template-columns: 1fr;
+  }
+
+  .banking-history-filters {
+    grid-template-columns: 1fr;
+  }
+
+  .banking-history-filters .ui-button,
+  .banking-history-pagination,
+  .banking-history-pagination__actions,
+  .banking-history-pagination__actions .ui-button {
+    width: 100%;
+  }
+
+  .banking-history-pagination {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .banking-history-table {
+    overflow-x: visible;
+  }
+
+  .banking-history-table .ui-table {
+    display: block;
+    min-width: 0;
+  }
+
+  .banking-history-table .ui-table__head {
+    display: none;
+  }
+
+  .banking-history-table .ui-table__body {
+    display: grid;
+    gap: 12px;
+  }
+
+  .banking-history-table .ui-table__row {
+    display: grid;
+    padding: 12px;
+    border: 1px solid var(--color-border-card);
+    border-radius: var(--radius-card);
+    background: var(--color-card);
+  }
+
+  .banking-history-table .ui-table__cell {
+    display: grid;
+    grid-template-columns: minmax(112px, 0.45fr) minmax(0, 1fr);
+    align-items: start;
+    gap: 10px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--color-border-hairline);
+    text-align: left;
+    white-space: normal;
+  }
+
+  .banking-history-table .ui-table__cell:last-child {
+    border-bottom: 0;
+  }
+
+  .banking-history-table .ui-table__cell::before {
+    content: attr(data-label);
+    color: var(--color-text-secondary);
+    font-size: 11px;
+    font-weight: 800;
+    text-transform: uppercase;
+  }
+
+  .banking-history-table__actions {
+    width: 100%;
   }
 
   .banking-rule-form .ui-button,

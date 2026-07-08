@@ -19,9 +19,25 @@ export type BankingRecentResponse =
   components["schemas"]["BankingRecentResponse"];
 export type BankingRecentTransaction =
   components["schemas"]["BankingRecentTransaction"];
+export type BankingReconciledHistoryResponse =
+  components["schemas"]["BankingReconciledHistoryResponse"];
+export type BankingReconciledHistoryTransaction =
+  components["schemas"]["BankingReconciledHistoryTransaction"];
+export type BankingReconciliationKind =
+  components["schemas"]["BankingReconciliationKind"];
 export type BankingReceipt = components["schemas"]["BankingReceipt"];
 export type BankingReviewCard = components["schemas"]["BankingReviewCard"];
 export type BankingReviewQueue = components["schemas"]["BankingReviewQueue"];
+
+export type BankingReconciledHistoryParams = {
+  readonly accountID?: number | null;
+  readonly from?: string;
+  readonly kind?: BankingReconciliationKind | "";
+  readonly limit?: number;
+  readonly offset?: number;
+  readonly search?: string;
+  readonly to?: string;
+};
 
 export function getBankingAccounts() {
   return apiClient.get("/api/banking/accounts");
@@ -41,6 +57,28 @@ export function getRecentlyReconciled(
 ) {
   return apiClient.get("/api/banking/recent", {
     query: { account: accountID ?? undefined, limit },
+  });
+}
+
+export function getReconciledHistory({
+  accountID = null,
+  from = "",
+  kind = "",
+  limit = 25,
+  offset = 0,
+  search = "",
+  to = "",
+}: BankingReconciledHistoryParams = {}) {
+  return apiClient.get("/api/banking/reconciled-history", {
+    query: {
+      account: accountID ?? undefined,
+      from: from || undefined,
+      kind: kind || undefined,
+      limit,
+      offset,
+      search: search || undefined,
+      to: to || undefined,
+    },
   });
 }
 
