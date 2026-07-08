@@ -9,6 +9,11 @@ export type BankingCommandResponse =
   components["schemas"]["BankingCommandResponse"];
 export type BankingCreateAccountRequest =
   components["schemas"]["BankingCreateAccountRequest"];
+export type BankingFeedResponse = components["schemas"]["BankingFeedResponse"];
+export type BankingInvoiceCandidate =
+  components["schemas"]["BankingInvoiceCandidate"];
+export type BankingInvoiceCandidatesResponse =
+  components["schemas"]["BankingInvoiceCandidatesResponse"];
 export type BankingMoney = components["schemas"]["BankingMoney"];
 export type BankingPayeeRule = components["schemas"]["BankingPayeeRule"];
 export type BankingPayeeRuleRequest =
@@ -22,6 +27,8 @@ export type BankingRecentTransaction =
 export type BankingReceipt = components["schemas"]["BankingReceipt"];
 export type BankingReviewCard = components["schemas"]["BankingReviewCard"];
 export type BankingReviewQueue = components["schemas"]["BankingReviewQueue"];
+export type BankingTransaction = components["schemas"]["BankingTransaction"];
+export type BankingTransactionState = BankingTransaction["state"];
 
 export function getBankingAccounts() {
   return apiClient.get("/api/banking/accounts");
@@ -33,6 +40,18 @@ export function createBankingAccount(account: BankingCreateAccountRequest) {
 
 export function getBankingReviewQueue() {
   return apiClient.get("/api/banking/review");
+}
+
+export function getBankingFeed({
+  accountID = null,
+  state,
+}: {
+  accountID?: number | null;
+  state?: BankingTransactionState;
+}) {
+  return apiClient.get("/api/banking/feed", {
+    query: { account: accountID ?? undefined, state },
+  });
 }
 
 export function getRecentlyReconciled(
@@ -81,8 +100,15 @@ export function deleteBankingPayeeRule(id: number) {
   return apiClient.delete(payeeRulePath(id));
 }
 
-export function confirmBankingMatch(transactionID: number) {
-  return apiClient.post(transactionCommandPath(transactionID, "confirm"));
+export function getBankingInvoiceCandidates(transactionID: number) {
+  return apiClient.get(transactionInvoiceCandidatesPath(transactionID));
+}
+
+export function confirmBankingMatch(transactionID: number, invoiceID?: string) {
+  return apiClient.post(
+    transactionCommandPath(transactionID, "confirm"),
+    invoiceID ? { invoice_id: invoiceID } : undefined,
+  );
 }
 
 export function fileBankingTransactionToDLA(transactionID: number) {
@@ -135,6 +161,12 @@ function transactionCommandPath(
     | "/api/banking/transactions/{id}/file-dla"
     | "/api/banking/transactions/{id}/recode"
     | "/api/banking/transactions/{id}/unreconcile";
+}
+
+function transactionInvoiceCandidatesPath(transactionID: number) {
+  return `/api/banking/transactions/${encodeURIComponent(
+    String(transactionID),
+  )}/invoice-candidates` as "/api/banking/transactions/{id}/invoice-candidates";
 }
 
 function transactionReceiptPath(transactionID: number) {

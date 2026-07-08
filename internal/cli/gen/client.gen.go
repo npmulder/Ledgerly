@@ -94,6 +94,12 @@ const (
 	BankingReviewCardKindSuggestion BankingReviewCardKind = "suggestion"
 )
 
+// Defines values for BankingReviewTargetInvoiceStatus.
+const (
+	BankingReviewTargetInvoiceStatusDraft BankingReviewTargetInvoiceStatus = "draft"
+	BankingReviewTargetInvoiceStatusSent  BankingReviewTargetInvoiceStatus = "sent"
+)
+
 // Defines values for BankingReviewTargetType.
 const (
 	BankingReviewTargetTypeAccount BankingReviewTargetType = "account"
@@ -385,8 +391,8 @@ const (
 
 // Defines values for ReportsShareResponseStatus.
 const (
-	ReportsShareResponseStatusManualSend ReportsShareResponseStatus = "manual-send"
-	ReportsShareResponseStatusSent       ReportsShareResponseStatus = "sent"
+	ManualSend ReportsShareResponseStatus = "manual-send"
+	Sent       ReportsShareResponseStatus = "sent"
 )
 
 // Defines values for ReportsVATResponseStatus.
@@ -557,6 +563,11 @@ type BankingCommandResponse struct {
 // BankingCommandResponseKind defines model for BankingCommandResponse.Kind.
 type BankingCommandResponseKind string
 
+// BankingConfirmMatchRequest defines model for BankingConfirmMatchRequest.
+type BankingConfirmMatchRequest struct {
+	InvoiceId string `json:"invoice_id"`
+}
+
 // BankingCreateAccountRequest defines model for BankingCreateAccountRequest.
 type BankingCreateAccountRequest struct {
 	Currency BankingCreateAccountRequestCurrency `json:"currency"`
@@ -574,6 +585,22 @@ type BankingCreateAccountRequestProvider string
 type BankingFeedResponse struct {
 	NextCursor   *string              `json:"next_cursor"`
 	Transactions []BankingTransaction `json:"transactions"`
+}
+
+// BankingInvoiceCandidate defines model for BankingInvoiceCandidate.
+type BankingInvoiceCandidate struct {
+	Amount        BankingMoney       `json:"amount"`
+	Client        string             `json:"client"`
+	DueDate       openapi_types.Date `json:"due_date"`
+	InvoiceId     string             `json:"invoice_id"`
+	InvoiceNumber string             `json:"invoice_number"`
+	IssueDate     openapi_types.Date `json:"issue_date"`
+	Status        string             `json:"status"`
+}
+
+// BankingInvoiceCandidatesResponse defines model for BankingInvoiceCandidatesResponse.
+type BankingInvoiceCandidatesResponse struct {
+	Candidates []BankingInvoiceCandidate `json:"candidates"`
 }
 
 // BankingMoney defines model for BankingMoney.
@@ -671,13 +698,17 @@ type BankingReviewQueue struct {
 
 // BankingReviewTarget defines model for BankingReviewTarget.
 type BankingReviewTarget struct {
-	AccountCode   *string                 `json:"account_code,omitempty"`
-	Client        *string                 `json:"client,omitempty"`
-	Id            *string                 `json:"id,omitempty"`
-	InvoiceNumber *string                 `json:"invoice_number,omitempty"`
-	TimesApplied  *int                    `json:"times_applied"`
-	Type          BankingReviewTargetType `json:"type"`
+	AccountCode   *string                           `json:"account_code,omitempty"`
+	Client        *string                           `json:"client,omitempty"`
+	Id            *string                           `json:"id,omitempty"`
+	InvoiceNumber *string                           `json:"invoice_number,omitempty"`
+	InvoiceStatus *BankingReviewTargetInvoiceStatus `json:"invoice_status,omitempty"`
+	TimesApplied  *int                              `json:"times_applied"`
+	Type          BankingReviewTargetType           `json:"type"`
 }
+
+// BankingReviewTargetInvoiceStatus defines model for BankingReviewTarget.InvoiceStatus.
+type BankingReviewTargetInvoiceStatus string
 
 // BankingReviewTargetType defines model for BankingReviewTarget.Type.
 type BankingReviewTargetType string
@@ -2077,6 +2108,9 @@ type BankingCreatePayeeRuleJSONRequestBody = BankingPayeeRuleRequest
 // BankingUpdatePayeeRuleJSONRequestBody defines body for BankingUpdatePayeeRule for application/json ContentType.
 type BankingUpdatePayeeRuleJSONRequestBody = BankingPayeeRuleRequest
 
+// BankingConfirmTransactionJSONRequestBody defines body for BankingConfirmTransaction for application/json ContentType.
+type BankingConfirmTransactionJSONRequestBody = BankingConfirmMatchRequest
+
 // BankingExcludeTransactionJSONRequestBody defines body for BankingExcludeTransaction for application/json ContentType.
 type BankingExcludeTransactionJSONRequestBody = BankingReasonRequest
 
@@ -2955,8 +2989,10 @@ type ClientInterface interface {
 	// BankingGetReviewQueue request
 	BankingGetReviewQueue(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// BankingConfirmTransaction request
-	BankingConfirmTransaction(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// BankingConfirmTransactionWithBody request with any body
+	BankingConfirmTransactionWithBody(ctx context.Context, id int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	BankingConfirmTransaction(ctx context.Context, id int64, body BankingConfirmTransactionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// BankingExcludeTransactionWithBody request with any body
 	BankingExcludeTransactionWithBody(ctx context.Context, id int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2965,6 +3001,9 @@ type ClientInterface interface {
 
 	// BankingFileTransactionToDLA request
 	BankingFileTransactionToDLA(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// BankingListInvoiceCandidates request
+	BankingListInvoiceCandidates(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// BankingDeleteReceipt request
 	BankingDeleteReceipt(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -3411,8 +3450,20 @@ func (c *Client) BankingGetReviewQueue(ctx context.Context, reqEditors ...Reques
 	return c.Client.Do(req)
 }
 
-func (c *Client) BankingConfirmTransaction(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewBankingConfirmTransactionRequest(c.Server, id)
+func (c *Client) BankingConfirmTransactionWithBody(ctx context.Context, id int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBankingConfirmTransactionRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) BankingConfirmTransaction(ctx context.Context, id int64, body BankingConfirmTransactionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBankingConfirmTransactionRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3449,6 +3500,18 @@ func (c *Client) BankingExcludeTransaction(ctx context.Context, id int64, body B
 
 func (c *Client) BankingFileTransactionToDLA(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewBankingFileTransactionToDLARequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) BankingListInvoiceCandidates(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBankingListInvoiceCandidatesRequest(c.Server, id)
 	if err != nil {
 		return nil, err
 	}
@@ -5095,8 +5158,19 @@ func NewBankingGetReviewQueueRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
-// NewBankingConfirmTransactionRequest generates requests for BankingConfirmTransaction
-func NewBankingConfirmTransactionRequest(server string, id int64) (*http.Request, error) {
+// NewBankingConfirmTransactionRequest calls the generic BankingConfirmTransaction builder with application/json body
+func NewBankingConfirmTransactionRequest(server string, id int64, body BankingConfirmTransactionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewBankingConfirmTransactionRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewBankingConfirmTransactionRequestWithBody generates requests for BankingConfirmTransaction with any type of body
+func NewBankingConfirmTransactionRequestWithBody(server string, id int64, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -5121,10 +5195,12 @@ func NewBankingConfirmTransactionRequest(server string, id int64) (*http.Request
 		return nil, err
 	}
 
-	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	req, err := http.NewRequest("POST", queryURL.String(), body)
 	if err != nil {
 		return nil, err
 	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -5203,6 +5279,40 @@ func NewBankingFileTransactionToDLARequest(server string, id int64) (*http.Reque
 	}
 
 	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewBankingListInvoiceCandidatesRequest generates requests for BankingListInvoiceCandidates
+func NewBankingListInvoiceCandidatesRequest(server string, id int64) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/banking/transactions/%s/invoice-candidates", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -8015,8 +8125,10 @@ type ClientWithResponsesInterface interface {
 	// BankingGetReviewQueueWithResponse request
 	BankingGetReviewQueueWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*BankingGetReviewQueueResponse, error)
 
-	// BankingConfirmTransactionWithResponse request
-	BankingConfirmTransactionWithResponse(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*BankingConfirmTransactionResponse, error)
+	// BankingConfirmTransactionWithBodyWithResponse request with any body
+	BankingConfirmTransactionWithBodyWithResponse(ctx context.Context, id int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*BankingConfirmTransactionResponse, error)
+
+	BankingConfirmTransactionWithResponse(ctx context.Context, id int64, body BankingConfirmTransactionJSONRequestBody, reqEditors ...RequestEditorFn) (*BankingConfirmTransactionResponse, error)
 
 	// BankingExcludeTransactionWithBodyWithResponse request with any body
 	BankingExcludeTransactionWithBodyWithResponse(ctx context.Context, id int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*BankingExcludeTransactionResponse, error)
@@ -8025,6 +8137,9 @@ type ClientWithResponsesInterface interface {
 
 	// BankingFileTransactionToDLAWithResponse request
 	BankingFileTransactionToDLAWithResponse(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*BankingFileTransactionToDLAResponse, error)
+
+	// BankingListInvoiceCandidatesWithResponse request
+	BankingListInvoiceCandidatesWithResponse(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*BankingListInvoiceCandidatesResponse, error)
 
 	// BankingDeleteReceiptWithResponse request
 	BankingDeleteReceiptWithResponse(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*BankingDeleteReceiptResponse, error)
@@ -8688,6 +8803,32 @@ func (r BankingFileTransactionToDLAResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r BankingFileTransactionToDLAResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type BankingListInvoiceCandidatesResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON200                   *BankingInvoiceCandidatesResponse
+	ApplicationproblemJSON401 *Problem
+	ApplicationproblemJSON404 *Problem
+	ApplicationproblemJSON409 *Problem
+	ApplicationproblemJSON422 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r BankingListInvoiceCandidatesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r BankingListInvoiceCandidatesResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -10523,9 +10664,17 @@ func (c *ClientWithResponses) BankingGetReviewQueueWithResponse(ctx context.Cont
 	return ParseBankingGetReviewQueueResponse(rsp)
 }
 
-// BankingConfirmTransactionWithResponse request returning *BankingConfirmTransactionResponse
-func (c *ClientWithResponses) BankingConfirmTransactionWithResponse(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*BankingConfirmTransactionResponse, error) {
-	rsp, err := c.BankingConfirmTransaction(ctx, id, reqEditors...)
+// BankingConfirmTransactionWithBodyWithResponse request with arbitrary body returning *BankingConfirmTransactionResponse
+func (c *ClientWithResponses) BankingConfirmTransactionWithBodyWithResponse(ctx context.Context, id int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*BankingConfirmTransactionResponse, error) {
+	rsp, err := c.BankingConfirmTransactionWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseBankingConfirmTransactionResponse(rsp)
+}
+
+func (c *ClientWithResponses) BankingConfirmTransactionWithResponse(ctx context.Context, id int64, body BankingConfirmTransactionJSONRequestBody, reqEditors ...RequestEditorFn) (*BankingConfirmTransactionResponse, error) {
+	rsp, err := c.BankingConfirmTransaction(ctx, id, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -10556,6 +10705,15 @@ func (c *ClientWithResponses) BankingFileTransactionToDLAWithResponse(ctx contex
 		return nil, err
 	}
 	return ParseBankingFileTransactionToDLAResponse(rsp)
+}
+
+// BankingListInvoiceCandidatesWithResponse request returning *BankingListInvoiceCandidatesResponse
+func (c *ClientWithResponses) BankingListInvoiceCandidatesWithResponse(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*BankingListInvoiceCandidatesResponse, error) {
+	rsp, err := c.BankingListInvoiceCandidates(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseBankingListInvoiceCandidatesResponse(rsp)
 }
 
 // BankingDeleteReceiptWithResponse request returning *BankingDeleteReceiptResponse
@@ -12114,6 +12272,60 @@ func ParseBankingFileTransactionToDLAResponse(rsp *http.Response) (*BankingFileT
 			return nil, err
 		}
 		response.ApplicationproblemJSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseBankingListInvoiceCandidatesResponse parses an HTTP response from a BankingListInvoiceCandidatesWithResponse call
+func ParseBankingListInvoiceCandidatesResponse(rsp *http.Response) (*BankingListInvoiceCandidatesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &BankingListInvoiceCandidatesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest BankingInvoiceCandidatesResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest Problem

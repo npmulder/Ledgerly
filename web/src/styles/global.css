@@ -1320,6 +1320,10 @@
   box-shadow: inset 4px 0 0 var(--color-navy);
 }
 
+.banking-review-card--manual {
+  box-shadow: inset 4px 0 0 var(--color-success);
+}
+
 .banking-review-card__title {
   display: inline-flex;
   min-width: 0;
@@ -1403,11 +1407,13 @@
   white-space: nowrap;
 }
 
-.banking-recode {
+.banking-recode,
+.banking-invoice-picker {
   position: relative;
 }
 
 .banking-recode summary,
+.banking-invoice-picker summary,
 .banking-card-menu summary {
   display: inline-flex;
   min-height: 32px;
@@ -1425,11 +1431,13 @@
 }
 
 .banking-recode summary::-webkit-details-marker,
+.banking-invoice-picker summary::-webkit-details-marker,
 .banking-card-menu summary::-webkit-details-marker {
   display: none;
 }
 
 .banking-recode__panel,
+.banking-invoice-picker__panel,
 .banking-card-menu__panel {
   position: absolute;
   z-index: 5;
@@ -1443,10 +1451,23 @@
   box-shadow: var(--shadow-screen);
 }
 
-.banking-recode__panel {
+.banking-recode__panel,
+.banking-invoice-picker__panel {
   left: 0;
   min-width: 260px;
   max-width: min(320px, calc(100vw - 48px));
+}
+
+.banking-invoice-picker__panel label {
+  display: grid;
+  gap: 6px;
+  font-size: var(--type-secondary-size);
+  font-weight: 700;
+}
+
+.banking-invoice-picker__panel select {
+  width: 100%;
+  min-height: 38px;
 }
 
 .banking-card-menu__panel {
@@ -3664,11 +3685,14 @@ article.ui-stat-card.dashboard-stat-card--unavailable {
   }
 
   .banking-recode,
-  .banking-recode summary {
+  .banking-recode summary,
+  .banking-invoice-picker,
+  .banking-invoice-picker summary {
     width: 100%;
   }
 
   .banking-recode__panel,
+  .banking-invoice-picker__panel,
   .banking-card-menu__panel {
     right: auto;
     left: 0;

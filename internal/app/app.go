@@ -403,6 +403,10 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		invoicing.WithRateLockReader(invoicingMoneyFXLockReader{module: moneyFXModule}),
 		invoicing.WithLedger(ledgerService),
 		invoicing.WithEventBus(eventBus),
+		invoicing.WithIdentity(identityProfile),
+		invoicing.WithInvoicePDFAssetStore(pdfAssetStore),
+		invoicing.WithInvoicePDFEngine(deps.InvoicingPDFEngine),
+		invoicing.WithInvoicePDFBaseURL(pdfBaseURL),
 	)
 	reportsService := reports.New(
 		ledgerService,

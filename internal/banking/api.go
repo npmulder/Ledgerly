@@ -129,6 +129,14 @@ type InvoiceSettler interface {
 	ClearSettlementByTxnRef(context.Context, db.Tx, string) (invoicing.Invoice, error)
 }
 
+type invoiceMatchSettler interface {
+	SettleMatchedInvoice(context.Context, db.Tx, string, string, time.Time, invoicing.Money) (invoicing.MatchSettlement, error)
+}
+
+type invoicePDFScheduler interface {
+	ScheduleInvoicePDFRender(string)
+}
+
 // DLAFileDrawer is the DLA command banking calls when filing a bank
 // transaction as a director drawing. dla.Service satisfies this interface.
 type DLAFileDrawer interface {
