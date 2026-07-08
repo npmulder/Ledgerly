@@ -1344,6 +1344,10 @@
   box-shadow: inset 4px 0 0 var(--color-navy);
 }
 
+.banking-review-card--manual {
+  box-shadow: inset 4px 0 0 var(--color-success);
+}
+
 .banking-review-card__title {
   display: inline-flex;
   min-width: 0;
@@ -1427,11 +1431,13 @@
   white-space: nowrap;
 }
 
-.banking-recode {
+.banking-recode,
+.banking-invoice-picker {
   position: relative;
 }
 
 .banking-recode summary,
+.banking-invoice-picker summary,
 .banking-card-menu summary {
   display: inline-flex;
   min-height: 32px;
@@ -1449,11 +1455,13 @@
 }
 
 .banking-recode summary::-webkit-details-marker,
+.banking-invoice-picker summary::-webkit-details-marker,
 .banking-card-menu summary::-webkit-details-marker {
   display: none;
 }
 
 .banking-recode__panel,
+.banking-invoice-picker__panel,
 .banking-card-menu__panel {
   position: absolute;
   z-index: 5;
@@ -1467,10 +1475,23 @@
   box-shadow: var(--shadow-screen);
 }
 
-.banking-recode__panel {
+.banking-recode__panel,
+.banking-invoice-picker__panel {
   left: 0;
   min-width: 260px;
   max-width: min(320px, calc(100vw - 48px));
+}
+
+.banking-invoice-picker__panel label {
+  display: grid;
+  gap: 6px;
+  font-size: var(--type-secondary-size);
+  font-weight: 700;
+}
+
+.banking-invoice-picker__panel select {
+  width: 100%;
+  min-height: 38px;
 }
 
 .banking-card-menu__panel {
@@ -1653,6 +1674,10 @@
 
 .invoices-search {
   flex: 0 1 240px;
+}
+
+.recurring-templates-table .ui-button {
+  min-width: 72px;
 }
 
 .advisor-strip {
@@ -3411,6 +3436,44 @@ article.ui-stat-card.dashboard-stat-card--unavailable {
   font-variant-numeric: tabular-nums;
 }
 
+.invoice-recurring-form {
+  display: grid;
+  gap: 12px;
+}
+
+.invoice-recurring-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text);
+  font-size: var(--type-secondary-size);
+  font-weight: 700;
+}
+
+.invoice-recurring-toggle input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--color-navy);
+}
+
+.invoice-recurring-status {
+  margin: 0;
+  padding: 9px 10px;
+  border-radius: var(--radius-input);
+  font-size: var(--type-secondary-size);
+  font-weight: 700;
+}
+
+.invoice-recurring-status--success {
+  background: var(--color-success-tint);
+  color: var(--color-success);
+}
+
+.invoice-recurring-status--error {
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+}
+
 .invoice-advisor-notes p,
 .invoice-validation-summary ul {
   margin: 0;
@@ -3646,11 +3709,14 @@ article.ui-stat-card.dashboard-stat-card--unavailable {
   }
 
   .banking-recode,
-  .banking-recode summary {
+  .banking-recode summary,
+  .banking-invoice-picker,
+  .banking-invoice-picker summary {
     width: 100%;
   }
 
   .banking-recode__panel,
+  .banking-invoice-picker__panel,
   .banking-card-menu__panel {
     right: auto;
     left: 0;

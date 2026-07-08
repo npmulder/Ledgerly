@@ -145,6 +145,12 @@ func (m *Module) OverdueInvoices(ctx context.Context) ([]OverdueInvoiceFact, err
 	return m.service.OverdueInvoices(ctx)
 }
 
+// RecurringDraftInvoices returns advisor-facing facts for generated recurring
+// draft invoices waiting to be sent.
+func (m *Module) RecurringDraftInvoices(ctx context.Context) ([]RecurringDraftInvoiceFact, error) {
+	return m.service.RecurringDraftInvoices(ctx)
+}
+
 // Client returns one invoicing client by id.
 func (m *Module) Client(ctx context.Context, id string) (Client, error) {
 	return m.service.Client(ctx, id)
@@ -188,7 +194,8 @@ type Client struct {
 }
 
 // MatchCandidate is the public invoice fact shape used by banking's
-// deterministic match engine. It intentionally excludes draft invoices.
+// deterministic match engine. Draft candidates are explicit because confirming
+// one must send the invoice before settlement.
 type MatchCandidate struct {
 	InvoiceID  string
 	Number     string
@@ -199,6 +206,14 @@ type MatchCandidate struct {
 	Amount     Money
 	Status     InvoiceStatus
 	Settled    bool
+}
+
+// MatchSettlement is returned when banking settles an invoice match. SentFromDraft
+// tells the caller whether post-commit send side effects, such as PDF rendering,
+// need to run after the caller's transaction commits.
+type MatchSettlement struct {
+	Invoice       Invoice
+	SentFromDraft bool
 }
 
 // FieldError points to an invalid JSON field in client commands.

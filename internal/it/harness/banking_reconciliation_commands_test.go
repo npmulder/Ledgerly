@@ -99,6 +99,72 @@ func TestBankingConfirmMatchPostsSettlesAndReturnsRealisedFX(t *testing.T) {
 	it.AssertLedgerBalanced(t, h)
 }
 
+func TestBankingConfirmMatchToInvoiceAllocatesManualAndOverridesSuggestion(t *testing.T) {
+	ctx := context.Background()
+	h := harness.New(t, harness.Options{ClockStart: time.Date(2025, 5, 1, 9, 0, 0, 0, time.UTC)})
+	fixtures.Rates(t, h, fixtures.RatesStep(map[time.Time]string{
+		time.Date(2025, 5, 1, 0, 0, 0, 0, time.UTC): "0.8500",
+		time.Date(2025, 5, 2, 0, 0, 0, 0, time.UTC): "0.8600",
+	}))
+
+	invoiceService := newInvoiceService(t, h)
+	manualInvoice, err := invoiceService.Send(ctx, createEURInvoiceDraft(t, h, invoiceService, 450_000).ID)
+	if err != nil {
+		t.Fatalf("Send(manual) error = %v", err)
+	}
+	wrongInvoice, err := invoiceService.Send(ctx, createEURInvoiceDraft(t, h, invoiceService, 125_000).ID)
+	if err != nil {
+		t.Fatalf("Send(wrong) error = %v", err)
+	}
+	overrideInvoice, err := invoiceService.Send(ctx, createEURInvoiceDraft(t, h, invoiceService, 225_000).ID)
+	if err != nil {
+		t.Fatalf("Send(override) error = %v", err)
+	}
+
+	bankingService := newBankingCommandService(t, h, invoiceService)
+	account := mustCreateBankingAccount(t, ctx, bankingService, "Manual allocation EUR", "EUR")
+	manualTxnID := importDashboardBankTxn(t, ctx, h, bankingService, account.ID, dashboardBankTxn{
+		ID:        "manual-allocation-no-suggestion",
+		Date:      time.Date(2025, 5, 2, 12, 0, 0, 0, time.UTC),
+		Payee:     "Contoso GmbH",
+		Reference: "no reference",
+		Amount:    money.Money{Amount: 450_000, Currency: "EUR"},
+	})
+
+	manualResult, err := bankingService.ConfirmMatchToInvoice(ctx, manualTxnID, manualInvoice.ID)
+	if err != nil {
+		t.Fatalf("ConfirmMatchToInvoice(manual) error = %v", err)
+	}
+	if manualResult.InvoiceID != manualInvoice.ID || manualResult.Transaction.State != banking.TransactionStateReconciled {
+		t.Fatalf("manual result = %#v, want invoice %s reconciled", manualResult, manualInvoice.ID)
+	}
+	assertBankingTxnState(t, h, manualTxnID, banking.TransactionStateReconciled)
+	assertActiveSuggestionCount(t, h, manualTxnID, 0)
+	assertInvoiceStatus(t, invoiceService, manualInvoice.ID, invoicing.InvoiceStatusPaid)
+
+	overrideTxnID := importDashboardBankTxn(t, ctx, h, bankingService, account.ID, dashboardBankTxn{
+		ID:        "manual-allocation-override",
+		Date:      time.Date(2025, 5, 2, 13, 0, 0, 0, time.UTC),
+		Payee:     "Contoso GmbH",
+		Reference: "wrong suggestion",
+		Amount:    money.Money{Amount: 225_000, Currency: "EUR"},
+	})
+	mustRecordDashboardSuggestion(t, ctx, bankingService, overrideTxnID, banking.SuggestionKindInvoiceMatch, 0.91, wrongInvoice.ID, "wrong invoice match")
+
+	overrideResult, err := bankingService.ConfirmMatchToInvoice(ctx, overrideTxnID, overrideInvoice.ID)
+	if err != nil {
+		t.Fatalf("ConfirmMatchToInvoice(override) error = %v", err)
+	}
+	if overrideResult.InvoiceID != overrideInvoice.ID || overrideResult.Transaction.State != banking.TransactionStateReconciled {
+		t.Fatalf("override result = %#v, want invoice %s reconciled", overrideResult, overrideInvoice.ID)
+	}
+	assertBankingTxnState(t, h, overrideTxnID, banking.TransactionStateReconciled)
+	assertActiveSuggestionCount(t, h, overrideTxnID, 0)
+	assertInvoiceStatus(t, invoiceService, overrideInvoice.ID, invoicing.InvoiceStatusPaid)
+	assertInvoiceStatus(t, invoiceService, wrongInvoice.ID, invoicing.InvoiceStatusSent)
+	it.AssertLedgerBalanced(t, h)
+}
+
 func TestBankingConfirmMatchRollsBackInjectedFailures(t *testing.T) {
 	tests := []struct {
 		name  string

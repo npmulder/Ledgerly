@@ -404,6 +404,10 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		invoicing.WithRateLockReader(invoicingMoneyFXLockReader{module: moneyFXModule}),
 		invoicing.WithLedger(ledgerService),
 		invoicing.WithEventBus(eventBus),
+		invoicing.WithIdentity(identityProfile),
+		invoicing.WithInvoicePDFAssetStore(pdfAssetStore),
+		invoicing.WithInvoicePDFEngine(deps.InvoicingPDFEngine),
+		invoicing.WithInvoicePDFBaseURL(pdfBaseURL),
 	)
 	reportsService := reports.New(
 		ledgerService,
@@ -763,11 +767,18 @@ func buildInvoicingModule(_ context.Context, deps ModuleDeps) (Module, error) {
 		HTTPModule:      invoicingModule.HTTPModule(),
 		OpenAPIFragment: invoicingModule.OpenAPIFragment(),
 		ReadAPI:         invoicingModule,
-		ScheduledJobs: []ScheduledJob{{
-			Name:     invoicing.OverdueSweepJobName,
-			Schedule: invoicing.OverdueSweepSchedule,
-			Run:      invoicingModule.RunOverdueSweep,
-		}},
+		ScheduledJobs: []ScheduledJob{
+			{
+				Name:     invoicing.RecurringInvoicesJobName,
+				Schedule: invoicing.RecurringInvoicesSchedule,
+				Run:      invoicingModule.RunRecurringInvoices,
+			},
+			{
+				Name:     invoicing.OverdueSweepJobName,
+				Schedule: invoicing.OverdueSweepSchedule,
+				Run:      invoicingModule.RunOverdueSweep,
+			},
+		},
 	}, nil
 }
 

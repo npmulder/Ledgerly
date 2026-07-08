@@ -25,6 +25,8 @@
   "lock_id": "string",
   "number": "string",
   "pdf_asset": "null",
+  "recurring_run_date": "null",
+  "recurring_template_id": "null",
   "sent_at": "string",
   "settled_amount": "null",
   "settled_date": "null",

@@ -61,10 +61,10 @@ type QueryParameters<Operation> = Operation extends {
   : never;
 
 type JsonRequestBody<Operation> = "requestBody" extends keyof Operation
-  ? Operation extends {
-      requestBody?: { content: { "application/json": infer Body } };
-    }
-    ? Body
+  ? Operation extends { requestBody?: infer RequestBody }
+    ? RequestBody extends { content: { "application/json": infer Body } }
+      ? Body
+      : never
     : never
   : never;
 

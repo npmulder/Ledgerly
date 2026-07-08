@@ -273,7 +273,7 @@ func runBankConfirm(ctx context.Context, runtime *Runtime, txnID int64) error {
 	if err != nil {
 		return err
 	}
-	response, err := client.client.BankingConfirmTransactionWithResponse(ctx, txnID)
+	response, err := client.client.BankingConfirmTransactionWithBodyWithResponse(ctx, txnID, "application/json", nil)
 	if err != nil {
 		return newDomainError(fmt.Sprintf("unable to reach Ledgerly API: %v", err))
 	}

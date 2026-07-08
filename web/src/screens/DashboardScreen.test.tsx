@@ -537,6 +537,8 @@ function invoiceFixture(
     lock_id: null,
     number: null,
     pdf_asset: null,
+    recurring_run_date: null,
+    recurring_template_id: null,
     sent_at: null,
     settled_amount: null,
     settled_date: null,

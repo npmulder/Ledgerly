@@ -4,12 +4,16 @@ import { useNavigate } from "react-router-dom";
 
 import { isApiError } from "@/api/client";
 import {
+  cancelRecurringTemplate,
   createDraftInvoice,
   getInvoices,
   getInvoicingClients,
+  getRecurringTemplates,
   type InvoicingInvoiceListItem,
   type InvoicingInvoicesResponse,
   type InvoicingInvoiceStatus,
+  type InvoicingRecurringTemplate,
+  type InvoicingRecurringTemplatesResponse,
 } from "@/api/invoicing";
 import { queryKeys } from "@/api/queryKeys";
 import {
@@ -66,6 +70,10 @@ export function InvoicesScreen() {
     queryFn: () => getInvoicingClients(false),
     queryKey: queryKeys.invoicing.clients(false),
   });
+  const recurringTemplatesQuery = useQuery({
+    queryFn: getRecurringTemplates,
+    queryKey: queryKeys.invoicing.recurringTemplates(),
+  });
   const defaultClient = clientsQuery.data?.clients[0];
   const createDraftMutation = useMutation({
     mutationFn: (clientId: string) =>
@@ -75,6 +83,14 @@ export function InvoicesScreen() {
         queryKey: ["invoicing", "invoices"],
       });
       navigate(`/invoices/${encodeURIComponent(invoice.id)}`);
+    },
+  });
+  const cancelRecurringMutation = useMutation({
+    mutationFn: (templateId: string) => cancelRecurringTemplate(templateId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.invoicing.recurringTemplates(),
+      });
     },
   });
 
@@ -159,6 +175,18 @@ export function InvoicesScreen() {
       {createDraftMutation.isError ? (
         <ProblemAlert error={createDraftMutation.error} />
       ) : null}
+      {cancelRecurringMutation.isError ? (
+        <ProblemAlert error={cancelRecurringMutation.error} />
+      ) : null}
+
+      <RecurringTemplatesState
+        data={recurringTemplatesQuery.data}
+        error={recurringTemplatesQuery.error}
+        isError={recurringTemplatesQuery.isError}
+        isLoading={recurringTemplatesQuery.isPending}
+        onCancel={(templateId) => cancelRecurringMutation.mutate(templateId)}
+        pendingCancelId={cancelRecurringMutation.variables}
+      />
 
       <InvoicesTableState
         data={invoicesQuery.data}
@@ -167,6 +195,108 @@ export function InvoicesScreen() {
         isLoading={invoicesQuery.isPending}
       />
     </div>
+  );
+}
+
+function RecurringTemplatesState({
+  data,
+  error,
+  isError,
+  isLoading,
+  onCancel,
+  pendingCancelId,
+}: {
+  readonly data: InvoicingRecurringTemplatesResponse | undefined;
+  readonly error: Error | null;
+  readonly isError: boolean;
+  readonly isLoading: boolean;
+  readonly onCancel: (templateId: string) => void;
+  readonly pendingCancelId: string | undefined;
+}) {
+  if (isLoading) {
+    return (
+      <Card title="Recurring templates">
+        <p className="type-secondary">Loading templates.</p>
+      </Card>
+    );
+  }
+
+  if (isError) {
+    return <ProblemAlert error={error} />;
+  }
+
+  return (
+    <RecurringTemplatesTable
+      onCancel={onCancel}
+      pendingCancelId={pendingCancelId}
+      templates={data?.templates ?? []}
+    />
+  );
+}
+
+function RecurringTemplatesTable({
+  onCancel,
+  pendingCancelId,
+  templates,
+}: {
+  readonly onCancel: (templateId: string) => void;
+  readonly pendingCancelId: string | undefined;
+  readonly templates: InvoicingRecurringTemplate[];
+}) {
+  return (
+    <Card title="Recurring templates">
+      {templates.length === 0 ? (
+        <p className="type-secondary">No recurring templates.</p>
+      ) : (
+        <Table
+          aria-label="Recurring templates list"
+          className="recurring-templates-table"
+        >
+          <TableHead>
+            <TableRow>
+              <TableHeaderCell>Client</TableHeaderCell>
+              <TableHeaderCell>Schedule</TableHeaderCell>
+              <TableHeaderCell>Next run</TableHeaderCell>
+              <TableHeaderCell align="right">Mode</TableHeaderCell>
+              <TableHeaderCell align="right">Status</TableHeaderCell>
+              <TableHeaderCell align="right">Actions</TableHeaderCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {templates.map((template) => (
+              <TableRow key={template.id}>
+                <TableCell>{template.client_name}</TableCell>
+                <TableCell>{formatSchedule(template)}</TableCell>
+                <TableCell>{formatDate(template.next_run_date)}</TableCell>
+                <TableCell align="right">
+                  {template.auto_send ? "Auto-send" : "Draft"}
+                </TableCell>
+                <TableCell align="right">
+                  <Badge
+                    variant={template.status === "active" ? "neutral" : "paid"}
+                  >
+                    {template.status.toUpperCase()}
+                  </Badge>
+                </TableCell>
+                <TableCell align="right">
+                  <Button
+                    disabled={
+                      template.status !== "active" ||
+                      pendingCancelId === template.id
+                    }
+                    onClick={() => onCancel(template.id)}
+                    size="small"
+                    variant="secondary"
+                  >
+                    {pendingCancelId === template.id ? "Canceling" : "Cancel"}
+                  </Button>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      )}
+    </Card>
   );
 }
 
@@ -318,6 +448,11 @@ function countForFilter(
 
 function formatDate(value: string) {
   return dateFormatter.format(new Date(value));
+}
+
+function formatSchedule(template: InvoicingRecurringTemplate) {
+  const cadence = template.cadence === "quarterly" ? "Quarterly" : "Monthly";
+  return `${cadence} on day ${template.day_of_month}`;
 }
 
 function formatMoney({

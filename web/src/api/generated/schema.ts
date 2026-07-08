@@ -269,6 +269,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/banking/transactions/{id}/invoice-candidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List invoice candidates for manual transaction allocation
+         * @description Returns open sent invoices in the transaction currency without applying the automatic match-score threshold.
+         */
+        get: operations["bankingListInvoiceCandidates"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/banking/transactions/{id}/receipt": {
         parameters: {
             query?: never;
@@ -978,6 +998,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/invoicing/invoices/{id}/recurring-template": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create a recurring template from an invoice
+         * @description Copies client, currency, VAT treatment, and line items from an existing invoice, then stores the requested recurrence schedule.
+         */
+        post: operations["invoicingCreateRecurringTemplateFromInvoice"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/invoicing/invoices/{id}/remind": {
         parameters: {
             query?: never;
@@ -1032,6 +1072,41 @@ export interface paths {
          * @description Validates a complete draft, assigns the invoice number, locks the FX rate, posts the ledger entry, and returns the locked rate.
          */
         post: operations["invoicingSendInvoice"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/invoicing/recurring-templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List recurring invoice templates */
+        get: operations["invoicingListRecurringTemplates"];
+        put?: never;
+        /** Create a recurring invoice template */
+        post: operations["invoicingCreateRecurringTemplate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/invoicing/recurring-templates/{id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel a recurring invoice template */
+        post: operations["invoicingCancelRecurringTemplate"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1493,6 +1568,9 @@ export interface components {
             state_change?: components["schemas"]["BankingStateChange"];
             transaction?: components["schemas"]["BankingTransaction"];
         };
+        BankingConfirmMatchRequest: {
+            invoice_id: string;
+        };
         BankingCreateAccountRequest: {
             /** @enum {string} */
             currency: "GBP" | "EUR";
@@ -1506,6 +1584,20 @@ export interface components {
         };
         BankingFileDLARequest: {
             director_id?: string;
+        };
+        BankingInvoiceCandidate: {
+            amount: components["schemas"]["BankingMoney"];
+            client: string;
+            /** Format: date */
+            due_date: string;
+            invoice_id: string;
+            invoice_number: string;
+            /** Format: date */
+            issue_date: string;
+            status: string;
+        };
+        BankingInvoiceCandidatesResponse: {
+            candidates: components["schemas"]["BankingInvoiceCandidate"][];
         };
         BankingMoney: {
             /** Format: int64 */
@@ -1582,6 +1674,8 @@ export interface components {
             client?: string;
             id?: string;
             invoice_number?: string;
+            /** @enum {string} */
+            invoice_status?: "draft" | "sent";
             times_applied?: number | null;
             /** @enum {string} */
             type: "invoice" | "dla" | "account";
@@ -2118,6 +2212,16 @@ export interface components {
         InvoicingCreateDraftInvoiceRequest: {
             client_id: string;
         };
+        InvoicingCreateRecurringFromInvoiceRequest: {
+            /** @default false */
+            auto_send: boolean;
+            /** @enum {string} */
+            cadence: "monthly" | "quarterly";
+            day_of_month: number;
+            max_occurrences?: number | null;
+            /** Format: date */
+            next_run_date: string;
+        };
         InvoicingFXRate: {
             /** @enum {string} */
             from: "EUR" | "GBP";
@@ -2150,6 +2254,9 @@ export interface components {
             lock_id: string | null;
             number: string | null;
             pdf_asset: string | null;
+            /** Format: date-time */
+            recurring_run_date: string | null;
+            recurring_template_id: string | null;
             reminders?: components["schemas"]["InvoicingReminder"][];
             /** Format: date-time */
             sent_at?: string | null;
@@ -2283,6 +2390,64 @@ export interface components {
             amount_minor: number;
             /** @enum {string} */
             currency: "EUR" | "GBP";
+        };
+        /** @enum {string} */
+        InvoicingRecurringCadence: "monthly" | "quarterly";
+        InvoicingRecurringTemplate: {
+            /** @default false */
+            auto_send: boolean;
+            /** @enum {string} */
+            cadence: "monthly" | "quarterly";
+            /** Format: date-time */
+            canceled_at: string | null;
+            client_id: string;
+            client_name: string;
+            /** Format: date-time */
+            created_at: string;
+            created_from_invoice_id: string | null;
+            /** @enum {string} */
+            currency: "EUR" | "GBP";
+            day_of_month: number;
+            id: string;
+            lines: components["schemas"]["InvoicingRecurringTemplateLine"][];
+            max_occurrences: number | null;
+            /** Format: date */
+            next_run_date: string;
+            occurrences_created: number;
+            /** @enum {string} */
+            status: "active" | "canceled";
+            /** Format: date-time */
+            updated_at: string;
+            /** @enum {string} */
+            vat_treatment: "domestic" | "reverse-charge-eu-b2b";
+        };
+        InvoicingRecurringTemplateLine: {
+            description: string;
+            id: string;
+            line_total: components["schemas"]["InvoicingMoney"];
+            position: number;
+            qty: string;
+            template_id: string;
+            unit_price: components["schemas"]["InvoicingMoney"];
+        };
+        InvoicingRecurringTemplateRequest: {
+            /** @default false */
+            auto_send: boolean;
+            /** @enum {string} */
+            cadence: "monthly" | "quarterly";
+            client_id: string;
+            /** @enum {string} */
+            currency: "EUR" | "GBP";
+            day_of_month: number;
+            lines: components["schemas"]["InvoicingInvoiceLineInput"][];
+            max_occurrences?: number | null;
+            /** Format: date */
+            next_run_date: string;
+            /** @enum {string} */
+            vat_treatment: "domestic" | "reverse-charge-eu-b2b";
+        };
+        InvoicingRecurringTemplatesResponse: {
+            templates: components["schemas"]["InvoicingRecurringTemplate"][];
         };
         InvoicingReminder: {
             invoice_id: string;
@@ -3215,7 +3380,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["BankingConfirmMatchRequest"];
+            };
+        };
         responses: {
             /** @description Command accepted */
             200: {
@@ -3434,6 +3603,65 @@ export interface operations {
                 };
             };
             /** @description Command validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    bankingListInvoiceCandidates: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Bank transaction ID. */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Invoice candidates */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BankingInvoiceCandidatesResponse"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Transaction was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Transaction state cannot be manually allocated */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Transaction is not eligible for invoice allocation */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -5649,6 +5877,77 @@ export interface operations {
             };
         };
     };
+    invoicingCreateRecurringTemplateFromInvoice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InvoicingCreateRecurringFromInvoiceRequest"];
+            };
+        };
+        responses: {
+            /** @description Recurring template created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvoicingRecurringTemplate"];
+                };
+            };
+            /** @description Malformed recurring template request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Invoice was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Recurring template request body is too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Recurring template validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ValidationProblem"];
+                };
+            };
+        };
+    };
     invoicingSendInvoiceReminder: {
         parameters: {
             query?: never;
@@ -5796,6 +6095,153 @@ export interface operations {
             };
             /** @description Invoice validation failed */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ValidationProblem"];
+                };
+            };
+        };
+    };
+    invoicingListRecurringTemplates: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Recurring templates listed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvoicingRecurringTemplatesResponse"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    invoicingCreateRecurringTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InvoicingRecurringTemplateRequest"];
+            };
+        };
+        responses: {
+            /** @description Recurring template created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvoicingRecurringTemplate"];
+                };
+            };
+            /** @description Malformed recurring template request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Client was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Recurring template request body is too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Recurring template validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ValidationProblem"];
+                };
+            };
+        };
+    };
+    invoicingCancelRecurringTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Recurring template canceled */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvoicingRecurringTemplate"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Recurring template was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Recurring template cannot be canceled */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
