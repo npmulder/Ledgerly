@@ -1355,6 +1355,7 @@ func bankingProblemForError(err error) (httpserver.Problem, bool) {
 		errors.Is(err, ErrInvalidSuggestion),
 		errors.Is(err, ErrInvalidPayeeRule),
 		errors.Is(err, ErrInvalidReconciliation),
+		errors.Is(err, ErrDLADirectorRequired),
 		errors.Is(err, ErrInvalidReceipt):
 		return httpserver.Problem{
 			Type:   problemTypeBankingValidation,

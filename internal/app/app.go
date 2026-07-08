@@ -276,7 +276,6 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 
 	ledgerService := ledger.New(ledgerPool, eventBus)
 	trialBalanceStatus := ledger.NewTrialBalanceStatus()
-	dlaService := dla.NewWithBusAndClock(dlaPool, eventBus, clk, ledgerService)
 	dlaConsistencyStatus := dla.NewConsistencyStatus()
 	moneyFXFetcher, err := moneyfx.NewECBFetcher(moneyfx.ECBFetcherConfig{
 		Pool:         moneyFXPool,
@@ -298,12 +297,6 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 	}); err != nil {
 		return nil, err
 	}
-	if err := cronRunner.Register(dla.ConsistencyCheckJobName, "10 2 * * *", func(ctx context.Context) error {
-		_, err := dlaService.RunConsistencyCheck(ctx, clk.Now(), logger, dlaConsistencyStatus)
-		return err
-	}); err != nil {
-		return nil, err
-	}
 	if err := cronRunner.Register(moneyfx.ECBFetchJobName, moneyfx.ECBFetchSchedule, moneyFXFetcher.Run); err != nil {
 		return nil, err
 	}
@@ -321,6 +314,13 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 	profileOptions = append(profileOptions, identity.WithAuditRecorder(auditRecorder))
 	profileOptions = append(profileOptions, deps.IdentityProfileOptions...)
 	identityProfile := identity.NewTransactionalProfileService(identityPool, eventBus, profileOptions...)
+	dlaService := dla.NewWithBusClockAndDirectors(dlaPool, eventBus, clk, identityDirectors{profile: identityProfile}, ledgerService)
+	if err := cronRunner.Register(dla.ConsistencyCheckJobName, "10 2 * * *", func(ctx context.Context) error {
+		_, err := dlaService.RunConsistencyCheck(ctx, clk.Now(), logger, dlaConsistencyStatus)
+		return err
+	}); err != nil {
+		return nil, err
+	}
 	identityHTTPOptions := []identity.HTTPOption{identity.WithProfileAPI(identityProfile)}
 	identityHTTPOptions = append(identityHTTPOptions, deps.IdentityHTTPOptions...)
 	identityHandler := identity.NewHTTPHandler(identityService, identityHTTPOptions...)
@@ -467,6 +467,7 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		Bus:        eventBus,
 		DLAPool:    dlaPool,
 		LedgerPool: ledgerPool,
+		Identity:   identityProfile,
 	})
 	if err != nil {
 		return nil, err

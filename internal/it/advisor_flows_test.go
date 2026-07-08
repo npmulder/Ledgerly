@@ -105,6 +105,7 @@ func testAdvisorFlowsDLAOverdrawn(t *testing.T) {
 	expectedText := advisorFlowsExpectedText(t, "dla_overdrawn_bik", advisor.Facts{
 		advisor.FactRuleDLABalance:        gbp(-150_000),
 		advisor.FactRuleDLAClearanceMinor: int64(150_000),
+		advisor.FactRuleDLADirectorName:   "N. Meyer",
 		advisor.FactRuleDLAStatus:         string(dla.StatusOverdrawn),
 	}, f.h.Clock.Now())
 	if insight.RenderedText != expectedText {

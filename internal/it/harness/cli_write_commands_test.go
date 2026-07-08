@@ -128,7 +128,7 @@ func TestCLIWriteMoneyMoversConfirmSemanticsAgainstHarness(t *testing.T) {
 		Reference: "director drawing",
 		Amount:    money.Money{Amount: -12_000, Currency: "GBP"},
 	})
-	mustRecordDashboardSuggestion(t, ctx, bankingService, dlaTxn, banking.SuggestionKindDLA, 0.88, "director-loan", "director drawing")
+	mustRecordDashboardSuggestion(t, ctx, bankingService, dlaTxn, banking.SuggestionKindDLA, 0.88, "director-1", "director drawing")
 	assertRequiresYes(t, runLedgerlyBinary(t, binary, configPath, "bank", "file-dla", stringInt64(int64(dlaTxn))), "bank file-dla")
 	assertBankingTxnState(t, h, dlaTxn, banking.TransactionStateSuggested)
 	fileDLAResult := runLedgerlyBinary(t, binary, configPath, "--yes", "bank", "file-dla", stringInt64(int64(dlaTxn)))

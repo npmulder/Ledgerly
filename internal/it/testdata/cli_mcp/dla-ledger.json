@@ -9,6 +9,7 @@
       "created_at": "string",
       "date": "string",
       "description": "string",
+      "director_id": "string",
       "drawn": {
         "amount_minor": "number",
         "currency": "string"
