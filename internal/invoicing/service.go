@@ -61,6 +61,7 @@ type Service struct {
 	pdfRetryBackoff    time.Duration
 	mailer             mail.Sender
 	logger             *slog.Logger
+	audit              AuditRecorder
 	idGenerator        func() (string, error)
 	invoiceIDGenerator func() (string, error)
 	lineIDGenerator    func() (string, error)
@@ -202,6 +203,13 @@ func WithLogger(logger *slog.Logger) ServiceOption {
 	}
 }
 
+// WithAuditRecorder installs non-ledger mutation audit logging.
+func WithAuditRecorder(recorder AuditRecorder) ServiceOption {
+	return func(s *Service) {
+		s.audit = recorder
+	}
+}
+
 func NewService(pool *pgxpool.Pool, store Store, opts ...ServiceOption) *Service {
 	service := &Service{
 		pool:               pool,
@@ -273,6 +281,9 @@ func (s *Service) CreateDraft(ctx context.Context, clientID string) (_ Invoice, 
 	}
 	created, err := s.store.InsertDraftInvoice(ctx, tx, draft)
 	if err != nil {
+		return Invoice{}, err
+	}
+	if err := s.recordAudit(ctx, tx, "invoice", created.ID, nil, invoiceAuditValue(created, true)); err != nil {
 		return Invoice{}, err
 	}
 	if err = tx.Commit(ctx); err != nil {
@@ -376,6 +387,9 @@ func (s *Service) UpdateDraft(ctx context.Context, id string, patch DraftPatch) 
 	} else {
 		updated.Lines = existing.Lines
 	}
+	if err := s.recordAudit(ctx, tx, "invoice", updated.ID, invoiceAuditValue(existing, true), invoiceAuditValue(updated, true)); err != nil {
+		return Invoice{}, err
+	}
 	if err = tx.Commit(ctx); err != nil {
 		return Invoice{}, fmt.Errorf("invoicing: commit update draft transaction: %w", err)
 	}
@@ -398,7 +412,17 @@ func (s *Service) DeleteDraft(ctx context.Context, id string) (err error) {
 			_ = tx.Rollback(ctx)
 		}
 	}()
+	existing, err := s.store.InvoiceForUpdate(ctx, tx, strings.TrimSpace(id))
+	if err != nil {
+		return err
+	}
+	if existing.Status != InvoiceStatusDraft {
+		return ErrInvoiceImmutable
+	}
 	if err := s.store.DeleteDraft(ctx, tx, strings.TrimSpace(id)); err != nil {
+		return err
+	}
+	if err := s.recordAudit(ctx, tx, "invoice", existing.ID, invoiceAuditValue(existing, true), nil); err != nil {
 		return err
 	}
 	if err = tx.Commit(ctx); err != nil {
@@ -842,7 +866,26 @@ func (s *Service) SaveClient(ctx context.Context, c Client) (_ Client, err error
 		if err != nil {
 			return Client{}, err
 		}
-		return s.store.InsertClient(ctx, s.pool, c)
+		tx, err := s.pool.Begin(ctx)
+		if err != nil {
+			return Client{}, fmt.Errorf("invoicing: begin create client transaction: %w", err)
+		}
+		defer func() {
+			if err != nil {
+				_ = tx.Rollback(ctx)
+			}
+		}()
+		created, err := s.store.InsertClient(ctx, tx, c)
+		if err != nil {
+			return Client{}, err
+		}
+		if err := s.recordAudit(ctx, tx, "client", created.ID, nil, clientAuditValue(created, true)); err != nil {
+			return Client{}, err
+		}
+		if err = tx.Commit(ctx); err != nil {
+			return Client{}, fmt.Errorf("invoicing: commit create client transaction: %w", err)
+		}
+		return created, nil
 	}
 
 	return s.updateClient(ctx, c.ID, func(Client) (Client, error) {
@@ -890,6 +933,9 @@ func (s *Service) updateClient(ctx context.Context, id string, build func(Client
 	if err != nil {
 		return Client{}, err
 	}
+	if err := s.recordAudit(ctx, tx, "client", updated.ID, clientAuditValue(existing, true), clientAuditValue(updated, true)); err != nil {
+		return Client{}, err
+	}
 	if err = tx.Commit(ctx); err != nil {
 		return Client{}, fmt.Errorf("invoicing: commit save client transaction: %w", err)
 	}
@@ -897,8 +943,34 @@ func (s *Service) updateClient(ctx context.Context, id string, build func(Client
 }
 
 // ArchiveClient soft-archives a client so invoices can keep referencing it.
-func (s *Service) ArchiveClient(ctx context.Context, id string) error {
-	return s.store.ArchiveClient(ctx, s.pool, id)
+func (s *Service) ArchiveClient(ctx context.Context, id string) (err error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("invoicing: begin archive client transaction: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+	existing, err := s.store.ClientForUpdate(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	if err := s.store.ArchiveClient(ctx, tx, id); err != nil {
+		return err
+	}
+	archived, err := s.store.Client(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	if err := s.recordAudit(ctx, tx, "client", archived.ID, clientAuditValue(existing, true), clientAuditValue(archived, true)); err != nil {
+		return err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return fmt.Errorf("invoicing: commit archive client transaction: %w", err)
+	}
+	return nil
 }
 
 func (s *Service) ensureCurrencyMutable(ctx context.Context, existing Client, next Client) error {
@@ -913,6 +985,111 @@ func (s *Service) ensureCurrencyMutable(ctx context.Context, existing Client, ne
 		return ErrClientCurrencyLocked
 	}
 	return nil
+}
+
+func (s *Service) recordAudit(ctx context.Context, tx db.Tx, entity, entityID string, before, after any) error {
+	if s.audit == nil {
+		return nil
+	}
+	return s.audit.Record(ctx, tx, ModuleName, entity, entityID, before, after)
+}
+
+type clientAuditRecord struct {
+	Name            string       `json:"name"`
+	Email           *string      `json:"email"`
+	Address         Address      `json:"address"`
+	VATNumber       *string      `json:"vat_number"`
+	DefaultCurrency Currency     `json:"default_currency"`
+	TermsDays       int          `json:"terms_days"`
+	VATTreatment    VATTreatment `json:"vat_treatment"`
+	RetainerAmount  *MoneyAmount `json:"retainer_amount"`
+	DayRate         *MoneyAmount `json:"day_rate"`
+	ArchivedAt      *string      `json:"archived_at"`
+}
+
+func clientAuditValue(client Client, exists bool) any {
+	if !exists {
+		return nil
+	}
+	return clientAuditRecord{
+		Name:            client.Name,
+		Email:           cloneString(client.Email),
+		Address:         client.Address,
+		VATNumber:       cloneString(client.VATNumber),
+		DefaultCurrency: client.DefaultCurrency,
+		TermsDays:       client.TermsDays,
+		VATTreatment:    client.VATTreatment,
+		RetainerAmount:  cloneMoneyAmount(client.RetainerAmount),
+		DayRate:         cloneMoneyAmount(client.DayRate),
+		ArchivedAt:      timeAuditPointer(client.ArchivedAt),
+	}
+}
+
+type invoiceAuditRecord struct {
+	ClientID     string             `json:"client_id"`
+	Status       InvoiceStatus      `json:"status"`
+	IssueDate    string             `json:"issue_date"`
+	DueDate      string             `json:"due_date"`
+	Currency     Currency           `json:"currency"`
+	VATTreatment VATTreatment       `json:"vat_treatment"`
+	Lines        []invoiceLineAudit `json:"lines"`
+}
+
+type invoiceLineAudit struct {
+	ID          string `json:"id"`
+	Position    int    `json:"position"`
+	Description string `json:"description"`
+	Qty         string `json:"qty"`
+	UnitPrice   Money  `json:"unit_price"`
+}
+
+func invoiceAuditValue(invoice Invoice, exists bool) any {
+	if !exists {
+		return nil
+	}
+	lines := make([]invoiceLineAudit, len(invoice.Lines))
+	for i, line := range invoice.Lines {
+		lines[i] = invoiceLineAudit{
+			ID:          line.ID,
+			Position:    line.Position,
+			Description: line.Description,
+			Qty:         string(line.Qty),
+			UnitPrice:   line.UnitPrice,
+		}
+	}
+	return invoiceAuditRecord{
+		ClientID:     invoice.ClientID,
+		Status:       invoice.Status,
+		IssueDate:    dateOnly(invoice.IssueDate).Format(time.DateOnly),
+		DueDate:      dateOnly(invoice.DueDate).Format(time.DateOnly),
+		Currency:     invoice.Currency,
+		VATTreatment: invoice.VATTreatment,
+		Lines:        lines,
+	}
+}
+
+func cloneString(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
+}
+
+func cloneMoneyAmount(value *MoneyAmount) *MoneyAmount {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
+}
+
+func timeAuditPointer(value *time.Time) *string {
+	if value == nil {
+		return nil
+	}
+	formatted := value.UTC().Format(time.RFC3339Nano)
+	return &formatted
 }
 
 func validateSendableDraft(invoice Invoice) error {

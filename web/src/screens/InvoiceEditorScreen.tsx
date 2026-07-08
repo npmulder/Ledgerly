@@ -25,6 +25,7 @@ import {
 } from "@/api/invoicing";
 import { queryKeys } from "@/api/queryKeys";
 import {
+  AuditHistoryPanel,
   Badge,
   Button,
   Card,
@@ -156,6 +157,9 @@ function LoadedInvoiceEditor({
   const autosave = useDraftAutosave(invoiceId, (updated) => {
     setInvoice(updated);
     queryClient.setQueryData(queryKeys.invoicing.invoice(updated.id), updated);
+    queryClient.invalidateQueries({
+      queryKey: queryKeys.audit.history("invoicing", "invoice", updated.id),
+    });
   });
 
   const sendMutation = useMutation({
@@ -169,7 +173,9 @@ function LoadedInvoiceEditor({
         queryKeys.invoicing.invoice(result.invoice.id),
         result.invoice,
       );
-      queryClient.invalidateQueries({ queryKey: queryKeys.invoicing.invoices() });
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.invoicing.invoices(),
+      });
     },
   });
 
@@ -180,8 +186,13 @@ function LoadedInvoiceEditor({
       setForm(invoiceToForm(updated));
       setLockedRate(null);
       setValidationSummary([]);
-      queryClient.setQueryData(queryKeys.invoicing.invoice(updated.id), updated);
-      queryClient.invalidateQueries({ queryKey: queryKeys.invoicing.invoices() });
+      queryClient.setQueryData(
+        queryKeys.invoicing.invoice(updated.id),
+        updated,
+      );
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.invoicing.invoices(),
+      });
     },
   });
 
@@ -203,7 +214,9 @@ function LoadedInvoiceEditor({
         queryKeys.invoicing.invoice(result.invoice.id),
         result.invoice,
       );
-      queryClient.invalidateQueries({ queryKey: queryKeys.invoicing.invoices() });
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.invoicing.invoices(),
+      });
     },
   });
 
@@ -380,7 +393,10 @@ function LoadedInvoiceEditor({
             title="Invoice details"
           >
             <div className="invoice-field-grid">
-              <Field helperText="Only active clients are available." label="Client">
+              <Field
+                helperText="Only active clients are available."
+                label="Client"
+              >
                 <Select
                   aria-label="Client"
                   disabled={isReadOnly}
@@ -421,8 +437,8 @@ function LoadedInvoiceEditor({
                   isReadOnly
                     ? "Locked after send."
                     : selectedClient
-                    ? `Default from ${selectedClient.name}, editable while draft.`
-                    : "Editable while draft."
+                      ? `Default from ${selectedClient.name}, editable while draft.`
+                      : "Editable while draft."
                 }
                 label="Currency"
               >
@@ -571,6 +587,11 @@ function LoadedInvoiceEditor({
             />
           )}
           <DocumentPreview invoice={invoice} />
+          <AuditHistoryPanel
+            entity="invoice"
+            entityId={invoice.id}
+            module="invoicing"
+          />
           <ReminderCard
             invoice={invoice}
             onSend={() => reminderMutation.mutate()}
@@ -752,7 +773,10 @@ function FXRateField({
       : "No FX lock";
   const rate = lockedRate?.rate ?? "locked";
   return (
-    <div className="invoice-fx-field invoice-fx-field--locked" aria-label="Locked FX rate">
+    <div
+      className="invoice-fx-field invoice-fx-field--locked"
+      aria-label="Locked FX rate"
+    >
       <strong>🔒 {rate}</strong>
       <span>Source: {source}</span>
     </div>
@@ -878,7 +902,9 @@ function AdvisorNotes({
           locked GBP value from send time.
         </p>
         {currency === "GBP" && (
-          <p>GBP invoices lock an identity rate and do not create FX movement.</p>
+          <p>
+            GBP invoices lock an identity rate and do not create FX movement.
+          </p>
         )}
       </div>
     </Card>

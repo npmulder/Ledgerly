@@ -13,6 +13,7 @@ import {
 import { isApiError } from "@/api/client";
 import { queryKeys } from "@/api/queryKeys";
 import {
+  AuditHistoryPanel,
   Badge,
   Button,
   Card,
@@ -47,6 +48,7 @@ export function BankingPayeeRulesScreen() {
   const [draft, setDraft] = useState<RuleDraft>(defaultDraft);
   const [editingID, setEditingID] = useState<number | null>(null);
   const [editDraft, setEditDraft] = useState<RuleDraft>(defaultDraft);
+  const [historyID, setHistoryID] = useState<number | null>(null);
   const [toast, setToast] = useState<ToastState | null>(null);
 
   const rulesQuery = useQuery({
@@ -59,9 +61,17 @@ export function BankingPayeeRulesScreen() {
     onError: (error) => {
       setToast({ message: problemMessage(error), tone: "error" });
     },
-    onSuccess: async () => {
+    onSuccess: async (created) => {
       setDraft(defaultDraft);
+      setHistoryID(created.id);
       setToast({ message: "Payee rule created.", tone: "success" });
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.audit.history(
+          "banking",
+          "payee_rule",
+          String(created.id),
+        ),
+      });
       await refreshPayeeRules(queryClient);
     },
   });
@@ -72,9 +82,17 @@ export function BankingPayeeRulesScreen() {
     onError: (error) => {
       setToast({ message: problemMessage(error), tone: "error" });
     },
-    onSuccess: async () => {
+    onSuccess: async (updated) => {
       setEditingID(null);
+      setHistoryID(updated.id);
       setToast({ message: "Payee rule updated.", tone: "success" });
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.audit.history(
+          "banking",
+          "payee_rule",
+          String(updated.id),
+        ),
+      });
       await refreshPayeeRules(queryClient);
     },
   });
@@ -84,13 +102,17 @@ export function BankingPayeeRulesScreen() {
     onError: (error) => {
       setToast({ message: problemMessage(error), tone: "error" });
     },
-    onSuccess: async () => {
+    onSuccess: async (_result, id) => {
       setToast({ message: "Payee rule deleted.", tone: "success" });
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.audit.history("banking", "payee_rule", String(id)),
+      });
       await refreshPayeeRules(queryClient);
     },
   });
 
   const rules = rulesQuery.data?.rules ?? [];
+  const historyRule = rules.find((rule) => rule.id === historyID);
   const isMutating =
     createMutation.isPending ||
     updateMutation.isPending ||
@@ -103,6 +125,7 @@ export function BankingPayeeRulesScreen() {
 
   function startEdit(rule: BankingPayeeRule) {
     setEditingID(rule.id);
+    setHistoryID(rule.id);
     setEditDraft(ruleToDraft(rule));
   }
 
@@ -203,6 +226,7 @@ export function BankingPayeeRulesScreen() {
                     key={rule.id}
                     onDelete={() => deleteRule(rule)}
                     onEdit={() => startEdit(rule)}
+                    onHistory={() => setHistoryID(rule.id)}
                     rule={rule}
                   />
                 ),
@@ -211,6 +235,15 @@ export function BankingPayeeRulesScreen() {
           </Table>
         ) : null}
       </section>
+
+      {historyID ? (
+        <AuditHistoryPanel
+          entity="payee_rule"
+          entityId={String(historyID)}
+          module="banking"
+          title={historyRule ? `History: ${historyRule.matcher}` : "History"}
+        />
+      ) : null}
     </div>
   );
 }
@@ -269,11 +302,13 @@ function ReadOnlyRuleRow({
   busy,
   onDelete,
   onEdit,
+  onHistory,
   rule,
 }: {
   readonly busy: boolean;
   readonly onDelete: () => void;
   readonly onEdit: () => void;
+  readonly onHistory: () => void;
   readonly rule: BankingPayeeRule;
 }) {
   return (
@@ -297,6 +332,15 @@ function ReadOnlyRuleRow({
             variant="secondary"
           >
             Edit
+          </Button>
+          <Button
+            disabled={busy}
+            onClick={onHistory}
+            size="small"
+            type="button"
+            variant="secondary"
+          >
+            History
           </Button>
           <Button
             disabled={busy}

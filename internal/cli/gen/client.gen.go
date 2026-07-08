@@ -437,6 +437,28 @@ type AdvisorWarning struct {
 	RuleId  string `json:"rule_id"`
 }
 
+// AuditChange defines model for AuditChange.
+type AuditChange struct {
+	After  interface{} `json:"after"`
+	Before interface{} `json:"before"`
+}
+
+// AuditEntry defines model for AuditEntry.
+type AuditEntry struct {
+	Actor      string                 `json:"actor"`
+	Diff       map[string]AuditChange `json:"diff"`
+	Entity     string                 `json:"entity"`
+	EntityId   string                 `json:"entity_id"`
+	Id         int64                  `json:"id"`
+	Module     string                 `json:"module"`
+	OccurredAt time.Time              `json:"occurred_at"`
+}
+
+// AuditHistoryResponse defines model for AuditHistoryResponse.
+type AuditHistoryResponse struct {
+	Entries []AuditEntry `json:"entries"`
+}
+
 // BankDetails defines model for BankDetails.
 type BankDetails struct {
 	BankName string `json:"bank_name"`
@@ -1747,6 +1769,12 @@ type AdvisorListInsightsParams struct {
 // AdvisorListInsightsParamsSurface defines parameters for AdvisorListInsights.
 type AdvisorListInsightsParamsSurface string
 
+// AuditGetEntityHistoryParams defines parameters for AuditGetEntityHistory.
+type AuditGetEntityHistoryParams struct {
+	// Limit Maximum history rows.
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
 // BankingImportAccountCSVMultipartBody defines parameters for BankingImportAccountCSV.
 type BankingImportAccountCSVMultipartBody struct {
 	File openapi_types.File `json:"file"`
@@ -2739,6 +2767,9 @@ type ClientInterface interface {
 	// AdvisorRefreshNow request
 	AdvisorRefreshNow(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// AuditGetEntityHistory request
+	AuditGetEntityHistory(ctx context.Context, module string, entity string, entityId string, params *AuditGetEntityHistoryParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// BankingListAccounts request
 	BankingListAccounts(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -3034,6 +3065,18 @@ func (c *Client) AdvisorDismissInsight(ctx context.Context, key string, reqEdito
 
 func (c *Client) AdvisorRefreshNow(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAdvisorRefreshNowRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) AuditGetEntityHistory(ctx context.Context, module string, entity string, entityId string, params *AuditGetEntityHistoryParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAuditGetEntityHistoryRequest(c.Server, module, entity, entityId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -4299,6 +4342,76 @@ func NewAdvisorRefreshNowRequest(server string) (*http.Request, error) {
 	}
 
 	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewAuditGetEntityHistoryRequest generates requests for AuditGetEntityHistory
+func NewAuditGetEntityHistoryRequest(server string, module string, entity string, entityId string, params *AuditGetEntityHistoryParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "module", runtime.ParamLocationPath, module)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "entity", runtime.ParamLocationPath, entity)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithLocation("simple", false, "entity_id", runtime.ParamLocationPath, entityId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/audit/history/%s/%s/%s", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "limit", runtime.ParamLocationQuery, *params.Limit); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -7429,6 +7542,9 @@ type ClientWithResponsesInterface interface {
 	// AdvisorRefreshNowWithResponse request
 	AdvisorRefreshNowWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*AdvisorRefreshNowResponse, error)
 
+	// AuditGetEntityHistoryWithResponse request
+	AuditGetEntityHistoryWithResponse(ctx context.Context, module string, entity string, entityId string, params *AuditGetEntityHistoryParams, reqEditors ...RequestEditorFn) (*AuditGetEntityHistoryResponse, error)
+
 	// BankingListAccountsWithResponse request
 	BankingListAccountsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*BankingListAccountsResponse, error)
 
@@ -7763,6 +7879,30 @@ func (r AdvisorRefreshNowResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r AdvisorRefreshNowResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type AuditGetEntityHistoryResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON200                   *AuditHistoryResponse
+	ApplicationproblemJSON400 *Problem
+	ApplicationproblemJSON401 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r AuditGetEntityHistoryResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AuditGetEntityHistoryResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -9677,6 +9817,15 @@ func (c *ClientWithResponses) AdvisorRefreshNowWithResponse(ctx context.Context,
 	return ParseAdvisorRefreshNowResponse(rsp)
 }
 
+// AuditGetEntityHistoryWithResponse request returning *AuditGetEntityHistoryResponse
+func (c *ClientWithResponses) AuditGetEntityHistoryWithResponse(ctx context.Context, module string, entity string, entityId string, params *AuditGetEntityHistoryParams, reqEditors ...RequestEditorFn) (*AuditGetEntityHistoryResponse, error) {
+	rsp, err := c.AuditGetEntityHistory(ctx, module, entity, entityId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAuditGetEntityHistoryResponse(rsp)
+}
+
 // BankingListAccountsWithResponse request returning *BankingListAccountsResponse
 func (c *ClientWithResponses) BankingListAccountsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*BankingListAccountsResponse, error) {
 	rsp, err := c.BankingListAccounts(ctx, reqEditors...)
@@ -10621,6 +10770,46 @@ func ParseAdvisorRefreshNowResponse(rsp *http.Response) (*AdvisorRefreshNowRespo
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAuditGetEntityHistoryResponse parses an HTTP response from a AuditGetEntityHistoryWithResponse call
+func ParseAuditGetEntityHistoryResponse(rsp *http.Response) (*AuditGetEntityHistoryResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AuditGetEntityHistoryResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AuditHistoryResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Problem

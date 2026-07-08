@@ -2336,6 +2336,120 @@
   gap: 10px;
 }
 
+.audit-history-panel {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px 0 0;
+  border-top: 1px solid var(--color-border-hairline);
+}
+
+.audit-history-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.audit-history-panel__header h2 {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-text);
+  font-size: 15px;
+  line-height: 1.25;
+}
+
+.audit-history-panel__header span {
+  display: inline-grid;
+  min-width: 28px;
+  height: 24px;
+  place-items: center;
+  border: 1px solid var(--color-border-hairline);
+  border-radius: var(--radius-pill);
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.audit-history-panel__error {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-danger);
+  font-size: var(--type-secondary-size);
+}
+
+.audit-history-list {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.audit-history-list__item {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px 0;
+  border-top: 1px solid var(--color-border-hairline);
+}
+
+.audit-history-list__item:first-child {
+  border-top: 0;
+}
+
+.audit-history-list__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  color: var(--color-text-secondary);
+  font-size: var(--type-secondary-size);
+}
+
+.audit-history-list__meta time {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.audit-history-diff {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+
+.audit-history-diff__row {
+  display: grid;
+  grid-template-columns: minmax(88px, 0.4fr) minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+}
+
+.audit-history-diff dt {
+  color: var(--color-text-secondary);
+  font-size: var(--type-secondary-size);
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.audit-history-diff dd {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  min-width: 0;
+  margin: 0;
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.audit-history-diff dd span {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
 .problem-alert {
   display: grid;
   gap: 2px;
