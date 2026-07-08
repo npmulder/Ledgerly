@@ -1201,18 +1201,18 @@ type IdentityProfile struct {
 
 // IdentityProfilePatch defines model for IdentityProfilePatch.
 type IdentityProfilePatch struct {
-	ActType           *string             `json:"act_type"`
+	ActType           *string             `json:"act_type,omitempty"`
 	BankDetails       *BankDetails        `json:"bank_details,omitempty"`
 	CompanyNumber     *string             `json:"company_number,omitempty"`
 	Directors         *[]Director         `json:"directors,omitempty"`
 	IncorporationDate *openapi_types.Date `json:"incorporation_date,omitempty"`
 	IsVatRegistered   *bool               `json:"is_vat_registered,omitempty"`
 	LegalName         *string             `json:"legal_name,omitempty"`
-	LogoAssetId       *openapi_types.UUID `json:"logo_asset_id"`
+	LogoAssetId       *openapi_types.UUID `json:"logo_asset_id,omitempty"`
 	RegisteredOffice  *RegisteredOffice   `json:"registered_office,omitempty"`
 	Shareholders      *[]Shareholder      `json:"shareholders,omitempty"`
 	TradingName       *string             `json:"trading_name,omitempty"`
-	VatNumber         *string             `json:"vat_number"`
+	VatNumber         *string             `json:"vat_number,omitempty"`
 	YearEnd           *YearEnd            `json:"year_end,omitempty"`
 }
 

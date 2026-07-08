@@ -908,6 +908,15 @@ func TestOpenAPIIncludesIdentityRequestBodies(t *testing.T) {
 			t.Fatalf("%s schema missing from OpenAPI fragment", schema)
 		}
 	}
+
+	profilePatch := schemas["IdentityProfilePatch"].(map[string]any)
+	profilePatchProperties := profilePatch["properties"].(map[string]any)
+	for _, field := range []string{"act_type", "vat_number", "logo_asset_id"} {
+		property := profilePatchProperties[field].(map[string]any)
+		if property["x-omitempty"] != true {
+			t.Fatalf("IdentityProfilePatch.%s x-omitempty = %v, want true", field, property["x-omitempty"])
+		}
+	}
 }
 
 func newTestRouter(t *testing.T, limit LoginRateLimit) (nethttp.Handler, *memoryStore, *clock.FakeClock) {

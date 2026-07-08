@@ -88,6 +88,9 @@ func validateCompanyActs(file string, acts map[string]CompanyAct) error {
 		if act.MinimumDirectors < 1 {
 			return fieldError(file, path+".minimum_directors", "minimum_directors", "must be greater than or equal to 1")
 		}
+		if len(act.CompanyNumberSuffixes) == 0 {
+			return fieldError(file, path+".company_number_suffixes", "company_number_suffixes", "must contain at least one company number suffix")
+		}
 		seenActSuffixes := map[string]struct{}{}
 		for index, suffix := range act.CompanyNumberSuffixes {
 			suffix = strings.TrimSpace(strings.ToUpper(suffix))

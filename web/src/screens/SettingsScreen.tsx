@@ -348,6 +348,9 @@ function CompanySettings() {
       void queryClient.invalidateQueries({
         queryKey: queryKeys.audit.history("identity", "profile", "1"),
       });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.advisor.all(),
+      });
       setFormDraft(null);
     },
   });

@@ -133,7 +133,7 @@ func jurisdictionPackOverviewToResponse(overview jurisdiction.PackOverview) juri
 			Label:                 act.Label,
 			MinimumDirectors:      act.MinimumDirectors,
 			CorporateDirectors:    cloneBoolPointer(act.CorporateDirectors),
-			CompanyNumberSuffixes: append([]string(nil), act.CompanyNumberSuffixes...),
+			CompanyNumberSuffixes: append([]string{}, act.CompanyNumberSuffixes...),
 		})
 	}
 	for _, summary := range overview.RuleSummaries {

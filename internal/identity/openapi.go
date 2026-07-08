@@ -539,16 +539,24 @@ func identityComponents() map[string]any {
 }
 
 func identityProfileProperties(patch bool) map[string]any {
+	actType := map[string]any{"type": "string", "nullable": true}
+	vatNumber := map[string]any{"type": "string", "nullable": true}
+	logoAssetID := map[string]any{"type": "string", "format": "uuid", "nullable": true}
+	if patch {
+		actType["x-omitempty"] = true
+		vatNumber["x-omitempty"] = true
+		logoAssetID["x-omitempty"] = true
+	}
 	properties := map[string]any{
 		"trading_name":       map[string]any{"type": "string"},
 		"legal_name":         map[string]any{"type": "string"},
 		"company_number":     map[string]any{"type": "string"},
-		"act_type":           map[string]any{"type": "string", "nullable": true},
+		"act_type":           actType,
 		"registered_office":  map[string]any{"$ref": "#/components/schemas/RegisteredOffice"},
 		"incorporation_date": map[string]any{"type": "string", "format": "date"},
 		"year_end":           map[string]any{"$ref": "#/components/schemas/YearEnd"},
 		"is_vat_registered":  map[string]any{"type": "boolean"},
-		"vat_number":         map[string]any{"type": "string", "nullable": true},
+		"vat_number":         vatNumber,
 		"bank_details":       map[string]any{"$ref": "#/components/schemas/BankDetails"},
 		"shareholders": map[string]any{
 			"type":  "array",
@@ -558,7 +566,7 @@ func identityProfileProperties(patch bool) map[string]any {
 			"type":  "array",
 			"items": map[string]any{"$ref": "#/components/schemas/Director"},
 		},
-		"logo_asset_id":  map[string]any{"type": "string", "format": "uuid", "nullable": true},
+		"logo_asset_id":  logoAssetID,
 		"logo_asset_url": map[string]any{"type": "string", "format": "uri-reference", "nullable": true},
 	}
 	if patch {

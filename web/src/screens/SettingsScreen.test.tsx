@@ -202,9 +202,11 @@ describe("Company settings", () => {
       "2024-02-01",
     );
     await user.click(
-      within(screen.getByLabelText("Director 2 appointed date").closest(
-        ".director-row",
-      ) as HTMLElement).getByLabelText("Chair"),
+      within(
+        screen
+          .getByLabelText("Director 2 appointed date")
+          .closest(".director-row") as HTMLElement,
+      ).getByLabelText("Chair"),
     );
     await user.click(screen.getByLabelText("Remove director Neil Meyer"));
     await user.click(screen.getByRole("button", { name: "Save changes" }));
@@ -224,6 +226,7 @@ describe("Company settings", () => {
     const user = userEvent.setup();
     let profile = identityProfile();
     let savedPatch: IdentityProfilePatch | null = null;
+    let advisorRequestCount = 0;
     const fetchImpl = vi.fn(
       async (input: RequestInfo | URL, init?: RequestInit) => {
         const path = pathFromRequest(input);
@@ -239,6 +242,7 @@ describe("Company settings", () => {
           return jsonResponse(jurisdictionPack());
         }
         if (path === "/api/advisor/insights") {
+          advisorRequestCount += 1;
           return jsonResponse({ insights: [] });
         }
         if (path === "/api/identity/profile" && init?.method === "PATCH") {
@@ -279,6 +283,9 @@ describe("Company settings", () => {
 
     await waitFor(() => {
       expect(savedPatch?.act_type).toBe("companies-act-1931");
+    });
+    await waitFor(() => {
+      expect(advisorRequestCount).toBeGreaterThanOrEqual(2);
     });
   });
 
@@ -421,14 +428,18 @@ describe("Company settings", () => {
     const fabrikamRow = screen.getByText("Fabrikam Ltd").closest("tr");
     expect(contosoRow).not.toBeNull();
     expect(fabrikamRow).not.toBeNull();
-    expect(within(contosoRow as HTMLElement).getByText("EUR")).toBeInTheDocument();
-    expect(within(fabrikamRow as HTMLElement).getByText("GBP")).toBeInTheDocument();
-    expect(within(contosoRow as HTMLElement).getByText(/Retainer/)).toHaveTextContent(
-      "€4,500.00",
-    );
-    expect(within(fabrikamRow as HTMLElement).getByText(/Day rate/)).toHaveTextContent(
-      "£600.00",
-    );
+    expect(
+      within(contosoRow as HTMLElement).getByText("EUR"),
+    ).toBeInTheDocument();
+    expect(
+      within(fabrikamRow as HTMLElement).getByText("GBP"),
+    ).toBeInTheDocument();
+    expect(
+      within(contosoRow as HTMLElement).getByText(/Retainer/),
+    ).toHaveTextContent("€4,500.00");
+    expect(
+      within(fabrikamRow as HTMLElement).getByText(/Day rate/),
+    ).toHaveTextContent("£600.00");
     expect(
       within(contosoRow as HTMLElement).getByText("Net 14 · reverse charge"),
     ).toBeInTheDocument();

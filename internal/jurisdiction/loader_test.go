@@ -235,6 +235,13 @@ func TestValidationFailuresNameFilePathAndField(t *testing.T) {
 			wantText:  "greater than or equal to 1",
 		},
 		{
+			name:      "missing company number suffixes",
+			pack:      strings.Replace(valid, "    company_number_suffixes: [T]\n", "", 1),
+			wantPath:  "company_acts.test-companies-act.company_number_suffixes",
+			wantField: "company_number_suffixes",
+			wantText:  "at least one company number suffix",
+		},
+		{
 			name: "missing year",
 			pack: strings.Replace(
 				valid,

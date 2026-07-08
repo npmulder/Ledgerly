@@ -20,6 +20,7 @@ export const queryKeys = {
     ): ApiQueryKey => ["audit", "history", { entity, entityId, module }],
   },
   advisor: {
+    all: (): readonly ["advisor"] => ["advisor"],
     insights: (surface: string): ApiQueryKey => [
       "advisor",
       "insights",
