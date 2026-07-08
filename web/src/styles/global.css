@@ -2285,6 +2285,50 @@
   gap: 10px;
 }
 
+.director-editor-heading {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.director-editor {
+  display: grid;
+  gap: 10px;
+}
+
+.director-editor > .type-secondary {
+  margin: 0;
+}
+
+.director-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.2fr) minmax(150px, 0.8fr) minmax(86px, auto) minmax(92px, auto);
+  gap: 10px;
+  align-items: end;
+  padding: 12px;
+  border: 1px solid var(--color-border-hairline);
+  border-radius: var(--radius-input);
+  background: var(--color-panel);
+}
+
+.director-chair-toggle {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  min-height: 36px;
+  color: var(--color-text);
+  font-size: 13px;
+}
+
+.director-chair-toggle input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--color-success);
+}
+
 .company-profile-summary {
   display: flex;
   flex-wrap: wrap;
@@ -3696,6 +3740,7 @@ article.ui-stat-card.dashboard-stat-card--unavailable {
   .company-field-grid,
   .client-address-grid,
   .client-field-grid,
+  .director-row,
   .jurisdiction-rule-row,
   .pat-field-grid,
   .registered-office-grid,

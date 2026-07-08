@@ -484,6 +484,7 @@ function identityProfile() {
       region: "",
     },
     shareholders: [{ class: "ordinary £1", name: "N. Meyer", shares: 100 }],
+    directors: [{ appointed_date: "2020-07-14", is_chair: true, name: "N. Meyer" }],
     trading_name: "NPM Limited",
     vat_number: null,
     year_end: { day: 31, month: 3 },

@@ -492,6 +492,7 @@ function identityProfile() {
       region: "",
     },
     shareholders: [],
+    directors: [],
     trading_name: "NPM Limited",
     vat_number: null,
     year_end: { day: 31, month: 3 },

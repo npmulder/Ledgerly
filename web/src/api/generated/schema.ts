@@ -1770,6 +1770,12 @@ export interface components {
             accounts: components["schemas"]["DashboardReconcileAccount"][];
             review_queue: components["schemas"]["DashboardReviewQueueItem"][];
         };
+        Director: {
+            /** Format: date */
+            appointed_date?: string;
+            is_chair?: boolean;
+            name: string;
+        };
         DividendsAddress: {
             country: string;
             line1: string;
@@ -1946,6 +1952,7 @@ export interface components {
         IdentityProfile: {
             bank_details: components["schemas"]["BankDetails"];
             company_number: string;
+            directors: components["schemas"]["Director"][];
             /** Format: date */
             incorporation_date: string;
             is_vat_registered: boolean;
@@ -1963,6 +1970,7 @@ export interface components {
         IdentityProfilePatch: {
             bank_details?: components["schemas"]["BankDetails"];
             company_number?: string;
+            directors?: components["schemas"]["Director"][];
             /** Format: date */
             incorporation_date?: string;
             is_vat_registered?: boolean;
@@ -1984,6 +1992,7 @@ export interface components {
         };
         IdentityRegisterWithProfileRequest: {
             company_number: string;
+            directors?: components["schemas"]["Director"][];
             /** Format: email */
             email: string;
             /** Format: date */

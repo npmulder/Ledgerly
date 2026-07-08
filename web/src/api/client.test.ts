@@ -47,6 +47,7 @@ describe("ApiClient", () => {
             region: "",
           },
           shareholders: [],
+          directors: [],
           trading_name: "NPM Trading",
           vat_number: null,
           year_end: { day: 31, month: 3 },

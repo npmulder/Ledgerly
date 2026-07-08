@@ -414,6 +414,7 @@ func (s *ProfileService) CompanyFacts(ctx context.Context) (CompanyFacts, error)
 		IncorporationDate: profile.IncorporationDate,
 		YearEnd:           profile.YearEnd,
 		IsVATRegistered:   profile.IsVATRegistered,
+		Directors:         append([]Director{}, profile.Directors...),
 	}, nil
 }
 
@@ -828,6 +829,13 @@ func (patch UpdateProfilePatch) apply(profile CompanyProfile) (CompanyProfile, e
 	if patch.Shareholders != nil {
 		profile.Shareholders = append([]Shareholder{}, (*patch.Shareholders)...)
 	}
+	if patch.Directors != nil {
+		directors, err := normalizeDirectors(*patch.Directors)
+		if err != nil {
+			return CompanyProfile{}, err
+		}
+		profile.Directors = directors
+	}
 	if patch.LogoAssetID != nil {
 		logoAssetID := AssetID(strings.TrimSpace(string(*patch.LogoAssetID)))
 		if logoAssetID == "" {
@@ -852,6 +860,9 @@ func (patch UpdateProfilePatch) apply(profile CompanyProfile) (CompanyProfile, e
 	}
 	if err := profile.YearEnd.validate(); err != nil {
 		return CompanyProfile{}, err
+	}
+	if profile.Directors == nil {
+		profile.Directors = []Director{}
 	}
 	return profile, nil
 }
@@ -894,6 +905,10 @@ func normalizeInitialCompanyProfile(profile CompanyProfile) (CompanyProfile, err
 	if normalized.Shareholders == nil {
 		normalized.Shareholders = []Shareholder{}
 	}
+	normalized.Directors, err = normalizeDirectors(normalized.Directors)
+	if err != nil {
+		return CompanyProfile{}, err
+	}
 	if normalized.LogoAssetID != nil {
 		logoAssetID := AssetID(strings.TrimSpace(string(*normalized.LogoAssetID)))
 		if logoAssetID == "" {
@@ -903,6 +918,44 @@ func normalizeInitialCompanyProfile(profile CompanyProfile) (CompanyProfile, err
 		}
 	}
 	return normalized, nil
+}
+
+func normalizeDirectors(directors []Director) ([]Director, error) {
+	if directors == nil {
+		return []Director{}, nil
+	}
+	normalized := make([]Director, 0, len(directors))
+	for _, director := range directors {
+		name := strings.TrimSpace(director.Name)
+		if name == "" {
+			return nil, fmt.Errorf("identity: director name is required")
+		}
+		director.Name = name
+		if director.AppointedDate != nil {
+			appointedDate := strings.TrimSpace(*director.AppointedDate)
+			if appointedDate == "" {
+				director.AppointedDate = nil
+			} else {
+				if _, err := parseDate(appointedDate); err != nil {
+					return nil, fmt.Errorf("identity: director appointed_date must be YYYY-MM-DD: %w", err)
+				}
+				director.AppointedDate = &appointedDate
+			}
+		}
+		normalized = append(normalized, director)
+	}
+	return normalized, nil
+}
+
+// DirectorNames returns non-empty director names in profile order.
+func (profile CompanyProfile) DirectorNames() []string {
+	names := make([]string, 0, len(profile.Directors))
+	for _, director := range profile.Directors {
+		if name := strings.TrimSpace(director.Name); name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 func normalizeEmail(value string) (string, error) {

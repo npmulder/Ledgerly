@@ -31,6 +31,9 @@ func TestFixturesCompanyFlatRatesAndFrozenClock(t *testing.T) {
 	if len(company.Shareholders) != 1 || company.Shareholders[0].Name != "N. Meyer" || company.Shareholders[0].Shares != 100 {
 		t.Fatalf("shareholders = %+v, want N. Meyer 100 shares", company.Shareholders)
 	}
+	if len(company.Directors) != 2 || company.Directors[0].Name != "N. Meyer" || !company.Directors[0].IsChair || company.Directors[1].Name != "A. Patel" {
+		t.Fatalf("directors = %+v, want N. Meyer chair and A. Patel", company.Directors)
+	}
 	if company.BankDetails.IBAN == "" || company.BankDetails.BIC != "REVOGB21" {
 		t.Fatalf("bank details = %+v, want Revolut SEPA details", company.BankDetails)
 	}

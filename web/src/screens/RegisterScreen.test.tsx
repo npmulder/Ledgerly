@@ -71,6 +71,13 @@ describe("RegisterScreen", () => {
     expect(init?.method).toBe("POST");
     expect(JSON.parse(String(init?.body))).toMatchObject({
       company_number: "137792C",
+      directors: [
+        {
+          appointed_date: "2025-04-03",
+          is_chair: true,
+          name: "N. Meyer",
+        },
+      ],
       email: "owner@example.com",
       incorporation_date: "2025-04-03",
       legal_name: "NPM Limited",
@@ -219,6 +226,11 @@ async function fillCompanyStep(user: ReturnType<typeof userEvent.setup>) {
     "IM1 1AA",
   );
   await user.type(screen.getByLabelText("Incorporation date"), "2025-04-03");
+  await user.type(screen.getByLabelText("Director 1 name"), "N. Meyer");
+  await user.type(
+    screen.getByLabelText("Director 1 appointed date"),
+    "2025-04-03",
+  );
 }
 
 function LocationProbe() {
