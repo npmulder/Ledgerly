@@ -3,11 +3,13 @@ import { expect, test, type Page, type Route } from "@playwright/test";
 import type {
   BankingAccount,
   BankingCreateAccountRequest,
+  BankingInvoiceCandidate,
   BankingMoney,
   BankingRecentTransaction,
   BankingReceipt,
   BankingReviewCard,
   BankingReviewQueue,
+  BankingTransaction,
 } from "@/api/banking";
 import type { LedgerAccount } from "@/api/ledger";
 
@@ -231,6 +233,19 @@ async function mockBankingApi(page: Page, state: BankingState) {
       await fulfillJson(route, state.queue);
       return;
     }
+    if (path === "/api/banking/feed") {
+      const accountID = url.searchParams.get("account");
+      const transactionState = url.searchParams.get("state");
+      await fulfillJson(route, {
+        next_cursor: null,
+        transactions: state.feed.filter(
+          (transaction) =>
+            (!accountID || transaction.account_id === Number(accountID)) &&
+            (!transactionState || transaction.state === transactionState),
+        ),
+      });
+      return;
+    }
     if (path === "/api/banking/recent") {
       await fulfillJson(route, { transactions: state.recent });
       return;
@@ -294,6 +309,15 @@ async function mockBankingApi(page: Page, state: BankingState) {
       });
       return;
     }
+    const candidateMatch = path.match(
+      /^\/api\/banking\/transactions\/(\d+)\/invoice-candidates$/,
+    );
+    if (candidateMatch && request.method() === "GET") {
+      await fulfillJson(route, {
+        candidates: state.candidates[Number(candidateMatch[1])] ?? [],
+      });
+      return;
+    }
     if (
       path === "/api/banking/transactions/102/file-dla" &&
       request.method() === "POST"
@@ -348,6 +372,8 @@ async function mockBankingApi(page: Page, state: BankingState) {
 
 type BankingState = {
   accounts: BankingAccount[];
+  candidates: Record<number, BankingInvoiceCandidate[]>;
+  feed: BankingTransaction[];
   imports: number;
   queue: BankingReviewQueue;
   recent: BankingRecentTransaction[];
@@ -359,6 +385,8 @@ function bankingState(
 ): BankingState {
   return {
     accounts,
+    candidates: {},
+    feed: [],
     imports: 0,
     queue: { matches: [], rules: [], suggestions: [] },
     recent: [],

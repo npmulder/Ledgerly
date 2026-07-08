@@ -28,6 +28,7 @@ On import (and on new invoice events), for each unreconciled txn produce best su
 ## Reconciliation flows (one transaction each)
 
 - **Confirm invoice match**: post Dr Cash / Cr Trade debtors → `invoicing.MarkSettled(...)` → (moneyfx auto-posts realised FX, surfaced back on the match card: "auto-posted FX gain") → txn state `reconciled`.
+- **Manual invoice allocation**: for inbound `unreconciled` or `suggested` transactions, list open sent invoice candidates in the transaction currency without applying the scorer threshold; confirming with an explicit invoice ID follows the same ledger + settlement path and supersedes any active suggestion.
 - **File to DLA**: `dla.FileDrawing(txn)` → dla posts its ledger entry → state `reconciled`.
 - **Accept payee rule / recode**: post to chosen expense account; recode updates/creates the rule (learning).
 
@@ -37,7 +38,8 @@ On import (and on new invoice events), for each unreconciled txn produce best su
 type Banking interface {
     ImportCSV(accountID, file) (BatchSummary, error)
     Feed(filter) · ReviewQueue() · RecentlyReconciled()
-    ConfirmMatch(txnID) · FileToDLA(txnID) · Recode(txnID, accountCode) · Exclude(txnID)
+    InvoiceCandidatesForTransaction(txnID) · ConfirmMatch(txnID) · ConfirmMatchToInvoice(txnID, invoiceID)
+    FileToDLA(txnID) · Recode(txnID, accountCode) · Exclude(txnID)
     Accounts() · UnreconciledCount(accountID) // account-card badges, advisor fact
 }
 ```
@@ -52,7 +54,7 @@ Publishes: `banking.TransactionsImported`, `banking.TransactionReconciled`. Cons
 
 ## UI notes (screen 05)
 
-Account cards (GBP selected, EUR shows review count), CSV import CTA, review queue of three card kinds (match / suggestion / rule), right rail recently-reconciled + empty state "All caught up…" (pattern reused by invoices/DLA).
+Account cards (GBP selected, EUR shows review count), CSV import CTA, review queue of three card kinds (match / suggestion / rule), manual invoice-match cards for inbound unreconciled rows, invoice override picker on match cards, right rail recently-reconciled + empty state "All caught up…" (pattern reused by invoices/DLA).
 
 ## Work items
 
