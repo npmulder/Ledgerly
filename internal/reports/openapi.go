@@ -8,7 +8,7 @@ func OpenAPIFragment() httpserver.OpenAPIFragment {
 		Tags: []map[string]any{
 			{
 				"name":        "reports",
-				"description": "Read-only profit and loss, VAT return figures, filing calendar, and profit YTD endpoints.",
+				"description": "Read-only profit and loss, balance sheet, VAT return figures, filing calendar, and profit YTD endpoints.",
 			},
 		},
 		Paths: map[string]any{
@@ -70,6 +70,24 @@ func OpenAPIFragment() httpserver.OpenAPIFragment {
 						},
 						"400": reportsProblemResponse("Invalid reports expenses CSV query"),
 						"401": reportsProblemResponse("Authentication required"),
+					},
+				},
+			},
+			"/api/reports/balance-sheet": map[string]any{
+				"get": map[string]any{
+					"tags":        []string{"reports"},
+					"summary":     "Return balance sheet as at a date",
+					"description": "Returns assets, liabilities, and equity grouped from ledger account balances as at a chosen date, including retained earnings carry-forward and current-year profit.",
+					"operationId": "reportsGetBalanceSheet",
+					"security":    reportsSessionSecurity(),
+					"parameters": []map[string]any{
+						reportsDateQueryParameter("asOf", "Balance sheet date."),
+					},
+					"responses": map[string]any{
+						"200": reportsJSONResponseRef("Balance sheet report", "ReportsBalanceSheetResponse"),
+						"400": reportsProblemResponse("Invalid balance sheet query"),
+						"401": reportsProblemResponse("Authentication required"),
+						"404": reportsProblemResponse("Company profile not found"),
 					},
 				},
 			},
@@ -338,6 +356,54 @@ func reportsComponents() map[string]any {
 					"tax_year": map[string]any{"type": "string"},
 					"rate":     map[string]any{"type": "string"},
 					"amount":   map[string]any{"$ref": "#/components/schemas/ReportsMoney"},
+				},
+				"additionalProperties": false,
+			},
+			"ReportsBalanceSheetLine": map[string]any{
+				"type":     "object",
+				"required": []string{"account_code", "account_name", "amount"},
+				"properties": map[string]any{
+					"account_code": map[string]any{"type": "string"},
+					"account_name": map[string]any{"type": "string"},
+					"amount":       map[string]any{"$ref": "#/components/schemas/ReportsMoney"},
+				},
+				"additionalProperties": false,
+			},
+			"ReportsBalanceSheetSection": map[string]any{
+				"type":     "object",
+				"required": []string{"label", "lines", "total"},
+				"properties": map[string]any{
+					"label": map[string]any{"type": "string"},
+					"lines": reportsArraySchema("ReportsBalanceSheetLine"),
+					"total": map[string]any{"$ref": "#/components/schemas/ReportsMoney"},
+				},
+				"additionalProperties": false,
+			},
+			"ReportsBalanceSheetResponse": map[string]any{
+				"type": "object",
+				"required": []string{
+					"as_of",
+					"financial_year",
+					"assets",
+					"liabilities",
+					"equity",
+					"total_assets",
+					"total_liabilities",
+					"total_equity",
+					"total_liabilities_and_equity",
+					"balanced",
+				},
+				"properties": map[string]any{
+					"as_of":                        map[string]any{"type": "string", "format": "date"},
+					"financial_year":               map[string]any{"type": "string"},
+					"assets":                       map[string]any{"$ref": "#/components/schemas/ReportsBalanceSheetSection"},
+					"liabilities":                  map[string]any{"$ref": "#/components/schemas/ReportsBalanceSheetSection"},
+					"equity":                       map[string]any{"$ref": "#/components/schemas/ReportsBalanceSheetSection"},
+					"total_assets":                 map[string]any{"$ref": "#/components/schemas/ReportsMoney"},
+					"total_liabilities":            map[string]any{"$ref": "#/components/schemas/ReportsMoney"},
+					"total_equity":                 map[string]any{"$ref": "#/components/schemas/ReportsMoney"},
+					"total_liabilities_and_equity": map[string]any{"$ref": "#/components/schemas/ReportsMoney"},
+					"balanced":                     map[string]any{"type": "boolean"},
 				},
 				"additionalProperties": false,
 			},

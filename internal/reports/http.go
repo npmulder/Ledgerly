@@ -51,6 +51,31 @@ type plResponse struct {
 	NetProfit       moneyResponse         `json:"net_profit"`
 }
 
+type balanceSheetResponse struct {
+	AsOf                      string                      `json:"as_of"`
+	FinancialYear             string                      `json:"financial_year"`
+	Assets                    balanceSheetSectionResponse `json:"assets"`
+	Liabilities               balanceSheetSectionResponse `json:"liabilities"`
+	Equity                    balanceSheetSectionResponse `json:"equity"`
+	TotalAssets               moneyResponse               `json:"total_assets"`
+	TotalLiabilities          moneyResponse               `json:"total_liabilities"`
+	TotalEquity               moneyResponse               `json:"total_equity"`
+	TotalLiabilitiesAndEquity moneyResponse               `json:"total_liabilities_and_equity"`
+	Balanced                  bool                        `json:"balanced"`
+}
+
+type balanceSheetSectionResponse struct {
+	Label string                     `json:"label"`
+	Lines []balanceSheetLineResponse `json:"lines"`
+	Total moneyResponse              `json:"total"`
+}
+
+type balanceSheetLineResponse struct {
+	AccountCode string        `json:"account_code"`
+	AccountName string        `json:"account_name"`
+	Amount      moneyResponse `json:"amount"`
+}
+
 type incomeLineResponse struct {
 	Label      string        `json:"label"`
 	ClientID   string        `json:"client_id"`
@@ -164,6 +189,7 @@ func (m *Module) RegisterRoutes(r chi.Router) {
 	r.Get("/pl", h.getPL)
 	r.Get("/expenses", h.getExpenses)
 	r.Get("/expenses.csv", h.getExpensesCSV)
+	r.Get("/balance-sheet", h.getBalanceSheet)
 	r.Get("/vat", h.getVAT)
 	r.Get("/calendar", h.getCalendar)
 	r.Get("/profit-ytd", h.getProfitYTD)
@@ -214,6 +240,20 @@ func (h reportsHandler) getExpensesCSV(w nethttp.ResponseWriter, r *nethttp.Requ
 	w.Header().Set("Content-Disposition", `attachment; filename="ledgerly-expenses-`+periodFilenamePart(period)+`.csv"`)
 	w.WriteHeader(nethttp.StatusOK)
 	_, _ = w.Write(csvBytes)
+}
+
+func (h reportsHandler) getBalanceSheet(w nethttp.ResponseWriter, r *nethttp.Request) {
+	asOf, err := parseRequiredDateQuery(r.URL.Query().Get("asOf"), "asOf")
+	if err != nil {
+		writeReportsBadRequest(w, r, err)
+		return
+	}
+	balanceSheet, err := h.service.BalanceSheet(r.Context(), asOf)
+	if err != nil {
+		writeReportsError(w, r, err)
+		return
+	}
+	writeReportsJSON(w, nethttp.StatusOK, balanceSheetToResponse(balanceSheet))
 }
 
 func (h reportsHandler) getVAT(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -439,6 +479,37 @@ func expensesToResponse(report ExpensesReport) expensesResponse {
 			Category:     transaction.Category,
 			SourceModule: transaction.SourceModule,
 			SourceRef:    transaction.SourceRef,
+		})
+	}
+	return response
+}
+
+func balanceSheetToResponse(balanceSheet BalanceSheet) balanceSheetResponse {
+	return balanceSheetResponse{
+		AsOf:                      balanceSheet.AsOf.UTC().Format(time.DateOnly),
+		FinancialYear:             balanceSheet.FinancialYear,
+		Assets:                    balanceSheetSectionToResponse(balanceSheet.Assets),
+		Liabilities:               balanceSheetSectionToResponse(balanceSheet.Liabilities),
+		Equity:                    balanceSheetSectionToResponse(balanceSheet.Equity),
+		TotalAssets:               moneyToResponse(balanceSheet.TotalAssets),
+		TotalLiabilities:          moneyToResponse(balanceSheet.TotalLiabilities),
+		TotalEquity:               moneyToResponse(balanceSheet.TotalEquity),
+		TotalLiabilitiesAndEquity: moneyToResponse(balanceSheet.TotalLiabilitiesAndEquity),
+		Balanced:                  balanceSheet.Balanced,
+	}
+}
+
+func balanceSheetSectionToResponse(section BalanceSheetSection) balanceSheetSectionResponse {
+	response := balanceSheetSectionResponse{
+		Label: section.Label,
+		Lines: make([]balanceSheetLineResponse, 0, len(section.Lines)),
+		Total: moneyToResponse(section.Total),
+	}
+	for _, line := range section.Lines {
+		response.Lines = append(response.Lines, balanceSheetLineResponse{
+			AccountCode: string(line.AccountCode),
+			AccountName: line.AccountName,
+			Amount:      moneyToResponse(line.Amount),
 		})
 	}
 	return response

@@ -160,21 +160,22 @@ func (s *Service) ShareExportPack(ctx context.Context, request ShareRequest) (Sh
 }
 
 type exportPackData struct {
-	period      Period
-	pl          PL
-	expenses    ExpensesReport
-	vat         *VATFigures
-	journal     []ledger.JournalEntry
-	dlaRows     []dla.Entry
-	invoices    []StoredDocument
-	dividends   []StoredDocument
-	receipts    []StoredDocument
-	profile     identity.CompanyProfile
-	facts       identity.CompanyFacts
-	plPDF       []byte
-	generatedAt time.Time
-	appVersion  string
-	dataVersion string
+	period       Period
+	pl           PL
+	expenses     ExpensesReport
+	balanceSheet BalanceSheet
+	vat          *VATFigures
+	journal      []ledger.JournalEntry
+	dlaRows      []dla.Entry
+	invoices     []StoredDocument
+	dividends    []StoredDocument
+	receipts     []StoredDocument
+	profile      identity.CompanyProfile
+	facts        identity.CompanyFacts
+	plPDF        []byte
+	generatedAt  time.Time
+	appVersion   string
+	dataVersion  string
 }
 
 func (s *Service) exportPackData(ctx context.Context, period Period) (exportPackData, error) {
@@ -183,6 +184,10 @@ func (s *Service) exportPackData(ctx context.Context, period Period) (exportPack
 		return exportPackData{}, err
 	}
 	expenses, err := s.ExpensesByCategory(ctx, period)
+	if err != nil {
+		return exportPackData{}, err
+	}
+	balanceSheet, err := s.BalanceSheet(ctx, period.To)
 	if err != nil {
 		return exportPackData{}, err
 	}
@@ -223,17 +228,18 @@ func (s *Service) exportPackData(ctx context.Context, period Period) (exportPack
 		return exportPackData{}, err
 	}
 	return exportPackData{
-		period:    period,
-		pl:        pl,
-		expenses:  expenses,
-		vat:       vat,
-		journal:   journal,
-		dlaRows:   dlaRows,
-		invoices:  invoiceDocs,
-		dividends: dividendDocs,
-		receipts:  receiptDocs,
-		profile:   profile,
-		facts:     facts,
+		period:       period,
+		pl:           pl,
+		expenses:     expenses,
+		balanceSheet: balanceSheet,
+		vat:          vat,
+		journal:      journal,
+		dlaRows:      dlaRows,
+		invoices:     invoiceDocs,
+		dividends:    dividendDocs,
+		receipts:     receiptDocs,
+		profile:      profile,
+		facts:        facts,
 	}, nil
 }
 
@@ -375,6 +381,7 @@ func buildExportArchive(data exportPackData) ([]byte, error) {
 		{Name: "expenses.csv", Bytes: mustBuildCSV(expensesCSVRows(data.expenses.Transactions))},
 		{Name: "pl.csv", Bytes: mustBuildCSV(plCSVRows(data.pl))},
 		{Name: "pl.pdf", Bytes: data.plPDF},
+		{Name: "balance-sheet.csv", Bytes: mustBuildCSV(balanceSheetCSVRows(data.balanceSheet))},
 		{Name: "journal.csv", Bytes: mustBuildCSV(journalCSVRows(data.journal))},
 		{Name: "dla.csv", Bytes: mustBuildCSV(dlaCSVRows(data.dlaRows))},
 	}
@@ -475,6 +482,37 @@ func vatCSVRows(vat VATFigures) [][]string {
 		{"6", "Total sales ex-VAT", decimalString(vat.Box6), vat.Box6.Currency},
 		{"net", "Net position", decimalString(vat.NetPosition), vat.NetPosition.Currency},
 	}
+}
+
+func balanceSheetCSVRows(balanceSheet BalanceSheet) [][]string {
+	rows := [][]string{{"section", "account_code", "account_name", "amount", "currency"}}
+	for _, section := range []BalanceSheetSection{balanceSheet.Assets, balanceSheet.Liabilities, balanceSheet.Equity} {
+		sectionKey := strings.ToLower(section.Label)
+		for _, line := range section.Lines {
+			rows = append(rows, []string{
+				sectionKey,
+				string(line.AccountCode),
+				line.AccountName,
+				decimalString(line.Amount),
+				line.Amount.Currency,
+			})
+		}
+		rows = append(rows, []string{
+			"total",
+			"",
+			section.Label,
+			decimalString(section.Total),
+			section.Total.Currency,
+		})
+	}
+	rows = append(rows, []string{
+		"total",
+		"",
+		"Liabilities and equity",
+		decimalString(balanceSheet.TotalLiabilitiesAndEquity),
+		balanceSheet.TotalLiabilitiesAndEquity.Currency,
+	})
+	return rows
 }
 
 func journalCSVRows(entries []ledger.JournalEntry) [][]string {
@@ -624,28 +662,30 @@ func exportPackDataVersion(data exportPackData, appVersion string) (string, erro
 		vat = &response
 	}
 	payload := struct {
-		Period    periodResponse        `json:"period"`
-		App       string                `json:"app_version"`
-		PL        plResponse            `json:"pl"`
-		Expenses  expensesResponse      `json:"expenses"`
-		VAT       *vatResponse          `json:"vat,omitempty"`
-		Journal   []ledger.JournalEntry `json:"journal"`
-		DLA       []dla.Entry           `json:"dla"`
-		Invoices  []documentDigest      `json:"invoices"`
-		Dividends []documentDigest      `json:"dividends"`
-		Receipts  []documentDigest      `json:"receipts"`
-		Company   manifestCompany       `json:"company"`
+		Period       periodResponse        `json:"period"`
+		App          string                `json:"app_version"`
+		PL           plResponse            `json:"pl"`
+		Expenses     expensesResponse      `json:"expenses"`
+		BalanceSheet balanceSheetResponse  `json:"balance_sheet"`
+		VAT          *vatResponse          `json:"vat,omitempty"`
+		Journal      []ledger.JournalEntry `json:"journal"`
+		DLA          []dla.Entry           `json:"dla"`
+		Invoices     []documentDigest      `json:"invoices"`
+		Dividends    []documentDigest      `json:"dividends"`
+		Receipts     []documentDigest      `json:"receipts"`
+		Company      manifestCompany       `json:"company"`
 	}{
 		Period: periodResponse{
 			From: data.period.From.UTC().Format(time.DateOnly),
 			To:   data.period.To.UTC().Format(time.DateOnly),
 		},
-		App:      appVersion,
-		PL:       plToResponse(data.pl),
-		Expenses: expensesToResponse(data.expenses),
-		VAT:      vat,
-		Journal:  data.journal,
-		DLA:      data.dlaRows,
+		App:          appVersion,
+		PL:           plToResponse(data.pl),
+		Expenses:     expensesToResponse(data.expenses),
+		BalanceSheet: balanceSheetToResponse(data.balanceSheet),
+		VAT:          vat,
+		Journal:      data.journal,
+		DLA:          data.dlaRows,
 		Company: manifestCompany{
 			TradingName:       data.profile.TradingName,
 			LegalName:         data.profile.LegalName,

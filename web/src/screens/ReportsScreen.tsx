@@ -3,6 +3,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 
 import { queryKeys } from "@/api/queryKeys";
 import {
+  getReportsBalanceSheet,
   getReportsCalendar,
   getReportsExpenses,
   getReportsPL,
@@ -10,6 +11,7 @@ import {
   reportsExpensesCSVURL,
   reportsExportURL,
   shareReportsExport,
+  type ReportsBalanceSheet,
   type ReportsExpenses,
   type ReportsFiling,
   type ReportsMoney,
@@ -34,6 +36,17 @@ type ReportsPeriod = {
   readonly vatPeriod: string;
 };
 
+type ReportType = "pl" | "balance_sheet" | "expenses";
+
+const reportTypeTabs: readonly {
+  readonly id: ReportType;
+  readonly label: string;
+}[] = [
+  { id: "pl", label: "Profit & loss" },
+  { id: "balance_sheet", label: "Balance sheet" },
+  { id: "expenses", label: "Expenses" },
+];
+
 const quarterDefinitions = [
   { label: "Jan-Mar", quarter: 1, toMonth: 2 },
   { label: "Apr-Jun", quarter: 2, toMonth: 5 },
@@ -44,11 +57,16 @@ const quarterDefinitions = [
 export function ReportsScreen() {
   const quarterPresets = useMemo(() => buildQuarterPresets(), []);
   const defaultPeriod = defaultReportsPeriod(quarterPresets);
+  const [reportType, setReportType] = useState<ReportType>("pl");
   const [period, setPeriod] = useState<ReportsPeriod>(() => defaultPeriod);
   const [customRange, setCustomRange] = useState(() => ({
     from: defaultPeriod.from,
     to: defaultPeriod.to,
   }));
+  const [balanceSheetAsOf, setBalanceSheetAsOf] = useState(defaultPeriod.to);
+  const [balanceSheetDraftAsOf, setBalanceSheetDraftAsOf] = useState(
+    defaultPeriod.to,
+  );
   const [shareOpen, setShareOpen] = useState(false);
   const [shareEmail, setShareEmail] = useState("");
   const [selectedExpenseCategory, setSelectedExpenseCategory] = useState<
@@ -60,12 +78,19 @@ export function ReportsScreen() {
   } | null>(null);
 
   const plQuery = useQuery({
+    enabled: reportType === "pl",
     queryFn: () => getReportsPL(period.from, period.to),
     queryKey: queryKeys.reports.pl(period.from, period.to),
   });
   const expensesQuery = useQuery({
+    enabled: reportType === "expenses",
     queryFn: () => getReportsExpenses(period.from, period.to),
     queryKey: queryKeys.reports.expenses(period.from, period.to),
+  });
+  const balanceSheetQuery = useQuery({
+    enabled: reportType === "balance_sheet",
+    queryFn: () => getReportsBalanceSheet(balanceSheetAsOf),
+    queryKey: queryKeys.reports.balanceSheet(balanceSheetAsOf),
   });
   const vatQuery = useQuery({
     queryFn: () => getReportsVAT(period.vatPeriod),
@@ -125,6 +150,14 @@ export function ReportsScreen() {
     });
   }
 
+  function applyBalanceSheetDate(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (balanceSheetDraftAsOf === "") {
+      return;
+    }
+    setBalanceSheetAsOf(balanceSheetDraftAsOf);
+  }
+
   function exportPack() {
     const link = document.createElement("a");
     link.href = reportsExportURL(period.from, period.to);
@@ -152,6 +185,15 @@ export function ReportsScreen() {
     event.preventDefault();
     shareMutation.mutate();
   }
+
+  const periodControlProps = {
+    customRange,
+    onCustomRangeChange: setCustomRange,
+    onCustomRangeSubmit: applyCustomRange,
+    onSelectPreset: selectPreset,
+    period,
+    quarterPresets,
+  };
 
   return (
     <div className="reports-screen">
@@ -216,26 +258,57 @@ export function ReportsScreen() {
       <AdvisorStrip surface="reports" />
 
       <div className="reports-layout">
-        <div className="reports-main-column">
-          <ProfitAndLossCard
-            isLoading={plQuery.isPending}
-            period={period}
-            pl={plQuery.data}
-            onSelectPreset={selectPreset}
-            customRange={customRange}
-            onCustomRangeChange={setCustomRange}
-            onCustomRangeSubmit={applyCustomRange}
-            quarterPresets={quarterPresets}
-          />
-          <ExpensesBreakdownCard
-            expenses={expensesQuery.data}
-            isLoading={expensesQuery.isPending}
-            onDownloadCSV={exportExpensesCSV}
-            onSelectCategory={setSelectedExpenseCategory}
-            period={period}
-            selectedCategoryCode={selectedExpenseCategory}
-          />
-        </div>
+        <main className="reports-main">
+          <div
+            aria-label="Report type"
+            className="reports-type-switch"
+            role="tablist"
+          >
+            {reportTypeTabs.map((tab) => (
+              <button
+                aria-selected={reportType === tab.id}
+                className={
+                  reportType === tab.id
+                    ? "reports-type-tab reports-type-tab--active"
+                    : "reports-type-tab"
+                }
+                key={tab.id}
+                onClick={() => setReportType(tab.id)}
+                role="tab"
+                type="button"
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+          {reportType === "pl" ? (
+            <ProfitAndLossCard
+              isLoading={plQuery.isPending}
+              pl={plQuery.data}
+              {...periodControlProps}
+            />
+          ) : null}
+          {reportType === "balance_sheet" ? (
+            <BalanceSheetCard
+              asOf={balanceSheetAsOf}
+              draftAsOf={balanceSheetDraftAsOf}
+              isLoading={balanceSheetQuery.isPending}
+              balanceSheet={balanceSheetQuery.data}
+              onDraftAsOfChange={setBalanceSheetDraftAsOf}
+              onSubmit={applyBalanceSheetDate}
+            />
+          ) : null}
+          {reportType === "expenses" ? (
+            <ExpensesBreakdownCard
+              expenses={expensesQuery.data}
+              isLoading={expensesQuery.isPending}
+              onDownloadCSV={exportExpensesCSV}
+              onSelectCategory={setSelectedExpenseCategory}
+              selectedCategoryCode={selectedExpenseCategory}
+              {...periodControlProps}
+            />
+          ) : null}
+        </main>
         <aside className="reports-rail" aria-label="VAT and filing calendar">
           <VATReturnCard
             filing={vatFiling}
@@ -253,25 +326,211 @@ export function ReportsScreen() {
   );
 }
 
-function ProfitAndLossCard({
-  customRange,
-  isLoading,
-  onCustomRangeChange,
-  onCustomRangeSubmit,
-  onSelectPreset,
-  period,
-  pl,
-  quarterPresets,
-}: {
+type PeriodControlProps = {
   readonly customRange: { readonly from: string; readonly to: string };
-  readonly isLoading: boolean;
   readonly onCustomRangeChange: (range: { from: string; to: string }) => void;
   readonly onCustomRangeSubmit: (event: FormEvent<HTMLFormElement>) => void;
   readonly onSelectPreset: (period: ReportsPeriod) => void;
   readonly period: ReportsPeriod;
-  readonly pl: ReportsPL | undefined;
   readonly quarterPresets: ReportsPeriod[];
+};
+
+function PeriodControl({
+  customRange,
+  onCustomRangeChange,
+  onCustomRangeSubmit,
+  onSelectPreset,
+  period,
+  quarterPresets,
+}: PeriodControlProps) {
+  return (
+    <div className="reports-period-control" aria-label="Report period">
+      <div className="reports-period-control__presets">
+        {quarterPresets.map((preset) => (
+          <button
+            aria-pressed={period.id === preset.id}
+            className={
+              period.id === preset.id
+                ? "reports-period-pill reports-period-pill--active"
+                : "reports-period-pill"
+            }
+            key={preset.id}
+            onClick={() => onSelectPreset(preset)}
+            type="button"
+          >
+            {preset.label}
+          </button>
+        ))}
+      </div>
+      <form
+        aria-label="Custom report range"
+        className="reports-custom-range"
+        onSubmit={onCustomRangeSubmit}
+      >
+        <Field label="From">
+          <Input
+            max={customRange.to}
+            name="from"
+            onChange={(event) =>
+              onCustomRangeChange({
+                ...customRange,
+                from: event.target.value,
+              })
+            }
+            required
+            type="date"
+            value={customRange.from}
+          />
+        </Field>
+        <Field label="To">
+          <Input
+            min={customRange.from}
+            name="to"
+            onChange={(event) =>
+              onCustomRangeChange({
+                ...customRange,
+                to: event.target.value,
+              })
+            }
+            required
+            type="date"
+            value={customRange.to}
+          />
+        </Field>
+        <Button size="small" type="submit" variant="secondary">
+          Apply
+        </Button>
+      </form>
+    </div>
+  );
+}
+
+function BalanceSheetCard({
+  asOf,
+  balanceSheet,
+  draftAsOf,
+  isLoading,
+  onDraftAsOfChange,
+  onSubmit,
+}: {
+  readonly asOf: string;
+  readonly balanceSheet: ReportsBalanceSheet | undefined;
+  readonly draftAsOf: string;
+  readonly isLoading: boolean;
+  readonly onDraftAsOfChange: (asOf: string) => void;
+  readonly onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
+  return (
+    <Card
+      className="reports-balance-card"
+      title={
+        <div className="reports-card-title">
+          <span>Balance sheet · {formatReportDate(asOf)}</span>
+          <span>GBP · as at date</span>
+        </div>
+      }
+      actions={
+        balanceSheet ? (
+          <BalanceStatusBadge balanced={balanceSheet.balanced} />
+        ) : null
+      }
+    >
+      <form
+        aria-label="Balance sheet date"
+        className="reports-balance-control"
+        onSubmit={onSubmit}
+      >
+        <Field label="As at">
+          <Input
+            name="asOf"
+            onChange={(event) => onDraftAsOfChange(event.target.value)}
+            required
+            type="date"
+            value={draftAsOf}
+          />
+        </Field>
+        <Button size="small" type="submit" variant="secondary">
+          Apply
+        </Button>
+      </form>
+
+      {isLoading ? (
+        <p className="type-secondary">Loading balance sheet.</p>
+      ) : balanceSheet ? (
+        <div
+          className="reports-balance-sections"
+          role="table"
+          aria-label="Balance sheet sections"
+        >
+          <BalanceSheetSectionLines section={balanceSheet.assets} />
+          <BalanceSheetSectionLines section={balanceSheet.liabilities} />
+          <BalanceSheetSectionLines section={balanceSheet.equity} />
+          <ReportLine
+            amount={balanceSheet.total_liabilities_and_equity}
+            label="Liabilities and equity"
+            rule
+            strong
+          />
+        </div>
+      ) : (
+        <p className="type-secondary">Unable to load balance sheet.</p>
+      )}
+    </Card>
+  );
+}
+
+function BalanceSheetSectionLines({
+  section,
+}: {
+  readonly section: ReportsBalanceSheet["assets"];
+}) {
+  return (
+    <section className="reports-balance-section">
+      <div className="reports-section-heading">
+        <span>{section.label}</span>
+        <span className="reports-money">
+          {formatReportMoney(section.total)}
+        </span>
+      </div>
+      {section.lines.map((line) => (
+        <ReportLine
+          amount={line.amount}
+          key={line.account_code}
+          label={line.account_name}
+        />
+      ))}
+      <ReportLine
+        amount={section.total}
+        label={`${section.label} total`}
+        strong
+      />
+    </section>
+  );
+}
+
+function BalanceStatusBadge({ balanced }: { readonly balanced: boolean }) {
+  return (
+    <span
+      className={
+        balanced
+          ? "reports-balance-badge reports-balance-badge--balanced"
+          : "reports-balance-badge reports-balance-badge--unbalanced"
+      }
+    >
+      {balanced ? "Balanced" : "Out of balance"}
+    </span>
+  );
+}
+
+function ProfitAndLossCard({
+  isLoading,
+  pl,
+  ...periodControlProps
+}: PeriodControlProps & {
+  readonly isLoading: boolean;
+  readonly pl: ReportsPL | undefined;
+}) {
+  const { period } = periodControlProps;
   return (
     <Card
       className="reports-pl-card"
@@ -284,64 +543,7 @@ function ProfitAndLossCard({
         </div>
       }
     >
-      <div className="reports-period-control" aria-label="Report period">
-        <div className="reports-period-control__presets">
-          {quarterPresets.map((preset) => (
-            <button
-              aria-pressed={period.id === preset.id}
-              className={
-                period.id === preset.id
-                  ? "reports-period-pill reports-period-pill--active"
-                  : "reports-period-pill"
-              }
-              key={preset.id}
-              onClick={() => onSelectPreset(preset)}
-              type="button"
-            >
-              {preset.label}
-            </button>
-          ))}
-        </div>
-        <form
-          aria-label="Custom report range"
-          className="reports-custom-range"
-          onSubmit={onCustomRangeSubmit}
-        >
-          <Field label="From">
-            <Input
-              max={customRange.to}
-              name="from"
-              onChange={(event) =>
-                onCustomRangeChange({
-                  ...customRange,
-                  from: event.target.value,
-                })
-              }
-              required
-              type="date"
-              value={customRange.from}
-            />
-          </Field>
-          <Field label="To">
-            <Input
-              min={customRange.from}
-              name="to"
-              onChange={(event) =>
-                onCustomRangeChange({
-                  ...customRange,
-                  to: event.target.value,
-                })
-              }
-              required
-              type="date"
-              value={customRange.to}
-            />
-          </Field>
-          <Button size="small" type="submit" variant="secondary">
-            Apply
-          </Button>
-        </form>
-      </div>
+      <PeriodControl {...periodControlProps} />
 
       {isLoading ? (
         <p className="type-secondary">Loading profit and loss.</p>
@@ -402,16 +604,16 @@ function ExpensesBreakdownCard({
   isLoading,
   onDownloadCSV,
   onSelectCategory,
-  period,
   selectedCategoryCode,
-}: {
+  ...periodControlProps
+}: PeriodControlProps & {
   readonly expenses: ReportsExpenses | undefined;
   readonly isLoading: boolean;
   readonly onDownloadCSV: () => void;
   readonly onSelectCategory: (accountCode: string) => void;
-  readonly period: ReportsPeriod;
   readonly selectedCategoryCode: string | null;
 }) {
+  const { period } = periodControlProps;
   const selectedCategory =
     expenses?.categories.find(
       (category) => category.account_code === selectedCategoryCode,
@@ -447,6 +649,8 @@ function ExpensesBreakdownCard({
         </Button>
       }
     >
+      <PeriodControl {...periodControlProps} />
+
       {isLoading ? (
         <p className="type-secondary">Loading expenses.</p>
       ) : expenses && expenses.categories.length > 0 && selectedCategory ? (
@@ -743,6 +947,7 @@ function formatReportDate(value: string) {
     day: "2-digit",
     month: "short",
     timeZone: "UTC",
+    year: "numeric",
   }).format(new Date(`${value}T00:00:00Z`));
 }
 

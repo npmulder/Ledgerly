@@ -47,6 +47,7 @@ func TestReportsExportPackHTTPAssemblesZipAndSharesAttachment(t *testing.T) {
 
 	for _, name := range []string{
 		"expenses.csv",
+		"balance-sheet.csv",
 		"pl.csv",
 		"pl.pdf",
 		"vat.csv",
@@ -71,6 +72,7 @@ func TestReportsExportPackHTTPAssemblesZipAndSharesAttachment(t *testing.T) {
 	}
 	assertJournalCSVBalanced(t, files["journal.csv"])
 	assertPLCSVNetProfit(t, files["pl.csv"], pl.NetProfit.AmountMinor)
+	assertBalanceSheetCSV(t, files["balance-sheet.csv"], pl.NetProfit.AmountMinor)
 	assertExportManifest(t, files["manifest.json"], "2026-04-01", "2026-06-30")
 
 	secondLocation := exportLocation(t, h, "/api/reports/export?from=2026-04-01&to=2026-06-30")
@@ -500,6 +502,45 @@ func assertPLCSVNetProfit(t *testing.T, data []byte, wantMinor int64) {
 		}
 	}
 	t.Fatalf("pl.csv missing Net profit row")
+}
+
+func assertBalanceSheetCSV(t *testing.T, data []byte, wantCurrentProfitMinor int64) {
+	t.Helper()
+	rows, err := csv.NewReader(bytes.NewReader(data)).ReadAll()
+	if err != nil {
+		t.Fatalf("read balance-sheet.csv: %v", err)
+	}
+	if len(rows) == 0 || strings.Join(rows[0], ",") != "section,account_code,account_name,amount,currency" {
+		t.Fatalf("balance-sheet.csv header = %#v", rows)
+	}
+	var (
+		currentProfitSeen         bool
+		totalAssets               int64
+		totalLiabilitiesAndEquity int64
+	)
+	for _, row := range rows[1:] {
+		if len(row) != 5 {
+			t.Fatalf("balance-sheet.csv row has %d columns: %#v", len(row), row)
+		}
+		if row[1] == "current-year-profit" {
+			currentProfitSeen = true
+			if got := parseDecimalMinor(t, row[3]); got != wantCurrentProfitMinor {
+				t.Fatalf("balance-sheet.csv current-year profit = %d, want %d", got, wantCurrentProfitMinor)
+			}
+		}
+		if row[0] == "total" && row[2] == "Assets" {
+			totalAssets = parseDecimalMinor(t, row[3])
+		}
+		if row[0] == "total" && row[2] == "Liabilities and equity" {
+			totalLiabilitiesAndEquity = parseDecimalMinor(t, row[3])
+		}
+	}
+	if !currentProfitSeen {
+		t.Fatalf("balance-sheet.csv missing current-year-profit row: %#v", rows)
+	}
+	if totalAssets == 0 || totalAssets != totalLiabilitiesAndEquity {
+		t.Fatalf("balance-sheet.csv totals assets=%d liabilities+equity=%d", totalAssets, totalLiabilitiesAndEquity)
+	}
 }
 
 func assertExportManifest(t *testing.T, data []byte, from string, to string) {
