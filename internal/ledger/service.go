@@ -91,6 +91,18 @@ func (s *Service) Reverse(ctx context.Context, tx db.Tx, id EntryID, reason stri
 	return s.post(ctx, tx, reversal, &id)
 }
 
+// EntryBySource loads the latest original entry for a source module/ref inside tx.
+func (s *Service) EntryBySource(ctx context.Context, tx db.Tx, sourceModule string, sourceRef string) (JournalEntry, error) {
+	if tx == nil {
+		return JournalEntry{}, fmt.Errorf("ledger: source lookup requires transaction: %w", ErrInvalidEntryFilter)
+	}
+	sourceModule, sourceRef, err := normalizeSourceLookup(sourceModule, sourceRef)
+	if err != nil {
+		return JournalEntry{}, err
+	}
+	return s.store.JournalEntryBySource(ctx, tx, sourceModule, sourceRef)
+}
+
 // ReadSnapshot opens a read-only repeatable-read snapshot for multi-query
 // derived reads, then closes it when fn returns.
 func (s *Service) ReadSnapshot(ctx context.Context, fn ReadSnapshotFunc) error {
@@ -383,6 +395,18 @@ func validateNewJournalEntry(entry NewJournalEntry) (NewJournalEntry, error) {
 		}
 	}
 	return validated, nil
+}
+
+func normalizeSourceLookup(sourceModule string, sourceRef string) (string, string, error) {
+	module := strings.TrimSpace(sourceModule)
+	if module == "" {
+		return "", "", fmt.Errorf("ledger: source module is required: %w", ErrInvalidEntryFilter)
+	}
+	ref := strings.TrimSpace(sourceRef)
+	if ref == "" {
+		return "", "", fmt.Errorf("ledger: source ref is required: %w", ErrInvalidEntryFilter)
+	}
+	return module, ref, nil
 }
 
 func validatePosting(index int, posting NewPosting) (NewPosting, error) {

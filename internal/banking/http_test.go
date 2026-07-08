@@ -47,6 +47,7 @@ func TestHTTPImportRoundTripSummaryOversizeAndAuth(t *testing.T) {
 		{http.MethodPost, "/api/banking/transactions/1/confirm"},
 		{http.MethodPost, "/api/banking/transactions/1/file-dla"},
 		{http.MethodPost, "/api/banking/transactions/1/recode"},
+		{http.MethodPost, "/api/banking/transactions/1/unreconcile"},
 		{http.MethodPost, "/api/banking/transactions/1/exclude"},
 		{http.MethodPost, "/api/banking/transactions/1/unexclude"},
 		{http.MethodPut, "/api/banking/transactions/1/receipt"},
@@ -359,6 +360,28 @@ func TestHTTPFeedRecentAndCommandsHappyAndConflict(t *testing.T) {
 	}
 	assertBankingConflict(t, router, http.MethodPost, fmt.Sprintf("/api/banking/transactions/%d/exclude", confirmTxn), strings.NewReader(`{"reason":"too late"}`))
 	assertBankingConflict(t, router, http.MethodPost, fmt.Sprintf("/api/banking/transactions/%d/unexclude", confirmTxn), nil)
+
+	unreconcileTxn := importSingleBankingTxn(t, ctx, pool, service, AccountID(account.ID), revolutTestTxn{
+		Date:      time.Date(2026, 11, 5, 9, 0, 0, 0, time.UTC),
+		ID:        "http-command-unreconcile",
+		Payee:     "Undo Client",
+		Reference: "INV-UNDO-1",
+		Amount:    money.Money{Amount: 61000, Currency: "GBP"},
+	})
+	mustRecordSuggestion(t, ctx, service, unreconcileTxn, SuggestionKindInvoiceMatch, 0.980, "invoice-command-undo", "invoice undo match")
+	if response := performBankingRequest(router, http.MethodPost, fmt.Sprintf("/api/banking/transactions/%d/confirm", unreconcileTxn), nil, "", true); response.Code != http.StatusOK {
+		t.Fatalf("confirm undo fixture status = %d, want %d; body=%s", response.Code, http.StatusOK, response.Body.String())
+	}
+	unreconcileResponse := performBankingRequest(router, http.MethodPost, fmt.Sprintf("/api/banking/transactions/%d/unreconcile", unreconcileTxn), nil, "", true)
+	if unreconcileResponse.Code != http.StatusOK {
+		t.Fatalf("unreconcile status = %d, want %d; body=%s", unreconcileResponse.Code, http.StatusOK, unreconcileResponse.Body.String())
+	}
+	var unreconciled commandResponse
+	decodeBankingResponse(t, unreconcileResponse, &unreconciled)
+	if unreconciled.Transaction == nil || unreconciled.Transaction.State != TransactionStateUnreconciled || unreconciled.StateChange == nil || unreconciled.StateChange.To != TransactionStateUnreconciled {
+		t.Fatalf("unreconcile response = %+v, want unreconciled transaction/state change", unreconciled)
+	}
+	assertBankingConflict(t, router, http.MethodPost, fmt.Sprintf("/api/banking/transactions/%d/unreconcile", unreconcileTxn), nil)
 
 	feedHTTPResponse := performBankingRequest(router, http.MethodGet, fmt.Sprintf("/api/banking/feed?account=%d&state=reconciled", account.ID), nil, "", true)
 	if feedHTTPResponse.Code != http.StatusOK {
@@ -679,16 +702,53 @@ func (f bankingPingerFunc) PingContext(ctx context.Context) error {
 }
 
 type recordingBankingLedger struct {
-	next ledger.EntryID
+	next    ledger.EntryID
+	entries map[string]ledger.JournalEntry
 }
 
 func (r *recordingBankingLedger) EnsureAccount(_ context.Context, _ db.Tx, spec ledger.AccountSpec) (ledger.AccountCode, error) {
 	return spec.Code, nil
 }
 
-func (r *recordingBankingLedger) Post(_ context.Context, _ db.Tx, _ ledger.NewJournalEntry) (ledger.EntryID, error) {
+func (r *recordingBankingLedger) Post(_ context.Context, _ db.Tx, entry ledger.NewJournalEntry) (ledger.EntryID, error) {
+	r.next++
+	if r.entries == nil {
+		r.entries = map[string]ledger.JournalEntry{}
+	}
+	postings := make([]ledger.Posting, len(entry.Postings))
+	for i, posting := range entry.Postings {
+		postings[i] = ledger.Posting{
+			AccountCode: posting.AccountCode,
+			Amount:      posting.Amount,
+			AmountGBP:   posting.AmountGBP,
+		}
+	}
+	r.entries[ledgerSourceKey(entry.SourceModule, entry.SourceRef)] = ledger.JournalEntry{
+		ID:           r.next,
+		Date:         entry.Date,
+		Description:  entry.Description,
+		SourceModule: entry.SourceModule,
+		SourceRef:    entry.SourceRef,
+		Postings:     postings,
+	}
+	return r.next, nil
+}
+
+func (r *recordingBankingLedger) EntryBySource(_ context.Context, _ db.Tx, sourceModule string, sourceRef string) (ledger.JournalEntry, error) {
+	entry, ok := r.entries[ledgerSourceKey(sourceModule, sourceRef)]
+	if !ok {
+		return ledger.JournalEntry{}, fmt.Errorf("ledger: source %s/%s: %w", sourceModule, sourceRef, ledger.ErrEntryNotFound)
+	}
+	return entry, nil
+}
+
+func (r *recordingBankingLedger) Reverse(_ context.Context, _ db.Tx, _ ledger.EntryID, _ string) (ledger.EntryID, error) {
 	r.next++
 	return r.next, nil
+}
+
+func ledgerSourceKey(sourceModule string, sourceRef string) string {
+	return sourceModule + "\x00" + sourceRef
 }
 
 type stubBankingMoneyFX struct {
@@ -703,15 +763,27 @@ func (s stubBankingMoneyFX) RealisedFXAmount(context.Context, db.Tx, string) (mo
 	return s.realised, nil
 }
 
+func (s stubBankingMoneyFX) ClearRealisedFX(context.Context, db.Tx, string, string) (money.Money, error) {
+	return s.realised, nil
+}
+
 type stubInvoiceSettler struct{}
 
 func (stubInvoiceSettler) MarkSettled(context.Context, db.Tx, string, string, time.Time, invoicing.Money) (invoicing.Invoice, error) {
 	return invoicing.Invoice{}, nil
 }
 
+func (stubInvoiceSettler) ClearSettlementByTxnRef(context.Context, db.Tx, string) (invoicing.Invoice, error) {
+	return invoicing.Invoice{ID: "invoice-command-undo"}, nil
+}
+
 type recordingDLAFileDrawer struct{}
 
 func (*recordingDLAFileDrawer) FileDrawing(context.Context, db.Tx, dla.TxnRef) error {
+	return nil
+}
+
+func (*recordingDLAFileDrawer) RecordExternalCredit(context.Context, db.Tx, string, time.Time, money.Money, string) error {
 	return nil
 }
 

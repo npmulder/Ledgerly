@@ -2,16 +2,19 @@ package banking
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/npmulder/ledgerly/internal/dla"
 	"github.com/npmulder/ledgerly/internal/invoicing"
 	"github.com/npmulder/ledgerly/internal/ledger"
+	"github.com/npmulder/ledgerly/internal/moneyfx/money"
 	"github.com/npmulder/ledgerly/internal/platform/db"
 )
 
 const reconciliationActor = "reconciliation-command"
+const unreconciliationActor = "unreconciliation-command"
 
 // ReconciliationCommandHooks are deterministic fault-injection points for
 // command rollback tests. Production wiring leaves them empty.
@@ -232,6 +235,95 @@ func (s *Service) Recode(ctx context.Context, txnID TransactionID, accountCode l
 	return RecodeResult{Transaction: txn, Kind: SuggestionKindPayeeRule, Rule: rule}, nil
 }
 
+func (s *Service) Unreconcile(ctx context.Context, txnID TransactionID) (_ UnreconcileResult, err error) {
+	if s.pool == nil {
+		return UnreconcileResult{}, fmt.Errorf("banking: unreconcile requires pool")
+	}
+	if s.ledgerJournal == nil {
+		return UnreconcileResult{}, fmt.Errorf("banking: unreconcile requires ledger")
+	}
+
+	tx, err := s.beginReconciliationTx(ctx, "unreconcile")
+	if err != nil {
+		return UnreconcileResult{}, err
+	}
+	defer rollbackOnError(ctx, tx, &err)
+
+	txn, err := s.store.TransactionForUpdate(ctx, tx, txnID)
+	if err != nil {
+		return UnreconcileResult{}, err
+	}
+	if txn.State != TransactionStateReconciled {
+		return UnreconcileResult{}, notReconciled(txn)
+	}
+
+	target, err := s.unreconcileTarget(ctx, tx, txn)
+	if err != nil {
+		return UnreconcileResult{}, err
+	}
+
+	result := UnreconcileResult{
+		Transaction:      txn,
+		Kind:             target.kind,
+		ReversedEntryIDs: make([]ledger.EntryID, 0, 2),
+	}
+	reason := fmt.Sprintf("bank transaction %d unreconciled", txn.ID)
+	switch target.kind {
+	case SuggestionKindInvoiceMatch:
+		if s.invoices == nil {
+			return UnreconcileResult{}, fmt.Errorf("banking: unreconcile invoice match requires invoicing")
+		}
+		if s.moneyFX == nil {
+			return UnreconcileResult{}, fmt.Errorf("banking: unreconcile invoice match requires moneyfx")
+		}
+		cleared, err := withTransactionSearchPathResult(ctx, tx, invoicing.ModuleName, func() (invoicing.Invoice, error) {
+			return s.invoices.ClearSettlementByTxnRef(ctx, tx, bankingTxnRef(txn.ID))
+		})
+		if err != nil {
+			return UnreconcileResult{}, fmt.Errorf("banking: unreconcile clear invoice settlement: %w", err)
+		}
+		result.ClearedInvoiceID = cleared.ID
+		clearedFX, err := s.moneyFX.ClearRealisedFX(ctx, tx, cleared.ID, reason)
+		if err != nil {
+			return UnreconcileResult{}, fmt.Errorf("banking: unreconcile clear realised FX: %w", err)
+		}
+		result.ClearedRealisedFX = clearedFX
+	case SuggestionKindDLA:
+		if s.dla == nil {
+			return UnreconcileResult{}, fmt.Errorf("banking: unreconcile DLA requires DLA")
+		}
+		amountGBP, err := dlaDrawingAmountGBP(target.entry)
+		if err != nil {
+			return UnreconcileResult{}, err
+		}
+		ref := commandSourceRef(txn.ID, "unreconcile")
+		if err := s.dla.RecordExternalCredit(ctx, tx, ref, txn.Date, amountGBP, fmt.Sprintf("Undo banking DLA drawing %s", transactionDisplayRef(txn))); err != nil {
+			return UnreconcileResult{}, fmt.Errorf("banking: unreconcile DLA presentation entry: %w", err)
+		}
+		result.DLAPresentationRef = ref
+	case SuggestionKindPayeeRule:
+	default:
+		return UnreconcileResult{}, unsupportedReconciliation(txn)
+	}
+
+	reversalID, err := s.ledgerJournal.Reverse(ctx, tx, target.entry.ID, reason)
+	if err != nil {
+		return UnreconcileResult{}, fmt.Errorf("banking: unreconcile reverse ledger entry: %w", err)
+	}
+	result.ReversedEntryIDs = append(result.ReversedEntryIDs, reversalID)
+
+	change, err := s.store.unreconcileTransactionLocked(ctx, tx, txn, unreconciliationActor)
+	if err != nil {
+		return UnreconcileResult{}, err
+	}
+	result.StateChange = change
+	if err = tx.Commit(ctx); err != nil {
+		return UnreconcileResult{}, fmt.Errorf("banking: commit unreconcile transaction: %w", err)
+	}
+	result.Transaction.State = TransactionStateUnreconciled
+	return result, nil
+}
+
 func (s *Service) Exclude(ctx context.Context, txnID TransactionID, reason string) (_ TransactionStateChange, err error) {
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
@@ -379,6 +471,47 @@ func alreadyReconciled(txn Transaction) error {
 	return &AlreadyReconciledError{TransactionID: txn.ID, State: txn.State}
 }
 
+func notReconciled(txn Transaction) error {
+	return &NotReconciledError{TransactionID: txn.ID, State: txn.State}
+}
+
+func unsupportedReconciliation(txn Transaction) error {
+	return &UnsupportedReconciliationError{TransactionID: txn.ID}
+}
+
+type unreconcileTarget struct {
+	kind  SuggestionKind
+	entry ledger.JournalEntry
+}
+
+func (s *Service) unreconcileTarget(ctx context.Context, tx db.Tx, txn Transaction) (unreconcileTarget, error) {
+	if entry, err := s.ledgerJournal.EntryBySource(ctx, tx, ModuleName, commandSourceRef(txn.ID, "confirm-match")); err == nil {
+		return unreconcileTarget{kind: SuggestionKindInvoiceMatch, entry: entry}, nil
+	} else if !errors.Is(err, ledger.ErrEntryNotFound) {
+		return unreconcileTarget{}, err
+	}
+	if entry, err := s.ledgerJournal.EntryBySource(ctx, tx, dla.ModuleName, bankingTxnRef(txn.ID)); err == nil {
+		return unreconcileTarget{kind: SuggestionKindDLA, entry: entry}, nil
+	} else if !errors.Is(err, ledger.ErrEntryNotFound) {
+		return unreconcileTarget{}, err
+	}
+	if entry, err := s.ledgerJournal.EntryBySource(ctx, tx, ModuleName, commandSourceRef(txn.ID, "recode")); err == nil {
+		return unreconcileTarget{kind: SuggestionKindPayeeRule, entry: entry}, nil
+	} else if !errors.Is(err, ledger.ErrEntryNotFound) {
+		return unreconcileTarget{}, err
+	}
+	return unreconcileTarget{}, unsupportedReconciliation(txn)
+}
+
+func dlaDrawingAmountGBP(entry ledger.JournalEntry) (money.Money, error) {
+	for _, posting := range entry.Postings {
+		if posting.AccountCode == dla.DLAAccountCode && posting.AmountGBP.Amount > 0 {
+			return posting.AmountGBP, nil
+		}
+	}
+	return money.Money{}, fmt.Errorf("banking: DLA reconciliation ledger entry %d has no DLA drawing amount: %w", entry.ID, ErrInvalidReconciliation)
+}
+
 func (s *Service) publishTransactionReconciled(ctx context.Context, tx db.Tx, txnID TransactionID, kind SuggestionKind) error {
 	if s.eventBus == nil {
 		return nil
@@ -402,6 +535,26 @@ func withTransactionSearchPath(ctx context.Context, tx db.Tx, module string, fn 
 	}
 	if _, err := tx.Exec(ctx, "SELECT set_config('search_path', $1, true)", module); err != nil {
 		return fmt.Errorf("banking: set transaction search_path %s: %w", module, err)
+	}
+	defer func() {
+		if restoreErr := restoreTransactionSearchPath(ctx, tx, previousSearchPath); err == nil && restoreErr != nil {
+			err = restoreErr
+		}
+	}()
+	return fn()
+}
+
+func withTransactionSearchPathResult[T any](ctx context.Context, tx db.Tx, module string, fn func() (T, error)) (_ T, err error) {
+	var zero T
+	if err := db.ValidateModule(module); err != nil {
+		return zero, err
+	}
+	var previousSearchPath string
+	if err := tx.QueryRow(ctx, "SELECT current_setting('search_path')").Scan(&previousSearchPath); err != nil {
+		return zero, fmt.Errorf("banking: read transaction search_path: %w", err)
+	}
+	if _, err := tx.Exec(ctx, "SELECT set_config('search_path', $1, true)", module); err != nil {
+		return zero, fmt.Errorf("banking: set transaction search_path %s: %w", module, err)
 	}
 	defer func() {
 		if restoreErr := restoreTransactionSearchPath(ctx, tx, previousSearchPath); err == nil && restoreErr != nil {
