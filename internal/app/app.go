@@ -838,7 +838,7 @@ type identityDirectorNames struct {
 
 type dashboardDLAReader struct {
 	service interface {
-		CurrentBalance(context.Context, dla.DirectorID) (money.Money, dla.Status, error)
+		Statuses(context.Context) ([]dla.StatusPayload, error)
 	}
 }
 
@@ -846,7 +846,22 @@ func (r dashboardDLAReader) CurrentBalance(ctx context.Context) (money.Money, dl
 	if r.service == nil {
 		return money.Money{}, "", fmt.Errorf("app: DLA service is required")
 	}
-	return r.service.CurrentBalance(ctx, dla.DefaultDirectorID)
+	statuses, err := r.service.Statuses(ctx)
+	if err != nil {
+		return money.Money{}, "", err
+	}
+	balance := money.Zero("GBP")
+	status := dla.StatusCredit
+	for _, directorStatus := range statuses {
+		balance, err = balance.Add(directorStatus.Balance)
+		if err != nil {
+			return money.Money{}, "", err
+		}
+		if directorStatus.Status == dla.StatusOverdrawn {
+			status = dla.StatusOverdrawn
+		}
+	}
+	return balance, status, nil
 }
 
 func (d identityDirectorNames) DirectorNames(ctx context.Context) ([]string, error) {

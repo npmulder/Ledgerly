@@ -32,7 +32,7 @@ import (
 
 func TestAdvisorFlows(t *testing.T) {
 	t.Run("overdue invoice fires on invoice and dashboard surfaces then resolves after settlement", testAdvisorFlowsOverdueInvoice)
-	t.Run("DLA overdrawn BIK insight uses pack wording and clears via dividend", testAdvisorFlowsDLAOverdrawn)
+	t.Run("DLA overdrawn BIK insight uses pack wording and links director DLA review", testAdvisorFlowsDLAOverdrawn)
 	t.Run("filing deadline exposes due badge facts and resolves outside window", testAdvisorFlowsFilingDeadline)
 	t.Run("VAT registration gates filing deadline advisor and cleans up on toggle", testAdvisorFlowsVATRegistrationGatesFilingDeadline)
 	t.Run("dividend headroom set-aside uses hand-computed JUR-4 marginal estimate", testAdvisorFlowsHeadroom)
@@ -99,12 +99,13 @@ func testAdvisorFlowsDLAOverdrawn(t *testing.T) {
 	advisorFlowsRunEvaluation(t, f.h)
 	insight := requireAdvisorFlowInsight(t, advisorFlowsInsights(t, f.h, advisor.SurfaceDLA), "dla_overdrawn_bik")
 	assertAdvisorFlowInsight(t, insight, advisor.SeverityAmber, []advisor.Surface{advisor.SurfaceDashboard, advisor.SurfaceDLA})
-	if insight.CTA.Action != "navigate:/dividends?amount=150000" {
-		t.Fatalf("DLA CTA action = %q, want prefilled dividend route", insight.CTA.Action)
+	if insight.CTA.Action != "navigate:/dla?director=director-1" {
+		t.Fatalf("DLA CTA action = %q, want director DLA route", insight.CTA.Action)
 	}
 	expectedText := advisorFlowsExpectedText(t, "dla_overdrawn_bik", advisor.Facts{
 		advisor.FactRuleDLABalance:        gbp(-150_000),
 		advisor.FactRuleDLAClearanceMinor: int64(150_000),
+		advisor.FactRuleDLADirectorID:     "director-1",
 		advisor.FactRuleDLADirectorName:   "N. Meyer",
 		advisor.FactRuleDLAStatus:         string(dla.StatusOverdrawn),
 	}, f.h.Clock.Now())

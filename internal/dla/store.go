@@ -113,6 +113,36 @@ func (Store) CurrentBalanceAsOf(ctx context.Context, tx db.Tx, director Director
 	return balanceQuery(ctx, tx, "WHERE director = $1 AND date <= $2", normalized, asOf)
 }
 
+// DirectorsWithEntries returns every director identifier with at least one DLA
+// entry so consistency checks continue to cover removed profile directors.
+func (Store) DirectorsWithEntries(ctx context.Context, tx db.Tx) ([]DirectorID, error) {
+	rows, err := tx.Query(ctx, `
+SELECT DISTINCT director
+FROM dla.dla_entries
+ORDER BY director`)
+	if err != nil {
+		return nil, fmt.Errorf("dla: list entry directors: %w", err)
+	}
+	defer rows.Close()
+
+	directors := []DirectorID{}
+	for rows.Next() {
+		var director string
+		if err := rows.Scan(&director); err != nil {
+			return nil, fmt.Errorf("dla: scan entry director: %w", err)
+		}
+		normalized, _, err := normalizeDirectorID(DirectorID(director))
+		if err != nil {
+			return nil, err
+		}
+		directors = append(directors, normalized)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("dla: collect entry directors: %w", err)
+	}
+	return directors, nil
+}
+
 func buildEntriesQuery(filter LedgerFilter) (string, []any) {
 	args := []any{}
 	addArg := func(value any) string {

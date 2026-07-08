@@ -262,11 +262,25 @@ func (s *Service) invoiceCandidateByID(ctx context.Context, tx db.Tx, txn Transa
 
 func (s *Service) resolveDLADirector(ctx context.Context, suggestion Suggestion, selected []dla.DirectorID) (dla.DirectorID, error) {
 	if len(selected) > 0 && strings.TrimSpace(string(selected[0])) != "" {
-		return selected[0], nil
+		director, err := normalizeDLADirectorID(selected[0])
+		if err != nil {
+			return "", err
+		}
+		if err := s.validateDLADirector(ctx, director); err != nil {
+			return "", err
+		}
+		return director, nil
 	}
 	target := strings.TrimSpace(suggestion.Target)
 	if target != "" && target != dlaSuggestionTarget {
-		return dla.DirectorID(target), nil
+		director, err := normalizeDLADirectorID(dla.DirectorID(target))
+		if err != nil {
+			return "", err
+		}
+		if err := s.validateDLADirector(ctx, director); err != nil {
+			return "", err
+		}
+		return director, nil
 	}
 	directors, err := directorTargets(ctx, s.directorNames)
 	if err != nil {
@@ -280,6 +294,36 @@ func (s *Service) resolveDLADirector(ctx context.Context, suggestion Suggestion,
 	default:
 		return "", fmt.Errorf("banking: choose a director before filing generic DLA suggestion: %w", ErrDLADirectorRequired)
 	}
+}
+
+func (s *Service) validateDLADirector(ctx context.Context, director dla.DirectorID) error {
+	directors, err := directorTargets(ctx, s.directorNames)
+	if err != nil {
+		return fmt.Errorf("banking: DLA directors: %w", err)
+	}
+	if len(directors) == 0 {
+		if director == dla.DefaultDirectorID {
+			return nil
+		}
+		return fmt.Errorf("banking: DLA director %q is not available: %w", director, ErrDLADirectorRequired)
+	}
+	for _, candidate := range directors {
+		if candidate.ID == director {
+			return nil
+		}
+	}
+	return fmt.Errorf("banking: DLA director %q is not in the current profile: %w", director, ErrDLADirectorRequired)
+}
+
+func normalizeDLADirectorID(director dla.DirectorID) (dla.DirectorID, error) {
+	normalized := dla.DirectorID(strings.TrimSpace(string(director)))
+	if normalized == "" {
+		return "", fmt.Errorf("banking: DLA director is required: %w", ErrDLADirectorRequired)
+	}
+	if _, err := dla.AccountCodeForDirector(normalized); err != nil {
+		return "", fmt.Errorf("banking: invalid DLA director %q: %w", director, ErrDLADirectorRequired)
+	}
+	return normalized, nil
 }
 
 func (s *Service) Recode(ctx context.Context, txnID TransactionID, accountCode ledger.AccountCode) (_ RecodeResult, err error) {

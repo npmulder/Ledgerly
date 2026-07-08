@@ -930,17 +930,39 @@ func normalizeDirectorsWithExisting(directors []Director, existing []Director) (
 	}
 	normalized := make([]Director, 0, len(directors))
 	usedIDs := make(map[string]bool, len(directors))
-	nextID := 1
-	for index, director := range directors {
+	reservedIDs := make(map[string]bool, len(existing))
+	existingByName := make(map[string][]Director, len(existing))
+	for _, director := range existing {
 		id := strings.TrimSpace(director.ID)
-		if id == "" && index < len(existing) {
-			id = strings.TrimSpace(existing[index].ID)
+		if id == "" || validateDirectorID(id) != nil {
+			continue
+		}
+		reservedIDs[id] = true
+		key := directorIdentityKey(director.Name)
+		if key != "" {
+			existingByName[key] = append(existingByName[key], Director{ID: id, Name: strings.TrimSpace(director.Name)})
+		}
+	}
+	nextID := 1
+	for _, director := range directors {
+		name := strings.TrimSpace(director.Name)
+		if name == "" {
+			return nil, fmt.Errorf("identity: director name is required")
+		}
+		id := strings.TrimSpace(director.ID)
+		if id == "" {
+			for _, candidate := range existingByName[directorIdentityKey(name)] {
+				if !usedIDs[candidate.ID] {
+					id = candidate.ID
+					break
+				}
+			}
 		}
 		if id == "" {
 			for {
 				candidate := fmt.Sprintf("director-%d", nextID)
 				nextID++
-				if !usedIDs[candidate] {
+				if !usedIDs[candidate] && !reservedIDs[candidate] {
 					id = candidate
 					break
 				}
@@ -954,10 +976,6 @@ func normalizeDirectorsWithExisting(directors []Director, existing []Director) (
 		}
 		usedIDs[id] = true
 
-		name := strings.TrimSpace(director.Name)
-		if name == "" {
-			return nil, fmt.Errorf("identity: director name is required")
-		}
 		director.ID = id
 		director.Name = name
 		if director.AppointedDate != nil {
@@ -974,6 +992,10 @@ func normalizeDirectorsWithExisting(directors []Director, existing []Director) (
 		normalized = append(normalized, director)
 	}
 	return normalized, nil
+}
+
+func directorIdentityKey(name string) string {
+	return strings.ToLower(strings.Join(strings.Fields(name), " "))
 }
 
 func validateDirectorID(id string) error {

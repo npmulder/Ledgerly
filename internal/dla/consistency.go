@@ -86,7 +86,7 @@ func (s *Service) CheckConsistency(ctx context.Context, asOf time.Time) (Consist
 		LedgerBalance:         money.Money{Currency: "GBP"},
 		ExpectedLedgerBalance: money.Money{Currency: "GBP"},
 	}
-	directors, err := s.directors(ctx)
+	directors, err := s.consistencyDirectors(ctx, tx)
 	if err != nil {
 		return ConsistencyReport{}, err
 	}
@@ -117,6 +117,32 @@ func (s *Service) CheckConsistency(ctx context.Context, asOf time.Time) (Consist
 		return ConsistencyReport{}, fmt.Errorf("dla: commit consistency check transaction: %w", err)
 	}
 	return report, nil
+}
+
+func (s *Service) consistencyDirectors(ctx context.Context, tx db.Tx) ([]Director, error) {
+	current, err := s.directors(ctx)
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[DirectorID]Director, len(current))
+	directors := make([]Director, 0, len(current))
+	for _, director := range current {
+		byID[director.ID] = director
+		directors = append(directors, director)
+	}
+	withEntries, err := s.store.DirectorsWithEntries(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	for _, directorID := range withEntries {
+		if _, ok := byID[directorID]; ok {
+			continue
+		}
+		director := Director{ID: directorID, Name: string(directorID)}
+		byID[directorID] = director
+		directors = append(directors, director)
+	}
+	return directors, nil
 }
 
 func (s *Service) directorConsistency(ctx context.Context, tx db.Tx, director Director, asOf time.Time) (DirectorConsistencyReport, error) {

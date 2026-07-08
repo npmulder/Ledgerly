@@ -535,11 +535,13 @@ func normalizeExternalCredit(director DirectorID, ref string, date time.Time, am
 
 func normalizeLedgerFilter(filter LedgerFilter) (LedgerFilter, error) {
 	normalized := LedgerFilter{Limit: filter.Limit}
-	director, _, err := normalizeDirectorID(filter.Director)
-	if err != nil {
-		return LedgerFilter{}, err
+	if strings.TrimSpace(string(filter.Director)) != "" {
+		director, _, err := normalizeDirectorID(filter.Director)
+		if err != nil {
+			return LedgerFilter{}, err
+		}
+		normalized.Director = director
 	}
-	normalized.Director = director
 	if filter.From != nil {
 		from, err := normalizeDate(*filter.From)
 		if err != nil {

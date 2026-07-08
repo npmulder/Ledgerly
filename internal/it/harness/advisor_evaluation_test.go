@@ -70,8 +70,8 @@ func TestAdvisorRunEvaluationRulesEndToEnd(t *testing.T) {
 		runAdvisorRefresh(t, h)
 		insight := requireAdvisorInsight(t, h, "dla_overdrawn_bik")
 		assertAdvisorInsight(t, insight, advisor.SeverityAmber, []advisor.Surface{advisor.SurfaceDashboard, advisor.SurfaceDLA})
-		if insight.CTA.Action != "navigate:/dividends?amount=150000" {
-			t.Fatalf("DLA CTA action = %q, want prefilled dividends route", insight.CTA.Action)
+		if insight.CTA.Action != "navigate:/dla?director=director-1" {
+			t.Fatalf("DLA CTA action = %q, want director DLA route", insight.CTA.Action)
 		}
 		if !strings.Contains(insight.RenderedText, "benefit in kind") {
 			t.Fatalf("DLA text = %q, want BIK warning", insight.RenderedText)

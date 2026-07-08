@@ -191,6 +191,15 @@ func TestDLAEntriesAreIsolatedPerDirector(t *testing.T) {
 	if directorTwoEntries[0].Director != secondDirector {
 		t.Fatalf("director-2 ledger director = %q, want %q", directorTwoEntries[0].Director, secondDirector)
 	}
+	allEntries, err := fixture.dla.Ledger(fixture.ctx, dla.LedgerFilter{Limit: 10})
+	if err != nil {
+		t.Fatalf("Ledger(all directors) error = %v", err)
+	}
+	if len(allEntries) != 2 ||
+		allEntries[0].Director != dla.DefaultDirectorID ||
+		allEntries[1].Director != secondDirector {
+		t.Fatalf("Ledger(all directors) directors = %+v, want director-1 and director-2 entries", allEntries)
+	}
 
 	fixture.assertLedgerPostings(t, "banking:director-1-drawing", []wantPosting{
 		{account: dla.DLAAccountCode, amount: 10_000},
@@ -380,6 +389,50 @@ WHERE source = $1`, source); err != nil {
 		t.Fatalf("RunJob(%s) recovery error = %v", dla.ConsistencyCheckJobName, err)
 	}
 	assertDLAHealthStatus(t, fixture.harness, nethttp.StatusOK, "")
+	it.AssertLedgerBalanced(t, fixture.harness)
+}
+
+func TestDLAConsistencyIncludesDirectorsWithRetainedEntries(t *testing.T) {
+	fixture := newDLAFixtureFromHarness(t, harness.New(t, harness.Options{
+		ClockStart: time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC),
+	}))
+	source := "banking:retained-director-2"
+	fixture.fileDrawingFromBanking(t, dla.TxnRef{
+		Director:        "director-2",
+		Ref:             source,
+		Date:            fixture.harness.Clock.Now(),
+		Amount:          gbp(10_000),
+		CashAccountCode: dlaCashAccount,
+	})
+
+	raw := testdb.Raw(t)
+	if _, err := raw.Exec(fixture.ctx, `
+UPDATE dla.dla_entries
+SET amount = amount + 1
+WHERE source = $1`, source); err != nil {
+		t.Fatalf("corrupt director-2 DLA entry via testdb.Raw: %v", err)
+	}
+
+	report, err := fixture.dla.CheckConsistency(fixture.ctx, fixture.harness.Clock.Now())
+	if !errors.Is(err, dla.ErrConsistencyViolation) {
+		t.Fatalf("CheckConsistency() report=%+v error=%v, want ErrConsistencyViolation", report, err)
+	}
+	var violation *dla.ConsistencyViolationError
+	if !errors.As(err, &violation) {
+		t.Fatalf("CheckConsistency() error = %T, want ConsistencyViolationError", err)
+	}
+	found := false
+	for _, directorReport := range violation.Report.Directors {
+		if directorReport.DirectorID == "director-2" {
+			found = true
+			if directorReport.Consistent {
+				t.Fatalf("director-2 report = %+v, want inconsistent", directorReport)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("consistency report directors = %+v, want retained director-2 included", violation.Report.Directors)
+	}
 	it.AssertLedgerBalanced(t, fixture.harness)
 }
 

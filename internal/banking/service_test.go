@@ -18,6 +18,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 
+	"github.com/npmulder/ledgerly/internal/dla"
 	"github.com/npmulder/ledgerly/internal/ledger"
 	"github.com/npmulder/ledgerly/internal/moneyfx/money"
 	"github.com/npmulder/ledgerly/internal/platform/db"
@@ -792,6 +793,68 @@ func TestFeedReviewQueueRecentlyReconciledAndCounts(t *testing.T) {
 	assertStoredTransactionState(t, ctx, pool, otherUnreconciled, TransactionStateUnreconciled)
 }
 
+func TestFileToDLAValidatesSelectedDirector(t *testing.T) {
+	pool, _ := temporaryMigratedBankingDatabase(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	drawer := &recordingDirectorDLAFileDrawer{}
+	ledger := &recordingBankingLedger{}
+	service := NewService(
+		pool,
+		ledger,
+		WithMoneyFX(stubBankingMoneyFX{}),
+		WithDLAFileDrawer(drawer),
+		WithDirectorNames(staticDirectorNames{"N. Meyer", "A. Patel"}),
+	)
+	account, err := service.CreateAccount(ctx, AccountInput{
+		Name:     "Revolut GBP",
+		Provider: ProviderRevolut,
+		Currency: "GBP",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount() error = %v", err)
+	}
+
+	invalidTxn := importSingleBankingTxn(t, ctx, pool, service, account.ID, revolutTestTxn{
+		Date:      time.Date(2026, 7, 8, 9, 0, 0, 0, time.UTC),
+		ID:        "dla-invalid-director",
+		Payee:     "Personal card",
+		Reference: "invalid director",
+		Amount:    money.Money{Amount: -1000, Currency: "GBP"},
+	})
+	mustRecordSuggestion(t, ctx, service, invalidTxn, SuggestionKindDLA, 0.750, "director-loan", "generic DLA")
+
+	if _, err := service.FileToDLA(ctx, invalidTxn, dla.DirectorID("director-99")); !errors.Is(err, ErrDLADirectorRequired) {
+		t.Fatalf("FileToDLA(invalid director) error = %v, want ErrDLADirectorRequired", err)
+	}
+	if len(drawer.directors) != 0 {
+		t.Fatalf("DLA drawer directors = %v, want no call for invalid director", drawer.directors)
+	}
+	assertStoredTransactionState(t, ctx, pool, invalidTxn, TransactionStateSuggested)
+
+	validTxn := importSingleBankingTxn(t, ctx, pool, service, account.ID, revolutTestTxn{
+		Date:      time.Date(2026, 7, 8, 10, 0, 0, 0, time.UTC),
+		ID:        "dla-valid-director",
+		Payee:     "Personal card",
+		Reference: "valid director",
+		Amount:    money.Money{Amount: -2000, Currency: "GBP"},
+	})
+	mustRecordSuggestion(t, ctx, service, validTxn, SuggestionKindDLA, 0.750, "director-loan", "generic DLA")
+
+	result, err := service.FileToDLA(ctx, validTxn, dla.DirectorID(" director-2 "))
+	if err != nil {
+		t.Fatalf("FileToDLA(valid director) error = %v", err)
+	}
+	if result.DirectorID != "director-2" {
+		t.Fatalf("FileToDLA() director = %q, want director-2", result.DirectorID)
+	}
+	if len(drawer.directors) != 1 || drawer.directors[0] != "director-2" {
+		t.Fatalf("DLA drawer directors = %v, want director-2", drawer.directors)
+	}
+	assertStoredTransactionState(t, ctx, pool, validTxn, TransactionStateReconciled)
+}
+
 func TestPayeeNormalizationAndRules(t *testing.T) {
 	normalization := []struct {
 		input string
@@ -1004,6 +1067,15 @@ func (r *recordingEnsurer) EnsureAccount(_ context.Context, _ db.Tx, spec ledger
 type accountCreateResult struct {
 	account BankAccount
 	err     error
+}
+
+type recordingDirectorDLAFileDrawer struct {
+	directors []dla.DirectorID
+}
+
+func (r *recordingDirectorDLAFileDrawer) FileDrawing(_ context.Context, _ db.Tx, src dla.TxnRef) error {
+	r.directors = append(r.directors, src.Director)
+	return nil
 }
 
 type blockingEnsurer struct {

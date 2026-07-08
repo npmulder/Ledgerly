@@ -7,7 +7,9 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/npmulder/ledgerly/internal/dla"
 	"github.com/npmulder/ledgerly/internal/identity"
+	"github.com/npmulder/ledgerly/internal/moneyfx/money"
 	"github.com/npmulder/ledgerly/internal/platform/config"
 )
 
@@ -36,6 +38,32 @@ func TestBuildLoadsConfiguredJurisdictionBeforeOpeningDatabases(t *testing.T) {
 	}
 	if gotSelector != "testland@0.1" {
 		t.Fatalf("jurisdiction selector = %q, want testland@0.1", gotSelector)
+	}
+}
+
+func TestDashboardDLAReaderAggregatesDirectorStatuses(t *testing.T) {
+	reader := dashboardDLAReader{service: dashboardDLAStatusService{statuses: []dla.StatusPayload{
+		{
+			DirectorID: "director-1",
+			Balance:    money.Money{Amount: 5_000, Currency: "GBP"},
+			Status:     dla.StatusCredit,
+		},
+		{
+			DirectorID: "director-2",
+			Balance:    money.Money{Amount: -2_000, Currency: "GBP"},
+			Status:     dla.StatusOverdrawn,
+		},
+	}}}
+
+	balance, status, err := reader.CurrentBalance(context.Background())
+	if err != nil {
+		t.Fatalf("CurrentBalance() error = %v", err)
+	}
+	if balance != (money.Money{Amount: 3_000, Currency: "GBP"}) {
+		t.Fatalf("CurrentBalance() balance = %#v, want aggregate GBP 30.00", balance)
+	}
+	if status != dla.StatusOverdrawn {
+		t.Fatalf("CurrentBalance() status = %q, want overdrawn when any director is overdrawn", status)
 	}
 }
 
@@ -68,6 +96,14 @@ func TestIdentityAssetIDFromURLAcceptsStoredInvoiceAssetURLForms(t *testing.T) {
 			}
 		})
 	}
+}
+
+type dashboardDLAStatusService struct {
+	statuses []dla.StatusPayload
+}
+
+func (s dashboardDLAStatusService) Statuses(context.Context) ([]dla.StatusPayload, error) {
+	return append([]dla.StatusPayload(nil), s.statuses...), nil
 }
 
 func TestIdentityInvoicePDFAssetStoreLoadInvoicePDF(t *testing.T) {
