@@ -54,6 +54,37 @@ func TestHTTPReportsEndpointsReturnDerivedJSON(t *testing.T) {
 	assertMoneyResponse(t, pl.CorporateTax.Amount, 0)
 	assertMoneyResponse(t, pl.NetProfit, 1_592_470)
 
+	expensesResult := performReportsRequest(router, http.MethodGet, "/api/reports/expenses?from=2026-04-01&to=2026-06-30", true)
+	if expensesResult.Code != http.StatusOK {
+		t.Fatalf("expenses status = %d, want %d; body=%s", expensesResult.Code, http.StatusOK, expensesResult.Body.String())
+	}
+	assertReportsAmountsAreJSONIntegers(t, expensesResult.Body.Bytes())
+	var expenses expensesResponse
+	if err := json.Unmarshal(expensesResult.Body.Bytes(), &expenses); err != nil {
+		t.Fatalf("decode expenses response: %v; body=%s", err, expensesResult.Body.String())
+	}
+	assertMoneyResponse(t, expenses.Total, 20_000)
+	if len(expenses.Categories) != 1 || expenses.Categories[0].Category != "Software" {
+		t.Fatalf("expenses categories = %+v, want Software", expenses.Categories)
+	}
+	if len(expenses.TopPayees) != 1 || expenses.TopPayees[0].Payee != "GitHub" {
+		t.Fatalf("expenses top payees = %+v, want GitHub", expenses.TopPayees)
+	}
+	if len(expenses.Transactions) != 1 || expenses.Transactions[0].Reference != "subscription" {
+		t.Fatalf("expenses transactions = %+v, want subscription detail", expenses.Transactions)
+	}
+
+	expensesCSVResult := performReportsRequest(router, http.MethodGet, "/api/reports/expenses.csv?from=2026-04-01&to=2026-06-30", true)
+	if expensesCSVResult.Code != http.StatusOK {
+		t.Fatalf("expenses CSV status = %d, want %d; body=%s", expensesCSVResult.Code, http.StatusOK, expensesCSVResult.Body.String())
+	}
+	if got := expensesCSVResult.Header().Get("Content-Type"); !strings.HasPrefix(got, "text/csv") {
+		t.Fatalf("expenses CSV Content-Type = %q, want text/csv", got)
+	}
+	if !strings.Contains(expensesCSVResult.Body.String(), "2026-05-02,GitHub,subscription,200.00,GBP,Software") {
+		t.Fatalf("expenses CSV body = %s, want GitHub subscription row", expensesCSVResult.Body.String())
+	}
+
 	vatResult := performReportsRequest(router, http.MethodGet, "/api/reports/vat?period=2026-Q2", true)
 	if vatResult.Code != http.StatusOK {
 		t.Fatalf("VAT status = %d, want %d; body=%s", vatResult.Code, http.StatusOK, vatResult.Body.String())
@@ -125,6 +156,8 @@ func TestHTTPReportsRoutesRequireAuthentication(t *testing.T) {
 
 	for _, path := range []string{
 		"/api/reports/pl?from=2026-04-01&to=2026-06-30",
+		"/api/reports/expenses?from=2026-04-01&to=2026-06-30",
+		"/api/reports/expenses.csv?from=2026-04-01&to=2026-06-30",
 		"/api/reports/vat?period=2026-Q2",
 		"/api/reports/calendar",
 		"/api/reports/profit-ytd?taxYear=2026-27",
@@ -169,7 +202,7 @@ func newReportsHTTPTestRouterWithIdentity(t *testing.T, identityAPI fakeIdentity
 
 	fakeLedger := newFakeLedger(
 		fakeEntry(1, "2026-04-10", "manual", "consulting-income", fakePosting("4000-sales", -100_000)),
-		fakeEntry(2, "2026-05-02", "manual", "software", fakePosting("5010-software", 20_000)),
+		fakeEntry(2, "2026-05-02", bankingSourceModule, "banking:20:recode", fakePosting("5010-software", 20_000)),
 		fakeEntry(3, "2026-06-20", "manual", "fx", fakePosting(realisedFXAccount, -2_160)),
 		fakeEntry(4, "2026-06-25", invoicing.ModuleName, "invoice:INV-2026-0009:send", fakePosting(salesAccount, -1_510_310)),
 		fakeEntry(5, "2026-06-30", ModuleName, "manual-input-vat:q2-2026", ledger.Posting{
@@ -193,7 +226,16 @@ func newReportsHTTPTestRouterWithIdentity(t *testing.T, identityAPI fakeIdentity
 	}
 
 	module, err := NewModule(Config{
-		Ledger:    fakeLedger,
+		Ledger: fakeLedger,
+		Banking: fakeBanking{
+			transactions: map[BankingTransactionID]BankingTransaction{
+				20: {
+					Date:      testDate(2026, time.May, 2),
+					Payee:     "GitHub",
+					Reference: "subscription",
+				},
+			},
+		},
 		Identity:  identityAPI,
 		Invoicing: invoicingAPI,
 		Clock:     clk,

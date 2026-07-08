@@ -10,6 +10,7 @@ import (
 // Config contains the read APIs required by the reports HTTP module.
 type Config struct {
 	Ledger            Ledger
+	Banking           Banking
 	Identity          Identity
 	Invoicing         Invoicing
 	DLA               DLA
@@ -46,6 +47,7 @@ func NewModule(cfg Config) (*Module, error) {
 			cfg.Identity,
 			cfg.Invoicing,
 			WithClock(cfg.Clock),
+			WithBanking(cfg.Banking),
 			WithDLA(cfg.DLA),
 			WithDividendDocuments(cfg.DividendDocuments),
 			WithReceiptDocuments(cfg.ReceiptDocuments),

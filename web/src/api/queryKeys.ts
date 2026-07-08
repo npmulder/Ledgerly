@@ -122,6 +122,11 @@ export const queryKeys = {
   },
   reports: {
     calendar: (): ApiQueryKey => ["reports", "calendar", {}],
+    expenses: (from: string, to: string): ApiQueryKey => [
+      "reports",
+      "expenses",
+      { from, to },
+    ],
     pl: (from: string, to: string): ApiQueryKey => [
       "reports",
       "pl",

@@ -395,6 +395,7 @@ func newReportingReportsService(t testing.TB, h *harness.Harness, invoices *invo
 		reportingIdentity(t, h),
 		invoices,
 		reports.WithClock(h.Clock),
+		reports.WithBanking(reportingBankingAdapter{service: banking.NewService(h.BankingPool, ledgerService)}),
 		reports.WithDLA(dla.NewWithBusAndClock(h.DLAPool, h.Bus, h.Clock, ledgerService)),
 		reports.WithExportArchiveStore(archiveStore),
 		reports.WithPLPDFEngine(reportingPLPDFEngine{}),
@@ -405,6 +406,22 @@ func newReportingReportsService(t testing.TB, h *harness.Harness, invoices *invo
 func reportingIdentity(t testing.TB, h *harness.Harness) identity.Identity {
 	t.Helper()
 	return identity.NewTransactionalProfileService(testdb.AsModule(t, "identity"), h.Bus, identity.WithDataDir(h.IdentityDataDir))
+}
+
+type reportingBankingAdapter struct {
+	service *banking.Service
+}
+
+func (a reportingBankingAdapter) Transaction(ctx context.Context, id reports.BankingTransactionID) (reports.BankingTransaction, error) {
+	txn, err := a.service.Transaction(ctx, banking.TransactionID(id))
+	if err != nil {
+		return reports.BankingTransaction{}, err
+	}
+	return reports.BankingTransaction{
+		Date:      txn.Date,
+		Payee:     txn.Payee,
+		Reference: txn.Reference,
+	}, nil
 }
 
 func sendReportingInvoice(t testing.TB, service *invoicing.Service, clientID string, description string, amount invoicing.Money) invoicing.Invoice {
@@ -721,7 +738,7 @@ func reportingPLFrozenFields(pl reports.PL) reportingPLSnapshot {
 
 func assertReportingExportMembers(t testing.TB, files map[string][]byte) {
 	t.Helper()
-	for _, name := range []string{"pl.csv", "pl.pdf", "vat.csv", "journal.csv", "dla.csv", "manifest.json"} {
+	for _, name := range []string{"expenses.csv", "pl.csv", "pl.pdf", "vat.csv", "journal.csv", "dla.csv", "manifest.json"} {
 		if _, ok := files[name]; !ok {
 			t.Fatalf("export archive missing %s; files=%v", name, reportingSortedKeys(files))
 		}

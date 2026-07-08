@@ -46,6 +46,7 @@ func TestReportsExportPackHTTPAssemblesZipAndSharesAttachment(t *testing.T) {
 	files := readZipFiles(t, zipBytes)
 
 	for _, name := range []string{
+		"expenses.csv",
 		"pl.csv",
 		"pl.pdf",
 		"vat.csv",

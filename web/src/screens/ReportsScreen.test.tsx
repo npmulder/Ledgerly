@@ -11,6 +11,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type {
+  ReportsExpenses,
   ReportsFiling,
   ReportsFilingCalendar,
   ReportsPL,
@@ -225,6 +226,48 @@ describe("ReportsScreen", () => {
     );
   });
 
+  it("renders expenses drill-down and downloads the categorized CSV", async () => {
+    const user = userEvent.setup();
+    const clickedHrefs: string[] = [];
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+      this: HTMLAnchorElement,
+    ) {
+      clickedHrefs.push(this.getAttribute("href") ?? "");
+    });
+    vi.stubGlobal("fetch", reportsFetch());
+    const reportYear = currentReportYear();
+
+    renderReportsScreen();
+
+    await screen.findByText(`Expenses · Apr-Jun ${reportYear}`);
+    expect(
+      (await screen.findAllByText("Software & hosting")).length,
+    ).toBeGreaterThan(0);
+    expect((await screen.findAllByText("GitHub")).length).toBeGreaterThan(0);
+    expect(screen.getByText("subscription may")).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", { name: /Telecoms, travel & admin/ }),
+    );
+
+    expect(
+      await screen.findByLabelText("Telecoms, travel & admin transactions"),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText("Steam Packet").length).toBeGreaterThan(0);
+    expect(screen.getByText("ferry")).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", { name: "Download expenses CSV" }),
+    );
+
+    expect(clickedHrefs).toEqual([
+      `/api/reports/expenses.csv?from=${reportYear}-04-01&to=${reportYear}-06-30`,
+    ]);
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Expenses CSV is being prepared.",
+    );
+  });
+
   it("shares an export pack with an accountant email", async () => {
     const user = userEvent.setup();
     const fetchImpl = vi.fn(reportsFetchHandler());
@@ -349,6 +392,7 @@ function reportsFetch(overrides: Partial<ReportsFixtures> = {}) {
 
 type ReportsFixtures = {
   calendar: ReportsFilingCalendar;
+  expenses: ReportsExpenses;
   pl: ReportsPL;
   vat: ReportsVAT;
 };
@@ -356,6 +400,7 @@ type ReportsFixtures = {
 function reportsFetchHandler(overrides: Partial<ReportsFixtures> = {}) {
   const fixtures = {
     calendar: calendarFixture(),
+    expenses: expensesFixture(),
     pl: plFixture(),
     vat: vatFixture(),
     ...overrides,
@@ -369,6 +414,15 @@ function reportsFetchHandler(overrides: Partial<ReportsFixtures> = {}) {
         period: {
           from: url.searchParams.get("from") ?? fixtures.pl.period.from,
           to: url.searchParams.get("to") ?? fixtures.pl.period.to,
+        },
+      });
+    }
+    if (url.pathname === "/api/reports/expenses") {
+      return jsonResponse({
+        ...fixtures.expenses,
+        period: {
+          from: url.searchParams.get("from") ?? fixtures.expenses.period.from,
+          to: url.searchParams.get("to") ?? fixtures.expenses.period.to,
         },
       });
     }
@@ -395,6 +449,64 @@ function reportsFetchHandler(overrides: Partial<ReportsFixtures> = {}) {
       { status: 404, title: "Not Found", type: "about:blank" },
       404,
     );
+  };
+}
+
+function expensesFixture(): ReportsExpenses {
+  const year = currentReportYear();
+  return {
+    categories: [
+      {
+        account_code: "5010-software",
+        amount: money(21_430),
+        category: "Software & hosting",
+        transaction_count: 1,
+      },
+      {
+        account_code: "5020-travel",
+        amount: money(74_215),
+        category: "Telecoms, travel & admin",
+        transaction_count: 1,
+      },
+    ],
+    period: { from: `${year}-04-01`, to: `${year}-06-30` },
+    top_payees: [
+      {
+        amount: money(74_215),
+        payee: "Steam Packet",
+        transaction_count: 1,
+      },
+      {
+        amount: money(21_430),
+        payee: "GitHub",
+        transaction_count: 1,
+      },
+    ],
+    total: money(95_645),
+    transactions: [
+      {
+        account_code: "5010-software",
+        amount: money(21_430),
+        category: "Software & hosting",
+        date: `${year}-05-12`,
+        entry_id: 12,
+        payee: "GitHub",
+        reference: "subscription may",
+        source_module: "banking",
+        source_ref: "banking:12:recode",
+      },
+      {
+        account_code: "5020-travel",
+        amount: money(74_215),
+        category: "Telecoms, travel & admin",
+        date: `${year}-05-20`,
+        entry_id: 20,
+        payee: "Steam Packet",
+        reference: "ferry",
+        source_module: "banking",
+        source_ref: "banking:20:recode",
+      },
+    ],
   };
 }
 
