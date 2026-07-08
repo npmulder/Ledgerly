@@ -662,6 +662,174 @@ func TestInvoicingSendGBPUsesIdentityLockAndPosting(t *testing.T) {
 	it.AssertLedgerBalanced(t, h)
 }
 
+func TestRecurringInvoicesCreateFromInvoiceAndMaterializeDueDraft(t *testing.T) {
+	h := harness.New(t, harness.Options{ClockStart: time.Date(2026, 7, 20, 9, 0, 0, 0, time.UTC)})
+	service := newInvoiceService(t, h)
+	ctx := context.Background()
+
+	fabrikam := fixtures.Fabrikam(t, h)
+	source, err := service.CreateDraft(ctx, fabrikam.ID)
+	if err != nil {
+		t.Fatalf("CreateDraft() error = %v", err)
+	}
+	lines := []invoicing.InvoiceLineInput{{
+		Description: "Monthly retainer",
+		Qty:         invoicing.MustQuantity("1"),
+		UnitPrice:   invoicing.Money{Amount: 100_000, Currency: string(invoicing.CurrencyGBP)},
+	}}
+	source, err = service.UpdateDraft(ctx, source.ID, invoicing.DraftPatch{Lines: &lines})
+	if err != nil {
+		t.Fatalf("UpdateDraft(lines) error = %v", err)
+	}
+
+	nextRun := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	template, err := service.CreateRecurringTemplateFromInvoice(ctx, source.ID, invoicing.CreateRecurringFromInvoiceInput{
+		Cadence:     invoicing.RecurringCadenceMonthly,
+		DayOfMonth:  1,
+		NextRunDate: nextRun,
+		AutoSend:    false,
+	})
+	if err != nil {
+		t.Fatalf("CreateRecurringTemplateFromInvoice() error = %v", err)
+	}
+	if template.Status != invoicing.RecurringTemplateStatusActive {
+		t.Fatalf("template Status = %q, want active", template.Status)
+	}
+	if template.AutoSend {
+		t.Fatal("template AutoSend = true, want false draft-only default")
+	}
+	assertDate(t, template.NextRunDate, "2026-08-01")
+	if len(template.Lines) != 1 || template.Lines[0].Description != "Monthly retainer" {
+		t.Fatalf("template Lines = %#v, want copied retainer line", template.Lines)
+	}
+
+	h.Clock.Set(time.Date(2026, 8, 1, 9, 0, 0, 0, time.UTC))
+	if err := h.RunJob(invoicing.RecurringInvoicesJobName); err != nil {
+		t.Fatalf("RunJob(%s) error = %v", invoicing.RecurringInvoicesJobName, err)
+	}
+
+	generatedID := recurringInvoiceIDForTemplate(t, h, template.ID)
+	generated, err := service.Invoice(ctx, generatedID)
+	if err != nil {
+		t.Fatalf("Invoice(generated recurring draft) error = %v", err)
+	}
+	if generated.Status != invoicing.InvoiceStatusDraft {
+		t.Fatalf("generated Status = %q, want draft", generated.Status)
+	}
+	if generated.Number != nil {
+		t.Fatalf("generated Number = %v, want nil", *generated.Number)
+	}
+	assertDate(t, generated.IssueDate, "2026-08-01")
+	assertDate(t, generated.DueDate, "2026-08-31")
+	if generated.RecurringTemplateID == nil || *generated.RecurringTemplateID != template.ID {
+		t.Fatalf("generated RecurringTemplateID = %v, want %s", generated.RecurringTemplateID, template.ID)
+	}
+	if generated.RecurringRunDate == nil {
+		t.Fatal("generated RecurringRunDate = nil")
+	}
+	assertDate(t, *generated.RecurringRunDate, "2026-08-01")
+	assertMoney(t, generated.Totals.Total, 120_000, "GBP")
+
+	templates, err := service.RecurringTemplates(ctx)
+	if err != nil {
+		t.Fatalf("RecurringTemplates() error = %v", err)
+	}
+	if len(templates) != 1 {
+		t.Fatalf("RecurringTemplates length = %d, want 1", len(templates))
+	}
+	assertDate(t, templates[0].NextRunDate, "2026-09-01")
+	if templates[0].OccurrencesCreated != 1 {
+		t.Fatalf("OccurrencesCreated = %d, want 1", templates[0].OccurrencesCreated)
+	}
+
+	facts, err := service.RecurringDraftInvoices(ctx)
+	if err != nil {
+		t.Fatalf("RecurringDraftInvoices() error = %v", err)
+	}
+	if len(facts) != 1 || facts[0].InvoiceID != generated.ID || facts[0].ClientName != fabrikam.Name {
+		t.Fatalf("RecurringDraftInvoices() = %#v, want generated draft for %s", facts, fabrikam.Name)
+	}
+
+	if err := h.RunJob(invoicing.RecurringInvoicesJobName); err != nil {
+		t.Fatalf("RunJob(%s second run) error = %v", invoicing.RecurringInvoicesJobName, err)
+	}
+	if got := recurringInvoiceCountForTemplate(t, h, template.ID); got != 1 {
+		t.Fatalf("recurring invoice count after second run = %d, want 1", got)
+	}
+
+	it.AssertLedgerBalanced(t, h)
+}
+
+func TestRecurringInvoicesAutoSendUsesExistingSendFlow(t *testing.T) {
+	h := harness.New(t, harness.Options{ClockStart: time.Date(2026, 7, 20, 9, 0, 0, 0, time.UTC)})
+	service := newInvoiceService(t, h)
+	ctx := context.Background()
+
+	fabrikam := fixtures.Fabrikam(t, h)
+	source, err := service.CreateDraft(ctx, fabrikam.ID)
+	if err != nil {
+		t.Fatalf("CreateDraft() error = %v", err)
+	}
+	lines := []invoicing.InvoiceLineInput{{
+		Description: "Auto-send retainer",
+		Qty:         invoicing.MustQuantity("1"),
+		UnitPrice:   invoicing.Money{Amount: 80_000, Currency: string(invoicing.CurrencyGBP)},
+	}}
+	source, err = service.UpdateDraft(ctx, source.ID, invoicing.DraftPatch{Lines: &lines})
+	if err != nil {
+		t.Fatalf("UpdateDraft(lines) error = %v", err)
+	}
+
+	nextRun := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	template, err := service.CreateRecurringTemplateFromInvoice(ctx, source.ID, invoicing.CreateRecurringFromInvoiceInput{
+		Cadence:     invoicing.RecurringCadenceMonthly,
+		DayOfMonth:  1,
+		NextRunDate: nextRun,
+		AutoSend:    true,
+	})
+	if err != nil {
+		t.Fatalf("CreateRecurringTemplateFromInvoice(auto-send) error = %v", err)
+	}
+	if !template.AutoSend {
+		t.Fatal("template AutoSend = false, want true")
+	}
+
+	h.Clock.Set(time.Date(2026, 8, 1, 9, 0, 0, 0, time.UTC))
+	if err := h.RunJob(invoicing.RecurringInvoicesJobName); err != nil {
+		t.Fatalf("RunJob(%s) error = %v", invoicing.RecurringInvoicesJobName, err)
+	}
+
+	generatedID := recurringInvoiceIDForTemplate(t, h, template.ID)
+	generated, err := service.Invoice(ctx, generatedID)
+	if err != nil {
+		t.Fatalf("Invoice(generated recurring sent) error = %v", err)
+	}
+	if generated.Status != invoicing.InvoiceStatusSent {
+		t.Fatalf("generated Status = %q, want sent", generated.Status)
+	}
+	if generated.Number == nil {
+		t.Fatal("generated Number = nil, want send-assigned number")
+	}
+	if generated.SendLedgerEntryID == nil {
+		t.Fatal("generated SendLedgerEntryID = nil, want existing send flow posting")
+	}
+	assertDate(t, generated.IssueDate, "2026-08-01")
+	if generated.RecurringRunDate == nil {
+		t.Fatal("generated RecurringRunDate = nil")
+	}
+	assertDate(t, *generated.RecurringRunDate, "2026-08-01")
+
+	facts, err := service.RecurringDraftInvoices(ctx)
+	if err != nil {
+		t.Fatalf("RecurringDraftInvoices() error = %v", err)
+	}
+	if len(facts) != 0 {
+		t.Fatalf("RecurringDraftInvoices() = %#v, want no waiting draft after auto-send", facts)
+	}
+
+	it.AssertLedgerBalanced(t, h)
+}
+
 func TestInvoicingRevertedDraftCanBeDeletedAfterVATContext(t *testing.T) {
 	h := harness.New(t, harness.Options{ClockStart: time.Date(2025, 5, 1, 9, 0, 0, 0, time.UTC)})
 	service := newInvoiceService(t, h)
@@ -1264,6 +1432,32 @@ func createEURInvoiceDraft(t testing.TB, h *harness.Harness, service *invoicing.
 		t.Fatalf("UpdateDraft(lines) error = %v", err)
 	}
 	return updated
+}
+
+func recurringInvoiceIDForTemplate(t testing.TB, h *harness.Harness, templateID string) string {
+	t.Helper()
+	var id string
+	if err := h.DB.QueryRow(context.Background(), `
+SELECT id
+FROM invoicing.invoices
+WHERE recurring_template_id = $1
+ORDER BY recurring_run_date, id
+LIMIT 1`, templateID).Scan(&id); err != nil {
+		t.Fatalf("query recurring invoice id: %v", err)
+	}
+	return id
+}
+
+func recurringInvoiceCountForTemplate(t testing.TB, h *harness.Harness, templateID string) int {
+	t.Helper()
+	var count int
+	if err := h.DB.QueryRow(context.Background(), `
+SELECT count(*)
+FROM invoicing.invoices
+WHERE recurring_template_id = $1`, templateID).Scan(&count); err != nil {
+		t.Fatalf("count recurring invoices: %v", err)
+	}
+	return count
 }
 
 func markSettledFromBankingTx(t testing.TB, h *harness.Harness, service *invoicing.Service, id string, txnRef string, date time.Time, amount invoicing.Money) (_ invoicing.Invoice, err error) {

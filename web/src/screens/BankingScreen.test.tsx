@@ -13,11 +13,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   BankingAccount,
   BankingCommandResponse,
+  BankingInvoiceCandidate,
   BankingMoney,
   BankingRecentTransaction,
   BankingReceipt,
   BankingReviewCard,
   BankingReviewQueue,
+  BankingTransaction,
 } from "@/api/banking";
 import type { LedgerAccount } from "@/api/ledger";
 import { BankingScreen } from "@/screens/BankingScreen";
@@ -230,6 +232,50 @@ describe("BankingScreen", () => {
     ).toBe(false);
   });
 
+  it("labels draft invoice matches as send-and-allocate actions", async () => {
+    vi.stubGlobal(
+      "fetch",
+      bankingApi({
+        accounts: accountsFixture(),
+        queue: {
+          matches: [
+            reviewCard({
+              confidence: 0.85,
+              explanation:
+                "85% draft invoice match for draft invoice inv_draft: confirming will send the invoice before allocating payment; exact native amount, payee resembles client",
+              kind: "match",
+              suggestion_id: 9011,
+              target: {
+                client: "Contoso GmbH",
+                id: "inv_draft",
+                invoice_status: "draft",
+                type: "invoice",
+              },
+              transaction: transactionFixture({
+                payee: "CONTOSO GMBH SEPA",
+                reference: "bank transfer",
+              }),
+            }),
+          ],
+          rules: [],
+          suggestions: [],
+        },
+        recent: [],
+      }).fetch,
+    );
+
+    renderBanking();
+
+    expect(await screen.findByText("Draft invoice match")).toBeInTheDocument();
+    expect(screen.getByText("Draft invoice")).toBeInTheDocument();
+    expect(
+      screen.getByText(/confirming will send the invoice before allocating/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Send + allocate" }),
+    ).toBeEnabled();
+  });
+
   it("shows caught-up empty state when the selected account queue is empty", async () => {
     vi.stubGlobal(
       "fetch",
@@ -270,6 +316,196 @@ describe("BankingScreen", () => {
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText("All caught up…")).not.toBeInTheDocument();
+  });
+
+  it("matches an unreconciled inbound transaction to a selected invoice", async () => {
+    const user = userEvent.setup();
+    const accounts = accountsFixture().map((account) =>
+      account.id === 1 ? { ...account, unreconciled_count: 1 } : account,
+    );
+    const api = bankingApi({
+      accounts,
+      candidates: {
+        301: [
+          invoiceCandidate({
+            client: "Manual Client",
+            invoice_id: "inv_manual",
+            invoice_number: "INV-MANUAL",
+          }),
+        ],
+      },
+      feed: [
+        transactionFixture({
+          id: 301,
+          payee: "MANUAL CLIENT",
+          reference: "bank transfer",
+          state: "unreconciled",
+        }),
+      ],
+      queue: { matches: [], rules: [], suggestions: [] },
+      recent: [],
+    });
+    vi.stubGlobal("fetch", api.fetch);
+
+    renderBanking();
+
+    const card = (await screen.findByText("Manual match")).closest("article");
+    expect(card).not.toBeNull();
+    await user.click(
+      within(card as HTMLElement).getByText("Match to invoice ▾"),
+    );
+    await user.selectOptions(
+      within(card as HTMLElement).getByLabelText("Invoice"),
+      "inv_manual",
+    );
+    await user.click(
+      within(card as HTMLElement).getByRole("button", {
+        name: "Match selected",
+      }),
+    );
+
+    await waitFor(() => {
+      const confirmCall = api.fetch.mock.calls.find(
+        ([input, init]) =>
+          urlFromRequest(input).pathname ===
+            "/api/banking/transactions/301/confirm" && init?.method === "POST",
+      );
+      expect(confirmCall).toBeDefined();
+      expect(JSON.parse(String(confirmCall?.[1]?.body))).toMatchObject({
+        invoice_id: "inv_manual",
+      });
+    });
+    expect(await screen.findByText("Confirmed match")).toBeInTheDocument();
+  });
+
+  it("confirms an automatic match against a different selected invoice", async () => {
+    const user = userEvent.setup();
+    const api = bankingApi({
+      accounts: accountsFixture(),
+      candidates: {
+        101: [
+          invoiceCandidate({
+            client: "Contoso GmbH",
+            invoice_id: "inv_2026_07",
+            invoice_number: "INV-2026-07",
+          }),
+          invoiceCandidate({
+            client: "Fabrikam Ltd",
+            invoice_id: "inv_override",
+            invoice_number: "INV-OVERRIDE",
+          }),
+        ],
+      },
+      queue: reviewQueueFixture(),
+      recent: recentFixture(),
+    });
+    vi.stubGlobal("fetch", api.fetch);
+
+    renderBanking();
+
+    const card = (await screen.findByText("Invoice match")).closest("article");
+    expect(card).not.toBeNull();
+    await user.click(
+      within(card as HTMLElement).getByText("Match to invoice ▾"),
+    );
+    await user.selectOptions(
+      within(card as HTMLElement).getByLabelText("Invoice"),
+      "inv_override",
+    );
+    await user.click(
+      within(card as HTMLElement).getByRole("button", {
+        name: "Confirm selected",
+      }),
+    );
+
+    await waitFor(() => {
+      const confirmCall = api.fetch.mock.calls.find(
+        ([input, init]) =>
+          urlFromRequest(input).pathname ===
+            "/api/banking/transactions/101/confirm" && init?.method === "POST",
+      );
+      expect(confirmCall).toBeDefined();
+      expect(JSON.parse(String(confirmCall?.[1]?.body))).toMatchObject({
+        invoice_id: "inv_override",
+      });
+    });
+  });
+
+  it("matches an inbound payee-rule suggestion to a selected invoice", async () => {
+    const user = userEvent.setup();
+    const api = bankingApi({
+      accounts: accountsFixture(),
+      candidates: {
+        104: [
+          invoiceCandidate({
+            amount: money(450000, "GBP"),
+            client: "Rule Client",
+            invoice_id: "inv_rule_manual",
+            invoice_number: "INV-RULE",
+          }),
+        ],
+      },
+      queue: {
+        matches: [],
+        rules: [
+          reviewCard({
+            confidence: 0.91,
+            explanation: "Recurring payee matched the software rule.",
+            kind: "rule",
+            suggestion_id: 9004,
+            target: {
+              account_code: "5010-software",
+              times_applied: 11,
+              type: "account",
+            },
+            transaction: transactionFixture({
+              amount: money(450000, "GBP"),
+              id: 104,
+              payee: "CLIENT RULE PAYMENT",
+              reference: "invoice paid",
+            }),
+          }),
+        ],
+        suggestions: [],
+      },
+      recent: [],
+    });
+    vi.stubGlobal("fetch", api.fetch);
+
+    renderBanking();
+
+    const card = (await screen.findByText("Payee rule")).closest("article");
+    expect(card).not.toBeNull();
+    expect(
+      within(card as HTMLElement).getByRole("button", { name: "Apply" }),
+    ).toBeInTheDocument();
+    expect(
+      within(card as HTMLElement).getByText("Recode ▾"),
+    ).toBeInTheDocument();
+    await user.click(
+      within(card as HTMLElement).getByText("Match to invoice ▾"),
+    );
+    await user.selectOptions(
+      within(card as HTMLElement).getByLabelText("Invoice"),
+      "inv_rule_manual",
+    );
+    await user.click(
+      within(card as HTMLElement).getByRole("button", {
+        name: "Match selected",
+      }),
+    );
+
+    await waitFor(() => {
+      const confirmCall = api.fetch.mock.calls.find(
+        ([input, init]) =>
+          urlFromRequest(input).pathname ===
+            "/api/banking/transactions/104/confirm" && init?.method === "POST",
+      );
+      expect(confirmCall).toBeDefined();
+      expect(JSON.parse(String(confirmCall?.[1]?.body))).toMatchObject({
+        invoice_id: "inv_rule_manual",
+      });
+    });
   });
 
   it("requests recently reconciled rows for the selected account", async () => {
@@ -600,14 +836,18 @@ function renderBanking() {
 
 function bankingApi({
   accounts,
+  candidates = {},
   confirmResponse,
   excludeStatus = 200,
+  feed = [],
   queue,
   recent,
 }: {
   accounts: BankingAccount[];
+  candidates?: Record<number, BankingInvoiceCandidate[]>;
   confirmResponse?: BankingCommandResponse;
   excludeStatus?: number;
+  feed?: BankingTransaction[];
   queue: BankingReviewQueue;
   recent: BankingRecentTransaction[];
 }) {
@@ -663,6 +903,18 @@ function bankingApi({
       if (path === "/api/banking/review") {
         return jsonResponse(queue);
       }
+      if (path === "/api/banking/feed") {
+        const accountID = url.searchParams.get("account");
+        const state = url.searchParams.get("state");
+        return jsonResponse({
+          next_cursor: null,
+          transactions: feed.filter(
+            (transaction) =>
+              (!accountID || transaction.account_id === Number(accountID)) &&
+              (!state || transaction.state === state),
+          ),
+        });
+      }
       if (path === "/api/banking/recent") {
         const accountID = url.searchParams.get("account");
         return jsonResponse({
@@ -671,6 +923,14 @@ function bankingApi({
                 (item) => item.transaction.account_id === Number(accountID),
               )
             : recent,
+        });
+      }
+      const candidateMatch = path.match(
+        /^\/api\/banking\/transactions\/(\d+)\/invoice-candidates$/,
+      );
+      if (candidateMatch && method === "GET") {
+        return jsonResponse({
+          candidates: candidates[Number(candidateMatch[1])] ?? [],
         });
       }
       if (
@@ -684,6 +944,18 @@ function bankingApi({
             transaction: transactionFixture({ state: "reconciled" }),
           },
         );
+      }
+      if (path.endsWith("/confirm") && method === "POST") {
+        const parts = path.split("/");
+        const transactionID = Number(parts[parts.length - 2]);
+        return jsonResponse({
+          kind: "match",
+          realised_fx_amount: money(0, "GBP"),
+          transaction: transactionFixture({
+            id: transactionID,
+            state: "reconciled",
+          }),
+        });
       }
       if (
         path === "/api/banking/transactions/101/exclude" &&
@@ -797,6 +1069,7 @@ function reviewQueueFixture(): BankingReviewQueue {
           client: "Contoso GmbH",
           id: "inv_2026_07",
           invoice_number: "INV-2026-07",
+          invoice_status: "sent",
           type: "invoice",
         },
         transaction: transactionFixture({
@@ -856,6 +1129,21 @@ function recentFixture(): BankingRecentTransaction[] {
       }),
     },
   ];
+}
+
+function invoiceCandidate(
+  overrides: Partial<BankingInvoiceCandidate> = {},
+): BankingInvoiceCandidate {
+  return {
+    amount: money(450000, "EUR"),
+    client: "Contoso GmbH",
+    due_date: "2026-08-05",
+    invoice_id: "inv_2026_07",
+    invoice_number: "INV-2026-07",
+    issue_date: "2026-07-06",
+    status: "sent",
+    ...overrides,
+  };
 }
 
 function reviewCard(card: BankingReviewCard): BankingReviewCard {

@@ -8,6 +8,7 @@ of Man pack fact queries that pre-date collection expansion.
 | Key | Type | Provider | Consuming rules |
 | --- | --- | --- | --- |
 | `invoices.overdue` | `[]advisor.OverdueInvoiceFact` | invoicing | Source collection for `overdue_invoice` |
+| `invoices.recurringDrafts` | `[]advisor.RecurringDraftFact` | invoicing | Source collection for `recurring_invoice_draft_waiting` |
 | `dla.balance` | `money.Money` | dla | Source fact for `dla_overdrawn_bik` |
 | `dla.status` | `string` (`credit`, `overdrawn`) | dla | Source fact for `dla_overdrawn_bik` |
 | `dla.suggestedClearance` | `money.Money` | dla | DLA clearance templates and CTAs |
@@ -32,6 +33,10 @@ of Man pack fact queries that pre-date collection expansion.
 | `days_overdue` | `int` | invoicing compatibility binding from `invoices.overdue[].daysOverdue` | `overdue_invoice` |
 | `invoice_id` | `string` | invoicing compatibility binding from `invoices.overdue[].id` | `overdue_invoice` |
 | `invoice_number` | `string` | invoicing compatibility binding from `invoices.overdue[].number` | `overdue_invoice` |
+| `recurring_draft_count` | `int` | invoicing compatibility binding from `invoices.recurringDrafts` length | `recurring_invoice_draft_waiting` |
+| `recurring_draft_client_name` | `string` | invoicing compatibility binding from `invoices.recurringDrafts[].client` | `recurring_invoice_draft_waiting` |
+| `recurring_draft_invoice_id` | `string` | invoicing compatibility binding from `invoices.recurringDrafts[].id` | `recurring_invoice_draft_waiting` |
+| `recurring_draft_run_date` | `date` | invoicing compatibility binding from `invoices.recurringDrafts[].runDate` | `recurring_invoice_draft_waiting` |
 | `balance` | `money.Money` | dla compatibility binding from `dla.balance` | `dla_overdrawn_bik` |
 | `status` | `string` | dla compatibility binding from `dla.status` | `dla_overdrawn_bik` |
 | `clearance_amount` | `money.Money` | dla compatibility binding from `dla.suggestedClearance` | `dla_overdrawn_bik` |

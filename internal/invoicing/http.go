@@ -76,10 +76,15 @@ func (m *Module) RegisterRoutes(r chi.Router) {
 	r.Post("/clients/{id}/archive", h.archiveClient)
 
 	invoices := invoiceHandler{service: m.service}
+	recurring := recurringTemplateHandler{service: m.service}
 	r.Get("/invoices", invoices.listInvoices)
 	r.Post("/invoices", invoices.createDraftInvoice)
+	r.Get("/recurring-templates", recurring.listRecurringTemplates)
+	r.Post("/recurring-templates", recurring.createRecurringTemplate)
+	r.Post("/recurring-templates/{id}/cancel", recurring.cancelRecurringTemplate)
 	r.Get("/invoices/{id}", invoices.getInvoice)
 	r.Patch("/invoices/{id}", invoices.patchInvoice)
+	r.Post("/invoices/{id}/recurring-template", recurring.createRecurringTemplateFromInvoice)
 	r.Post("/invoices/{id}/send", invoices.sendInvoice)
 	r.Post("/invoices/{id}/remind", invoices.remindInvoice)
 	r.Post("/invoices/{id}/revert", invoices.revertInvoice)

@@ -124,6 +124,48 @@ func OpenAPIFragment() httpserver.OpenAPIFragment {
 					},
 				},
 			},
+			"/api/invoicing/recurring-templates": map[string]any{
+				"get": map[string]any{
+					"tags":        []string{"invoicing"},
+					"summary":     "List recurring invoice templates",
+					"operationId": "invoicingListRecurringTemplates",
+					"security":    sessionSecurity(),
+					"responses": map[string]any{
+						"200": jsonResponseRef("Recurring templates listed", "InvoicingRecurringTemplatesResponse"),
+						"401": problemResponse("Authentication required"),
+					},
+				},
+				"post": map[string]any{
+					"tags":        []string{"invoicing"},
+					"summary":     "Create a recurring invoice template",
+					"operationId": "invoicingCreateRecurringTemplate",
+					"security":    sessionSecurity(),
+					"requestBody": jsonRequestBodyRef("InvoicingRecurringTemplateRequest"),
+					"responses": map[string]any{
+						"201": jsonResponseRef("Recurring template created", "InvoicingRecurringTemplate"),
+						"400": problemResponse("Malformed recurring template request"),
+						"401": problemResponse("Authentication required"),
+						"404": problemResponse("Client was not found"),
+						"413": problemResponse("Recurring template request body is too large"),
+						"422": validationProblemResponse("Recurring template validation failed"),
+					},
+				},
+			},
+			"/api/invoicing/recurring-templates/{id}/cancel": map[string]any{
+				"post": map[string]any{
+					"tags":        []string{"invoicing"},
+					"summary":     "Cancel a recurring invoice template",
+					"operationId": "invoicingCancelRecurringTemplate",
+					"security":    sessionSecurity(),
+					"parameters":  recurringTemplateIDParameter(),
+					"responses": map[string]any{
+						"200": jsonResponseRef("Recurring template canceled", "InvoicingRecurringTemplate"),
+						"401": problemResponse("Authentication required"),
+						"404": problemResponse("Recurring template was not found"),
+						"409": validationProblemResponse("Recurring template cannot be canceled"),
+					},
+				},
+			},
 			"/api/invoicing/invoices/{id}": map[string]any{
 				"get": map[string]any{
 					"tags":        []string{"invoicing"},
@@ -153,6 +195,25 @@ func OpenAPIFragment() httpserver.OpenAPIFragment {
 						"409": validationProblemResponse("Invoice cannot be edited"),
 						"413": problemResponse("Invoice patch request body is too large"),
 						"422": validationProblemResponse("Invoice validation failed"),
+					},
+				},
+			},
+			"/api/invoicing/invoices/{id}/recurring-template": map[string]any{
+				"post": map[string]any{
+					"tags":        []string{"invoicing"},
+					"summary":     "Create a recurring template from an invoice",
+					"description": "Copies client, currency, VAT treatment, and line items from an existing invoice, then stores the requested recurrence schedule.",
+					"operationId": "invoicingCreateRecurringTemplateFromInvoice",
+					"security":    sessionSecurity(),
+					"parameters":  invoiceIDParameter(),
+					"requestBody": jsonRequestBodyRef("InvoicingCreateRecurringFromInvoiceRequest"),
+					"responses": map[string]any{
+						"201": jsonResponseRef("Recurring template created", "InvoicingRecurringTemplate"),
+						"400": problemResponse("Malformed recurring template request"),
+						"401": problemResponse("Authentication required"),
+						"404": problemResponse("Invoice was not found"),
+						"413": problemResponse("Recurring template request body is too large"),
+						"422": validationProblemResponse("Recurring template validation failed"),
 					},
 				},
 			},
@@ -297,6 +358,17 @@ func clientIDParameter() []map[string]any {
 }
 
 func invoiceIDParameter() []map[string]any {
+	return []map[string]any{
+		{
+			"name":     "id",
+			"in":       "path",
+			"required": true,
+			"schema":   map[string]any{"type": "string"},
+		},
+	}
+}
+
+func recurringTemplateIDParameter() []map[string]any {
 	return []map[string]any{
 		{
 			"name":     "id",
@@ -562,6 +634,77 @@ func invoicingComponents() map[string]any {
 				},
 				"additionalProperties": false,
 			},
+			"InvoicingRecurringCadence": recurringCadenceSchema(),
+			"InvoicingRecurringTemplateLine": map[string]any{
+				"type":     "object",
+				"required": []string{"id", "template_id", "position", "description", "qty", "unit_price", "line_total"},
+				"properties": map[string]any{
+					"id":          map[string]any{"type": "string"},
+					"template_id": map[string]any{"type": "string"},
+					"position":    map[string]any{"type": "integer", "minimum": 1},
+					"description": map[string]any{"type": "string"},
+					"qty":         map[string]any{"type": "string", "pattern": "^[0-9]+(\\.[0-9]+)?$"},
+					"unit_price":  map[string]any{"$ref": "#/components/schemas/InvoicingMoney"},
+					"line_total":  map[string]any{"$ref": "#/components/schemas/InvoicingMoney"},
+				},
+				"additionalProperties": false,
+			},
+			"InvoicingRecurringTemplate": map[string]any{
+				"type": "object",
+				"required": []string{
+					"id",
+					"client_id",
+					"client_name",
+					"status",
+					"cadence",
+					"day_of_month",
+					"next_run_date",
+					"currency",
+					"vat_treatment",
+					"auto_send",
+					"max_occurrences",
+					"occurrences_created",
+					"created_from_invoice_id",
+					"canceled_at",
+					"lines",
+					"created_at",
+					"updated_at",
+				},
+				"properties":           recurringTemplateProperties(false),
+				"additionalProperties": false,
+			},
+			"InvoicingRecurringTemplatesResponse": map[string]any{
+				"type":     "object",
+				"required": []string{"templates"},
+				"properties": map[string]any{
+					"templates": map[string]any{
+						"type":  "array",
+						"items": map[string]any{"$ref": "#/components/schemas/InvoicingRecurringTemplate"},
+					},
+				},
+				"additionalProperties": false,
+			},
+			"InvoicingRecurringTemplateRequest": map[string]any{
+				"type": "object",
+				"required": []string{
+					"client_id",
+					"cadence",
+					"day_of_month",
+					"next_run_date",
+					"currency",
+					"vat_treatment",
+					"auto_send",
+					"lines",
+				},
+				"properties":           recurringTemplateRequestProperties(),
+				"additionalProperties": false,
+			},
+			"InvoicingCreateRecurringFromInvoiceRequest": map[string]any{
+				"type":                 "object",
+				"required":             []string{"cadence", "day_of_month", "next_run_date", "auto_send"},
+				"properties":           recurringFromInvoiceRequestProperties(),
+				"additionalProperties": false,
+			},
 			"InvoicingReminder": map[string]any{
 				"type":     "object",
 				"required": []string{"invoice_id", "sent_at"},
@@ -588,6 +731,8 @@ func invoicingComponents() map[string]any {
 					"settled_date",
 					"settled_amount",
 					"pdf_asset",
+					"recurring_template_id",
+					"recurring_run_date",
 					"lines",
 					"totals",
 					"created_at",
@@ -801,7 +946,9 @@ func invoiceProperties() map[string]any {
 			"allOf":    []map[string]any{{"$ref": "#/components/schemas/InvoicingMoney"}},
 			"nullable": true,
 		},
-		"pdf_asset": map[string]any{"type": "string", "nullable": true},
+		"pdf_asset":             map[string]any{"type": "string", "nullable": true},
+		"recurring_template_id": map[string]any{"type": "string", "nullable": true},
+		"recurring_run_date":    map[string]any{"type": "string", "format": "date-time", "nullable": true},
 		"lines": map[string]any{
 			"type":  "array",
 			"items": map[string]any{"$ref": "#/components/schemas/InvoicingInvoiceLine"},
@@ -847,10 +994,66 @@ func invoicePatchProperties() map[string]any {
 	}
 }
 
+func recurringTemplateProperties(request bool) map[string]any {
+	properties := recurringTemplateRequestProperties()
+	if !request {
+		properties["id"] = map[string]any{"type": "string"}
+		properties["client_name"] = map[string]any{"type": "string"}
+		properties["status"] = map[string]any{
+			"type": "string",
+			"enum": []string{string(RecurringTemplateStatusActive), string(RecurringTemplateStatusCanceled)},
+		}
+		properties["occurrences_created"] = map[string]any{"type": "integer", "minimum": 0}
+		properties["created_from_invoice_id"] = map[string]any{"type": "string", "nullable": true}
+		properties["canceled_at"] = map[string]any{"type": "string", "format": "date-time", "nullable": true}
+		properties["created_at"] = map[string]any{"type": "string", "format": "date-time"}
+		properties["updated_at"] = map[string]any{"type": "string", "format": "date-time"}
+		properties["lines"] = map[string]any{
+			"type":  "array",
+			"items": map[string]any{"$ref": "#/components/schemas/InvoicingRecurringTemplateLine"},
+		}
+	}
+	return properties
+}
+
+func recurringTemplateRequestProperties() map[string]any {
+	properties := recurringFromInvoiceRequestProperties()
+	properties["client_id"] = map[string]any{"type": "string", "minLength": 1}
+	properties["currency"] = currencySchema()
+	properties["vat_treatment"] = vatTreatmentSchema()
+	properties["lines"] = map[string]any{
+		"type":     "array",
+		"minItems": 1,
+		"items":    map[string]any{"$ref": "#/components/schemas/InvoicingInvoiceLineInput"},
+	}
+	return properties
+}
+
+func recurringFromInvoiceRequestProperties() map[string]any {
+	return map[string]any{
+		"cadence":       recurringCadenceSchema(),
+		"day_of_month":  map[string]any{"type": "integer", "minimum": 1, "maximum": 31},
+		"next_run_date": map[string]any{"type": "string", "format": "date"},
+		"auto_send":     map[string]any{"type": "boolean", "default": false},
+		"max_occurrences": map[string]any{
+			"type":     "integer",
+			"minimum":  1,
+			"nullable": true,
+		},
+	}
+}
+
 func currencySchema() map[string]any {
 	return map[string]any{
 		"type": "string",
 		"enum": []string{string(CurrencyEUR), string(CurrencyGBP)},
+	}
+}
+
+func recurringCadenceSchema() map[string]any {
+	return map[string]any{
+		"type": "string",
+		"enum": []string{string(RecurringCadenceMonthly), string(RecurringCadenceQuarterly)},
 	}
 }
 

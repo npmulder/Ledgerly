@@ -9,6 +9,7 @@
         "client": "string",
         "id": "string",
         "invoice_number": "string",
+        "invoice_status": "string",
         "times_applied": "null",
         "type": "string"
       },

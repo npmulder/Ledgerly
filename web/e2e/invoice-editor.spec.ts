@@ -41,6 +41,19 @@ test("creates, edits, autosaves, sends, shows locked rate, and reverts same-day"
   await expect(page.getByText("€0.00")).toBeVisible();
   await expect(page.getByText("€1,300.00").first()).toBeVisible();
 
+  await page.getByLabel("Recurring next run date").fill("2026-08-01");
+  await page.getByRole("button", { name: "Make recurring" }).click();
+  await expect(
+    page.getByText("Recurring template created for Contoso GmbH."),
+  ).toBeVisible();
+  await expect.poll(() => state.recurringRequests.length).toBe(1);
+  expect(state.recurringRequests[0]).toMatchObject({
+    auto_send: false,
+    cadence: "monthly",
+    day_of_month: 1,
+    next_run_date: "2026-08-01",
+  });
+
   await page.getByRole("button", { name: "Send invoice" }).click();
 
   await expect(page.getByText("INV-2026-1").first()).toBeVisible();
@@ -193,6 +206,18 @@ async function mockInvoiceApi(
       return;
     }
     if (
+      path === "/api/invoicing/invoices/inv_1/recurring-template" &&
+      request.method() === "POST"
+    ) {
+      const body = JSON.parse(request.postData() ?? "{}") as Record<
+        string,
+        unknown
+      >;
+      state.recurringRequests.push(body);
+      await fulfillJson(route, recurringTemplateResponse(body), 201);
+      return;
+    }
+    if (
       path === "/api/invoicing/invoices/inv_1/remind" &&
       request.method() === "POST"
     ) {
@@ -239,11 +264,17 @@ async function mockInvoiceApi(
 type InvoiceState = {
   invoice: InvoicingInvoice | null;
   patchRequests: InvoicingInvoicePatch[];
+  recurringRequests: Record<string, unknown>[];
   reminderRequests: string[];
 };
 
 function invoiceState(): InvoiceState {
-  return { invoice: null, patchRequests: [], reminderRequests: [] };
+  return {
+    invoice: null,
+    patchRequests: [],
+    recurringRequests: [],
+    reminderRequests: [],
+  };
 }
 
 function advisorInsightsForInvoice(invoice: InvoicingInvoice | null) {
@@ -308,6 +339,8 @@ function draftInvoice(
     lock_id: null,
     number: null,
     pdf_asset: null,
+    recurring_run_date: null,
+    recurring_template_id: null,
     reminders: [],
     sent_at: null,
     settled_amount: null,
@@ -316,10 +349,33 @@ function draftInvoice(
     status: "draft",
     totals: totals("EUR", 0, 0),
     updated_at: "2026-07-06T10:00:00Z",
+    vat_registered: true,
     vat_treatment: "domestic",
     ...overrides,
   };
   return invoice;
+}
+
+function recurringTemplateResponse(body: Record<string, unknown>) {
+  return {
+    auto_send: body.auto_send ?? false,
+    cadence: body.cadence ?? "monthly",
+    canceled_at: null,
+    client_id: "client_contoso",
+    client_name: "Contoso GmbH",
+    created_at: "2026-07-06T13:00:00Z",
+    created_from_invoice_id: "inv_1",
+    currency: "EUR",
+    day_of_month: body.day_of_month ?? 1,
+    id: "rtpl_1",
+    lines: [],
+    max_occurrences: body.max_occurrences ?? null,
+    next_run_date: `${body.next_run_date ?? "2026-08-01"}T00:00:00Z`,
+    occurrences_created: 0,
+    status: "active",
+    updated_at: "2026-07-06T13:00:00Z",
+    vat_treatment: "reverse-charge-eu-b2b",
+  };
 }
 
 function sentInvoice(invoice: InvoicingInvoice): InvoicingInvoice {

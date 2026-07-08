@@ -37,6 +37,8 @@ const (
 	problemTypeInvoiceRate          = "https://ledgerly.local/problems/invoicing/rate-unavailable"
 	problemTypeInvoiceReminder      = "https://ledgerly.local/problems/invoicing/reminder-unavailable"
 	problemTypeInvoiceReminderLimit = "https://ledgerly.local/problems/invoicing/reminder-rate-limited"
+	problemTypeRecurringNotFound    = "https://ledgerly.local/problems/invoicing/recurring-template-not-found"
+	problemTypeRecurringImmutable   = "https://ledgerly.local/problems/invoicing/recurring-template-immutable"
 )
 
 const (
@@ -46,25 +48,27 @@ const (
 
 // Service orchestrates invoicing client commands and queries.
 type Service struct {
-	pool               *pgxpool.Pool
-	store              Store
-	clock              clock.Clock
-	todayRate          TodayRateFunc
-	rateLocker         RateLocker
-	rateLocks          RateLockReader
-	ledger             LedgerJournal
-	eventBus           *bus.Bus
-	invoiceUsage       InvoiceUsageChecker
-	identity           identity.Identity
-	pdfAssetStore      InvoicePDFAssetStore
-	pdfEngine          InvoicePDFEngine
-	pdfRetryBackoff    time.Duration
-	mailer             mail.Sender
-	logger             *slog.Logger
-	audit              AuditRecorder
-	idGenerator        func() (string, error)
-	invoiceIDGenerator func() (string, error)
-	lineIDGenerator    func() (string, error)
+	pool                    *pgxpool.Pool
+	store                   Store
+	clock                   clock.Clock
+	todayRate               TodayRateFunc
+	rateLocker              RateLocker
+	rateLocks               RateLockReader
+	ledger                  LedgerJournal
+	eventBus                *bus.Bus
+	invoiceUsage            InvoiceUsageChecker
+	identity                identity.Identity
+	pdfAssetStore           InvoicePDFAssetStore
+	pdfEngine               InvoicePDFEngine
+	pdfRetryBackoff         time.Duration
+	mailer                  mail.Sender
+	logger                  *slog.Logger
+	audit                   AuditRecorder
+	idGenerator             func() (string, error)
+	invoiceIDGenerator      func() (string, error)
+	lineIDGenerator         func() (string, error)
+	templateIDGenerator     func() (string, error)
+	templateLineIDGenerator func() (string, error)
 }
 
 type ServiceOption func(*Service)
@@ -212,17 +216,19 @@ func WithAuditRecorder(recorder AuditRecorder) ServiceOption {
 
 func NewService(pool *pgxpool.Pool, store Store, opts ...ServiceOption) *Service {
 	service := &Service{
-		pool:               pool,
-		store:              store,
-		clock:              clock.New(),
-		todayRate:          defaultTodayRate,
-		eventBus:           bus.New(),
-		invoiceUsage:       noInvoiceUsageChecker{},
-		pdfRetryBackoff:    defaultPDFRetryBackoff,
-		logger:             slog.New(slog.NewTextHandler(io.Discard, nil)),
-		idGenerator:        newClientID,
-		invoiceIDGenerator: newInvoiceID,
-		lineIDGenerator:    newInvoiceLineID,
+		pool:                    pool,
+		store:                   store,
+		clock:                   clock.New(),
+		todayRate:               defaultTodayRate,
+		eventBus:                bus.New(),
+		invoiceUsage:            noInvoiceUsageChecker{},
+		pdfRetryBackoff:         defaultPDFRetryBackoff,
+		logger:                  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		idGenerator:             newClientID,
+		invoiceIDGenerator:      newInvoiceID,
+		lineIDGenerator:         newInvoiceLineID,
+		templateIDGenerator:     newRecurringTemplateID,
+		templateLineIDGenerator: newRecurringTemplateLineID,
 	}
 	for _, opt := range opts {
 		opt(service)
@@ -437,11 +443,8 @@ func (s *Service) Send(ctx context.Context, id string) (_ Invoice, err error) {
 	if s.pool == nil {
 		return Invoice{}, fmt.Errorf("invoicing: send requires pool")
 	}
-	if s.rateLocker == nil {
-		return Invoice{}, fmt.Errorf("invoicing: send requires rate locker")
-	}
-	if s.ledger == nil {
-		return Invoice{}, fmt.Errorf("invoicing: send requires ledger")
+	if err := s.requireSendDependencies(); err != nil {
+		return Invoice{}, err
 	}
 
 	tx, err := s.pool.Begin(ctx)
@@ -454,10 +457,40 @@ func (s *Service) Send(ctx context.Context, id string) (_ Invoice, err error) {
 		}
 	}()
 
+	sent, err := s.sendTx(ctx, tx, id)
+	if err != nil {
+		return Invoice{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return Invoice{}, fmt.Errorf("invoicing: commit send transaction: %w", err)
+	}
+	s.scheduleInvoicePDFRender(sent.ID)
+	return sent, nil
+}
+
+func (s *Service) requireSendDependencies() error {
+	if s.rateLocker == nil {
+		return fmt.Errorf("invoicing: send requires rate locker")
+	}
+	if s.ledger == nil {
+		return fmt.Errorf("invoicing: send requires ledger")
+	}
+	return nil
+}
+
+func (s *Service) sendTx(ctx context.Context, tx db.Tx, id string) (Invoice, error) {
+	if tx == nil {
+		return Invoice{}, fmt.Errorf("invoicing: send requires transaction")
+	}
+
 	draft, err := s.store.InvoiceForUpdate(ctx, tx, strings.TrimSpace(id))
 	if err != nil {
 		return Invoice{}, err
 	}
+	return s.sendLockedDraft(ctx, tx, draft)
+}
+
+func (s *Service) sendLockedDraft(ctx context.Context, tx db.Tx, draft Invoice) (Invoice, error) {
 	if err := validateSendableDraft(draft); err != nil {
 		return Invoice{}, err
 	}
@@ -520,11 +553,13 @@ func (s *Service) Send(ctx context.Context, id string) (_ Invoice, err error) {
 		return Invoice{}, fmt.Errorf("invoicing: publish invoice sent: %w", err)
 	}
 
-	if err = tx.Commit(ctx); err != nil {
-		return Invoice{}, fmt.Errorf("invoicing: commit send transaction: %w", err)
-	}
-	s.scheduleInvoicePDFRender(sent.ID)
 	return sent, nil
+}
+
+// ScheduleInvoicePDFRender queues post-commit PDF rendering for callers that
+// send invoices inside their own transaction.
+func (s *Service) ScheduleInvoicePDFRender(id string) {
+	s.scheduleInvoicePDFRender(id)
 }
 
 // RenderInvoicePDFNow renders and stores a sent invoice PDF unless the invoice
@@ -734,6 +769,42 @@ func (s *Service) invoicePrintLockedRate(ctx context.Context, invoice Invoice) (
 	return &InvoicePrintLockedRate{ID: lock.ID, Rate: lock.Rate}, nil
 }
 
+// SettleMatchedInvoice records a banking invoice-match settlement. Draft
+// invoices are sent first inside the same caller transaction so numbering, FX
+// locking, send postings, and settlement commit or roll back together.
+func (s *Service) SettleMatchedInvoice(ctx context.Context, tx db.Tx, id string, txnRef string, date time.Time, amount Money) (MatchSettlement, error) {
+	if tx == nil {
+		return MatchSettlement{}, fmt.Errorf("invoicing: match settlement requires transaction")
+	}
+
+	invoice, err := s.store.InvoiceForUpdate(ctx, tx, strings.TrimSpace(id))
+	if err != nil {
+		return MatchSettlement{}, err
+	}
+
+	sentFromDraft := false
+	switch invoice.Status {
+	case InvoiceStatusDraft:
+		if err := s.requireSendDependencies(); err != nil {
+			return MatchSettlement{}, err
+		}
+		invoice, err = s.sendLockedDraft(ctx, tx, invoice)
+		if err != nil {
+			return MatchSettlement{}, err
+		}
+		sentFromDraft = true
+	case InvoiceStatusSent:
+	default:
+		return MatchSettlement{}, ErrInvoiceImmutable
+	}
+
+	settled, err := s.markSettledLocked(ctx, tx, invoice, txnRef, date, amount)
+	if err != nil {
+		return MatchSettlement{}, err
+	}
+	return MatchSettlement{Invoice: settled, SentFromDraft: sentFromDraft}, nil
+}
+
 // MarkSettled records a full invoice settlement inside the caller's
 // transaction and publishes InvoiceSettled for realised-FX handling.
 func (s *Service) MarkSettled(ctx context.Context, tx db.Tx, id string, txnRef string, date time.Time, amount Money) (Invoice, error) {
@@ -745,10 +816,14 @@ func (s *Service) MarkSettled(ctx context.Context, tx db.Tx, id string, txnRef s
 	if err != nil {
 		return Invoice{}, err
 	}
+	return s.markSettledLocked(ctx, tx, invoice, txnRef, date, amount)
+}
+
+func (s *Service) markSettledLocked(ctx context.Context, tx db.Tx, invoice Invoice, txnRef string, date time.Time, amount Money) (Invoice, error) {
 	if invoice.Status != InvoiceStatusSent {
 		return Invoice{}, ErrInvoiceImmutable
 	}
-	invoice, err = s.computeTotals(ctx, invoice, false)
+	invoice, err := s.computeTotals(ctx, invoice, false)
 	if err != nil {
 		return Invoice{}, err
 	}
@@ -1302,6 +1377,14 @@ func newInvoiceLineID() (string, error) {
 	return newID("line_", "invoice line id")
 }
 
+func newRecurringTemplateID() (string, error) {
+	return newID("rtpl_", "recurring template id")
+}
+
+func newRecurringTemplateLineID() (string, error) {
+	return newID("rtline_", "recurring template line id")
+}
+
 func newID(prefix string, label string) (string, error) {
 	var bytes [16]byte
 	if _, err := rand.Read(bytes[:]); err != nil {
@@ -1709,6 +1792,23 @@ func problemForError(err error) (httpserver.Problem, bool) {
 			Detail: "invoice already has a reminder recorded today",
 			Extensions: map[string]any{
 				"errors": []FieldError{{Pointer: "/reminders", Detail: "already sent today"}},
+			},
+		}, true
+	case errors.Is(err, ErrRecurringTemplateNotFound):
+		return httpserver.Problem{
+			Type:   problemTypeRecurringNotFound,
+			Title:  "Recurring template not found",
+			Status: 404,
+			Detail: "recurring template was not found",
+		}, true
+	case errors.Is(err, ErrRecurringTemplateImmutable):
+		return httpserver.Problem{
+			Type:   problemTypeRecurringImmutable,
+			Title:  "Recurring template is immutable",
+			Status: 409,
+			Detail: "recurring template cannot be changed by this command",
+			Extensions: map[string]any{
+				"errors": []FieldError{{Pointer: "/status", Detail: "must be active"}},
 			},
 		}, true
 	default:

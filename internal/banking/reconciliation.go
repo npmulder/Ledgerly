@@ -23,6 +23,14 @@ type ReconciliationCommandHooks struct {
 }
 
 func (s *Service) ConfirmMatch(ctx context.Context, txnID TransactionID) (_ ConfirmMatchResult, err error) {
+	return s.confirmMatch(ctx, txnID, "")
+}
+
+func (s *Service) ConfirmMatchToInvoice(ctx context.Context, txnID TransactionID, invoiceID string) (_ ConfirmMatchResult, err error) {
+	return s.confirmMatch(ctx, txnID, strings.TrimSpace(invoiceID))
+}
+
+func (s *Service) confirmMatch(ctx context.Context, txnID TransactionID, explicitInvoiceID string) (_ ConfirmMatchResult, err error) {
 	if err := s.requireReconciliationDeps(true, true, false); err != nil {
 		return ConfirmMatchResult{}, err
 	}
@@ -33,7 +41,7 @@ func (s *Service) ConfirmMatch(ctx context.Context, txnID TransactionID) (_ Conf
 	}
 	defer rollbackOnError(ctx, tx, &err)
 
-	txn, account, suggestion, err := s.lockSuggestedCommandTransaction(ctx, tx, txnID, SuggestionKindInvoiceMatch)
+	txn, account, invoiceID, err := s.lockConfirmMatchTarget(ctx, tx, txnID, explicitInvoiceID)
 	if err != nil {
 		return ConfirmMatchResult{}, err
 	}
@@ -69,12 +77,10 @@ func (s *Service) ConfirmMatch(ctx context.Context, txnID TransactionID) (_ Conf
 		return ConfirmMatchResult{}, err
 	}
 
-	invoiceID := strings.TrimSpace(suggestion.Target)
+	var matchSettlement invoicing.MatchSettlement
 	if err = withTransactionSearchPath(ctx, tx, invoicing.ModuleName, func() error {
-		_, settleErr := s.invoices.MarkSettled(ctx, tx, invoiceID, bankingTxnRef(txn.ID), txn.Date, invoicing.Money{
-			Amount:   txn.Amount.Amount,
-			Currency: txn.Amount.Currency,
-		})
+		var settleErr error
+		matchSettlement, settleErr = settleInvoiceMatch(ctx, s.invoices, tx, invoiceID, txn)
 		return settleErr
 	}); err != nil {
 		return ConfirmMatchResult{}, fmt.Errorf("banking: confirm match settle invoice %s: %w", invoiceID, err)
@@ -90,7 +96,7 @@ func (s *Service) ConfirmMatch(ctx context.Context, txnID TransactionID) (_ Conf
 	if err = s.store.SupersedeActiveSuggestion(ctx, tx, txn.ID); err != nil {
 		return ConfirmMatchResult{}, err
 	}
-	if _, err = s.store.transitionTransactionStateLocked(ctx, tx, txn, TransactionStateReconciled, reconciliationActor); err != nil {
+	if err = s.transitionConfirmMatchStateLocked(ctx, tx, txn); err != nil {
 		return ConfirmMatchResult{}, err
 	}
 	if err = callReconciliationHook(ctx, s.reconciliationHooks.AfterConfirmStateTransition); err != nil {
@@ -102,6 +108,11 @@ func (s *Service) ConfirmMatch(ctx context.Context, txnID TransactionID) (_ Conf
 	if err = tx.Commit(ctx); err != nil {
 		return ConfirmMatchResult{}, fmt.Errorf("banking: commit confirm match transaction: %w", err)
 	}
+	if matchSettlement.SentFromDraft {
+		if scheduler, ok := s.invoices.(invoicePDFScheduler); ok {
+			scheduler.ScheduleInvoicePDFRender(matchSettlement.Invoice.ID)
+		}
+	}
 	txn.State = TransactionStateReconciled
 	return ConfirmMatchResult{
 		Transaction:   txn,
@@ -109,6 +120,83 @@ func (s *Service) ConfirmMatch(ctx context.Context, txnID TransactionID) (_ Conf
 		InvoiceID:     invoiceID,
 		RealisedFXGBP: realisedFX,
 	}, nil
+}
+
+func settleInvoiceMatch(ctx context.Context, settler InvoiceSettler, tx db.Tx, invoiceID string, txn Transaction) (invoicing.MatchSettlement, error) {
+	amount := invoicing.Money{
+		Amount:   txn.Amount.Amount,
+		Currency: txn.Amount.Currency,
+	}
+	if matchSettler, ok := settler.(invoiceMatchSettler); ok {
+		return matchSettler.SettleMatchedInvoice(ctx, tx, invoiceID, bankingTxnRef(txn.ID), txn.Date, amount)
+	}
+	settled, err := settler.MarkSettled(ctx, tx, invoiceID, bankingTxnRef(txn.ID), txn.Date, amount)
+	if err != nil {
+		return invoicing.MatchSettlement{}, err
+	}
+	return invoicing.MatchSettlement{Invoice: settled}, nil
+}
+
+func (s *Service) transitionConfirmMatchStateLocked(ctx context.Context, tx db.Tx, txn Transaction) error {
+	if txn.State == TransactionStateUnreconciled {
+		if _, err := s.store.transitionTransactionStateLocked(ctx, tx, txn, TransactionStateSuggested, reconciliationActor); err != nil {
+			return err
+		}
+		txn.State = TransactionStateSuggested
+	}
+	if _, err := s.store.transitionTransactionStateLocked(ctx, tx, txn, TransactionStateReconciled, reconciliationActor); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *Service) lockConfirmMatchTarget(ctx context.Context, tx db.Tx, txnID TransactionID, explicitInvoiceID string) (Transaction, BankAccount, string, error) {
+	if explicitInvoiceID == "" {
+		txn, account, suggestion, err := s.lockSuggestedCommandTransaction(ctx, tx, txnID, SuggestionKindInvoiceMatch)
+		if err != nil {
+			return Transaction{}, BankAccount{}, "", err
+		}
+		return txn, account, strings.TrimSpace(suggestion.Target), nil
+	}
+
+	txn, account, err := s.lockCommandTransaction(ctx, tx, txnID)
+	if err != nil {
+		return Transaction{}, BankAccount{}, "", err
+	}
+	switch txn.State {
+	case TransactionStateUnreconciled, TransactionStateSuggested:
+	default:
+		return Transaction{}, BankAccount{}, "", invalidReconciliationState(txn, TransactionStateReconciled)
+	}
+	if txn.Amount.Amount <= 0 {
+		return Transaction{}, BankAccount{}, "", fmt.Errorf("banking: confirm match transaction %d amount must be inbound: %w", txn.ID, ErrInvalidReconciliation)
+	}
+	if _, found, err := s.invoiceCandidateByID(ctx, tx, txn, explicitInvoiceID); err != nil {
+		return Transaction{}, BankAccount{}, "", err
+	} else if !found {
+		return Transaction{}, BankAccount{}, "", fmt.Errorf("banking: invoice %q is not an open candidate for transaction %d: %w", explicitInvoiceID, txn.ID, ErrInvalidReconciliation)
+	}
+	return txn, account, explicitInvoiceID, nil
+}
+
+func (s *Service) invoiceCandidateByID(ctx context.Context, tx db.Tx, txn Transaction, invoiceID string) (InvoiceMatchCandidate, bool, error) {
+	if s.invoiceCandidates == nil {
+		return InvoiceMatchCandidate{}, false, fmt.Errorf("banking: invoice candidates are required: %w", ErrInvalidReconciliation)
+	}
+	invoiceID = strings.TrimSpace(invoiceID)
+	if invoiceID == "" {
+		return InvoiceMatchCandidate{}, false, fmt.Errorf("banking: invoice id is required: %w", ErrInvalidReconciliation)
+	}
+	candidates, err := s.invoiceCandidates.InvoiceCandidates(ctx, tx, txn.Amount.Currency)
+	if err != nil {
+		return InvoiceMatchCandidate{}, false, fmt.Errorf("banking: invoice match candidates: %w", err)
+	}
+	for _, candidate := range candidates {
+		if strings.TrimSpace(candidate.InvoiceID) == invoiceID {
+			return candidate, true, nil
+		}
+	}
+	return InvoiceMatchCandidate{}, false, nil
 }
 
 func (s *Service) FileToDLA(ctx context.Context, txnID TransactionID) (_ FileToDLAResult, err error) {

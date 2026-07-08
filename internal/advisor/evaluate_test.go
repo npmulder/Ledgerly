@@ -168,8 +168,8 @@ func TestCompileJurisdictionRules(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompileJurisdictionRules() error = %v", err)
 	}
-	if len(rules) != 6 {
-		t.Fatalf("compiled rules length = %d, want 6", len(rules))
+	if len(rules) != 7 {
+		t.Fatalf("compiled rules length = %d, want 7", len(rules))
 	}
 }
 

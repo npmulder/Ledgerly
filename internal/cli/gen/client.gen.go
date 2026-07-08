@@ -95,6 +95,12 @@ const (
 	BankingReviewCardKindSuggestion BankingReviewCardKind = "suggestion"
 )
 
+// Defines values for BankingReviewTargetInvoiceStatus.
+const (
+	BankingReviewTargetInvoiceStatusDraft BankingReviewTargetInvoiceStatus = "draft"
+	BankingReviewTargetInvoiceStatusSent  BankingReviewTargetInvoiceStatus = "sent"
+)
+
 // Defines values for BankingReviewTargetType.
 const (
 	BankingReviewTargetTypeAccount BankingReviewTargetType = "account"
@@ -213,6 +219,12 @@ const (
 	InvoicingClientRequestVatTreatmentReverseChargeEuB2b InvoicingClientRequestVatTreatment = "reverse-charge-eu-b2b"
 )
 
+// Defines values for InvoicingCreateRecurringFromInvoiceRequestCadence.
+const (
+	InvoicingCreateRecurringFromInvoiceRequestCadenceMonthly   InvoicingCreateRecurringFromInvoiceRequestCadence = "monthly"
+	InvoicingCreateRecurringFromInvoiceRequestCadenceQuarterly InvoicingCreateRecurringFromInvoiceRequestCadence = "quarterly"
+)
+
 // Defines values for InvoicingFXRateFrom.
 const (
 	InvoicingFXRateFromEUR InvoicingFXRateFrom = "EUR"
@@ -267,8 +279,8 @@ const (
 
 // Defines values for InvoicingInvoicePatchVatTreatment.
 const (
-	Domestic           InvoicingInvoicePatchVatTreatment = "domestic"
-	ReverseChargeEuB2b InvoicingInvoicePatchVatTreatment = "reverse-charge-eu-b2b"
+	InvoicingInvoicePatchVatTreatmentDomestic           InvoicingInvoicePatchVatTreatment = "domestic"
+	InvoicingInvoicePatchVatTreatmentReverseChargeEuB2b InvoicingInvoicePatchVatTreatment = "reverse-charge-eu-b2b"
 )
 
 // Defines values for InvoicingInvoiceStatusCountStatus.
@@ -299,8 +311,50 @@ const (
 
 // Defines values for InvoicingMoneyAmountCurrency.
 const (
-	EUR InvoicingMoneyAmountCurrency = "EUR"
-	GBP InvoicingMoneyAmountCurrency = "GBP"
+	InvoicingMoneyAmountCurrencyEUR InvoicingMoneyAmountCurrency = "EUR"
+	InvoicingMoneyAmountCurrencyGBP InvoicingMoneyAmountCurrency = "GBP"
+)
+
+// Defines values for InvoicingRecurringTemplateCadence.
+const (
+	InvoicingRecurringTemplateCadenceMonthly   InvoicingRecurringTemplateCadence = "monthly"
+	InvoicingRecurringTemplateCadenceQuarterly InvoicingRecurringTemplateCadence = "quarterly"
+)
+
+// Defines values for InvoicingRecurringTemplateCurrency.
+const (
+	InvoicingRecurringTemplateCurrencyEUR InvoicingRecurringTemplateCurrency = "EUR"
+	InvoicingRecurringTemplateCurrencyGBP InvoicingRecurringTemplateCurrency = "GBP"
+)
+
+// Defines values for InvoicingRecurringTemplateStatus.
+const (
+	Active   InvoicingRecurringTemplateStatus = "active"
+	Canceled InvoicingRecurringTemplateStatus = "canceled"
+)
+
+// Defines values for InvoicingRecurringTemplateVatTreatment.
+const (
+	InvoicingRecurringTemplateVatTreatmentDomestic           InvoicingRecurringTemplateVatTreatment = "domestic"
+	InvoicingRecurringTemplateVatTreatmentReverseChargeEuB2b InvoicingRecurringTemplateVatTreatment = "reverse-charge-eu-b2b"
+)
+
+// Defines values for InvoicingRecurringTemplateRequestCadence.
+const (
+	Monthly   InvoicingRecurringTemplateRequestCadence = "monthly"
+	Quarterly InvoicingRecurringTemplateRequestCadence = "quarterly"
+)
+
+// Defines values for InvoicingRecurringTemplateRequestCurrency.
+const (
+	EUR InvoicingRecurringTemplateRequestCurrency = "EUR"
+	GBP InvoicingRecurringTemplateRequestCurrency = "GBP"
+)
+
+// Defines values for InvoicingRecurringTemplateRequestVatTreatment.
+const (
+	Domestic           InvoicingRecurringTemplateRequestVatTreatment = "domestic"
+	ReverseChargeEuB2b InvoicingRecurringTemplateRequestVatTreatment = "reverse-charge-eu-b2b"
 )
 
 // Defines values for LedgerAccountType.
@@ -338,8 +392,8 @@ const (
 
 // Defines values for ReportsShareResponseStatus.
 const (
-	ReportsShareResponseStatusManualSend ReportsShareResponseStatus = "manual-send"
-	ReportsShareResponseStatusSent       ReportsShareResponseStatus = "sent"
+	ManualSend ReportsShareResponseStatus = "manual-send"
+	Sent       ReportsShareResponseStatus = "sent"
 )
 
 // Defines values for ReportsVATResponseStatus.
@@ -511,6 +565,11 @@ type BankingCommandResponse struct {
 // BankingCommandResponseKind defines model for BankingCommandResponse.Kind.
 type BankingCommandResponseKind string
 
+// BankingConfirmMatchRequest defines model for BankingConfirmMatchRequest.
+type BankingConfirmMatchRequest struct {
+	InvoiceId string `json:"invoice_id"`
+}
+
 // BankingCreateAccountRequest defines model for BankingCreateAccountRequest.
 type BankingCreateAccountRequest struct {
 	Currency BankingCreateAccountRequestCurrency `json:"currency"`
@@ -528,6 +587,22 @@ type BankingCreateAccountRequestProvider string
 type BankingFeedResponse struct {
 	NextCursor   *string              `json:"next_cursor"`
 	Transactions []BankingTransaction `json:"transactions"`
+}
+
+// BankingInvoiceCandidate defines model for BankingInvoiceCandidate.
+type BankingInvoiceCandidate struct {
+	Amount        BankingMoney       `json:"amount"`
+	Client        string             `json:"client"`
+	DueDate       openapi_types.Date `json:"due_date"`
+	InvoiceId     string             `json:"invoice_id"`
+	InvoiceNumber string             `json:"invoice_number"`
+	IssueDate     openapi_types.Date `json:"issue_date"`
+	Status        string             `json:"status"`
+}
+
+// BankingInvoiceCandidatesResponse defines model for BankingInvoiceCandidatesResponse.
+type BankingInvoiceCandidatesResponse struct {
+	Candidates []BankingInvoiceCandidate `json:"candidates"`
 }
 
 // BankingMoney defines model for BankingMoney.
@@ -625,13 +700,17 @@ type BankingReviewQueue struct {
 
 // BankingReviewTarget defines model for BankingReviewTarget.
 type BankingReviewTarget struct {
-	AccountCode   *string                 `json:"account_code,omitempty"`
-	Client        *string                 `json:"client,omitempty"`
-	Id            *string                 `json:"id,omitempty"`
-	InvoiceNumber *string                 `json:"invoice_number,omitempty"`
-	TimesApplied  *int                    `json:"times_applied"`
-	Type          BankingReviewTargetType `json:"type"`
+	AccountCode   *string                           `json:"account_code,omitempty"`
+	Client        *string                           `json:"client,omitempty"`
+	Id            *string                           `json:"id,omitempty"`
+	InvoiceNumber *string                           `json:"invoice_number,omitempty"`
+	InvoiceStatus *BankingReviewTargetInvoiceStatus `json:"invoice_status,omitempty"`
+	TimesApplied  *int                              `json:"times_applied"`
+	Type          BankingReviewTargetType           `json:"type"`
 }
+
+// BankingReviewTargetInvoiceStatus defines model for BankingReviewTarget.InvoiceStatus.
+type BankingReviewTargetInvoiceStatus string
 
 // BankingReviewTargetType defines model for BankingReviewTarget.Type.
 type BankingReviewTargetType string
@@ -1265,6 +1344,18 @@ type InvoicingCreateDraftInvoiceRequest struct {
 	ClientId string `json:"client_id"`
 }
 
+// InvoicingCreateRecurringFromInvoiceRequest defines model for InvoicingCreateRecurringFromInvoiceRequest.
+type InvoicingCreateRecurringFromInvoiceRequest struct {
+	AutoSend       bool                                              `json:"auto_send"`
+	Cadence        InvoicingCreateRecurringFromInvoiceRequestCadence `json:"cadence"`
+	DayOfMonth     int                                               `json:"day_of_month"`
+	MaxOccurrences *int                                              `json:"max_occurrences"`
+	NextRunDate    openapi_types.Date                                `json:"next_run_date"`
+}
+
+// InvoicingCreateRecurringFromInvoiceRequestCadence defines model for InvoicingCreateRecurringFromInvoiceRequest.Cadence.
+type InvoicingCreateRecurringFromInvoiceRequestCadence string
+
 // InvoicingFXRate defines model for InvoicingFXRate.
 type InvoicingFXRate struct {
 	From     InvoicingFXRateFrom `json:"from"`
@@ -1290,26 +1381,28 @@ type InvoicingGBPApprox struct {
 
 // InvoicingInvoice defines model for InvoicingInvoice.
 type InvoicingInvoice struct {
-	ClientId         string                       `json:"client_id"`
-	CreatedAt        time.Time                    `json:"created_at"`
-	Currency         InvoicingInvoiceCurrency     `json:"currency"`
-	DueDate          time.Time                    `json:"due_date"`
-	Id               string                       `json:"id"`
-	IssueDate        time.Time                    `json:"issue_date"`
-	Lines            []InvoicingInvoiceLine       `json:"lines"`
-	LockId           *string                      `json:"lock_id"`
-	Number           *string                      `json:"number"`
-	PdfAsset         *string                      `json:"pdf_asset"`
-	Reminders        *[]InvoicingReminder         `json:"reminders,omitempty"`
-	SentAt           *time.Time                   `json:"sent_at"`
-	SettledAmount    *InvoicingMoney              `json:"settled_amount"`
-	SettledDate      *time.Time                   `json:"settled_date"`
-	SettlementTxnRef *string                      `json:"settlement_txn_ref"`
-	Status           InvoicingInvoiceStatus       `json:"status"`
-	Totals           InvoicingInvoiceTotals       `json:"totals"`
-	UpdatedAt        time.Time                    `json:"updated_at"`
-	VatRegistered    bool                         `json:"vat_registered"`
-	VatTreatment     InvoicingInvoiceVatTreatment `json:"vat_treatment"`
+	ClientId            string                       `json:"client_id"`
+	CreatedAt           time.Time                    `json:"created_at"`
+	Currency            InvoicingInvoiceCurrency     `json:"currency"`
+	DueDate             time.Time                    `json:"due_date"`
+	Id                  string                       `json:"id"`
+	IssueDate           time.Time                    `json:"issue_date"`
+	Lines               []InvoicingInvoiceLine       `json:"lines"`
+	LockId              *string                      `json:"lock_id"`
+	Number              *string                      `json:"number"`
+	PdfAsset            *string                      `json:"pdf_asset"`
+	RecurringRunDate    *time.Time                   `json:"recurring_run_date"`
+	RecurringTemplateId *string                      `json:"recurring_template_id"`
+	Reminders           *[]InvoicingReminder         `json:"reminders,omitempty"`
+	SentAt              *time.Time                   `json:"sent_at"`
+	SettledAmount       *InvoicingMoney              `json:"settled_amount"`
+	SettledDate         *time.Time                   `json:"settled_date"`
+	SettlementTxnRef    *string                      `json:"settlement_txn_ref"`
+	Status              InvoicingInvoiceStatus       `json:"status"`
+	Totals              InvoicingInvoiceTotals       `json:"totals"`
+	UpdatedAt           time.Time                    `json:"updated_at"`
+	VatRegistered       bool                         `json:"vat_registered"`
+	VatTreatment        InvoicingInvoiceVatTreatment `json:"vat_treatment"`
 }
 
 // InvoicingInvoiceCurrency defines model for InvoicingInvoice.Currency.
@@ -1471,6 +1564,77 @@ type InvoicingMoneyAmount struct {
 
 // InvoicingMoneyAmountCurrency defines model for InvoicingMoneyAmount.Currency.
 type InvoicingMoneyAmountCurrency string
+
+// InvoicingRecurringTemplate defines model for InvoicingRecurringTemplate.
+type InvoicingRecurringTemplate struct {
+	AutoSend             bool                                   `json:"auto_send"`
+	Cadence              InvoicingRecurringTemplateCadence      `json:"cadence"`
+	CanceledAt           *time.Time                             `json:"canceled_at"`
+	ClientId             string                                 `json:"client_id"`
+	ClientName           string                                 `json:"client_name"`
+	CreatedAt            time.Time                              `json:"created_at"`
+	CreatedFromInvoiceId *string                                `json:"created_from_invoice_id"`
+	Currency             InvoicingRecurringTemplateCurrency     `json:"currency"`
+	DayOfMonth           int                                    `json:"day_of_month"`
+	Id                   string                                 `json:"id"`
+	Lines                []InvoicingRecurringTemplateLine       `json:"lines"`
+	MaxOccurrences       *int                                   `json:"max_occurrences"`
+	NextRunDate          openapi_types.Date                     `json:"next_run_date"`
+	OccurrencesCreated   int                                    `json:"occurrences_created"`
+	Status               InvoicingRecurringTemplateStatus       `json:"status"`
+	UpdatedAt            time.Time                              `json:"updated_at"`
+	VatTreatment         InvoicingRecurringTemplateVatTreatment `json:"vat_treatment"`
+}
+
+// InvoicingRecurringTemplateCadence defines model for InvoicingRecurringTemplate.Cadence.
+type InvoicingRecurringTemplateCadence string
+
+// InvoicingRecurringTemplateCurrency defines model for InvoicingRecurringTemplate.Currency.
+type InvoicingRecurringTemplateCurrency string
+
+// InvoicingRecurringTemplateStatus defines model for InvoicingRecurringTemplate.Status.
+type InvoicingRecurringTemplateStatus string
+
+// InvoicingRecurringTemplateVatTreatment defines model for InvoicingRecurringTemplate.VatTreatment.
+type InvoicingRecurringTemplateVatTreatment string
+
+// InvoicingRecurringTemplateLine defines model for InvoicingRecurringTemplateLine.
+type InvoicingRecurringTemplateLine struct {
+	Description string         `json:"description"`
+	Id          string         `json:"id"`
+	LineTotal   InvoicingMoney `json:"line_total"`
+	Position    int            `json:"position"`
+	Qty         string         `json:"qty"`
+	TemplateId  string         `json:"template_id"`
+	UnitPrice   InvoicingMoney `json:"unit_price"`
+}
+
+// InvoicingRecurringTemplateRequest defines model for InvoicingRecurringTemplateRequest.
+type InvoicingRecurringTemplateRequest struct {
+	AutoSend       bool                                          `json:"auto_send"`
+	Cadence        InvoicingRecurringTemplateRequestCadence      `json:"cadence"`
+	ClientId       string                                        `json:"client_id"`
+	Currency       InvoicingRecurringTemplateRequestCurrency     `json:"currency"`
+	DayOfMonth     int                                           `json:"day_of_month"`
+	Lines          []InvoicingInvoiceLineInput                   `json:"lines"`
+	MaxOccurrences *int                                          `json:"max_occurrences"`
+	NextRunDate    openapi_types.Date                            `json:"next_run_date"`
+	VatTreatment   InvoicingRecurringTemplateRequestVatTreatment `json:"vat_treatment"`
+}
+
+// InvoicingRecurringTemplateRequestCadence defines model for InvoicingRecurringTemplateRequest.Cadence.
+type InvoicingRecurringTemplateRequestCadence string
+
+// InvoicingRecurringTemplateRequestCurrency defines model for InvoicingRecurringTemplateRequest.Currency.
+type InvoicingRecurringTemplateRequestCurrency string
+
+// InvoicingRecurringTemplateRequestVatTreatment defines model for InvoicingRecurringTemplateRequest.VatTreatment.
+type InvoicingRecurringTemplateRequestVatTreatment string
+
+// InvoicingRecurringTemplatesResponse defines model for InvoicingRecurringTemplatesResponse.
+type InvoicingRecurringTemplatesResponse struct {
+	Templates []InvoicingRecurringTemplate `json:"templates"`
+}
 
 // InvoicingReminder defines model for InvoicingReminder.
 type InvoicingReminder struct {
@@ -1959,6 +2123,9 @@ type BankingCreatePayeeRuleJSONRequestBody = BankingPayeeRuleRequest
 // BankingUpdatePayeeRuleJSONRequestBody defines body for BankingUpdatePayeeRule for application/json ContentType.
 type BankingUpdatePayeeRuleJSONRequestBody = BankingPayeeRuleRequest
 
+// BankingConfirmTransactionJSONRequestBody defines body for BankingConfirmTransaction for application/json ContentType.
+type BankingConfirmTransactionJSONRequestBody = BankingConfirmMatchRequest
+
 // BankingExcludeTransactionJSONRequestBody defines body for BankingExcludeTransaction for application/json ContentType.
 type BankingExcludeTransactionJSONRequestBody = BankingReasonRequest
 
@@ -2009,6 +2176,12 @@ type InvoicingCreateDraftInvoiceJSONRequestBody = InvoicingCreateDraftInvoiceReq
 
 // InvoicingPatchInvoiceJSONRequestBody defines body for InvoicingPatchInvoice for application/json ContentType.
 type InvoicingPatchInvoiceJSONRequestBody = InvoicingInvoicePatch
+
+// InvoicingCreateRecurringTemplateFromInvoiceJSONRequestBody defines body for InvoicingCreateRecurringTemplateFromInvoice for application/json ContentType.
+type InvoicingCreateRecurringTemplateFromInvoiceJSONRequestBody = InvoicingCreateRecurringFromInvoiceRequest
+
+// InvoicingCreateRecurringTemplateJSONRequestBody defines body for InvoicingCreateRecurringTemplate for application/json ContentType.
+type InvoicingCreateRecurringTemplateJSONRequestBody = InvoicingRecurringTemplateRequest
 
 // LedgerCreateExpenseAccountJSONRequestBody defines body for LedgerCreateExpenseAccount for application/json ContentType.
 type LedgerCreateExpenseAccountJSONRequestBody = LedgerCreateExpenseAccountRequest
@@ -2831,8 +3004,10 @@ type ClientInterface interface {
 	// BankingGetReviewQueue request
 	BankingGetReviewQueue(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// BankingConfirmTransaction request
-	BankingConfirmTransaction(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// BankingConfirmTransactionWithBody request with any body
+	BankingConfirmTransactionWithBody(ctx context.Context, id int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	BankingConfirmTransaction(ctx context.Context, id int64, body BankingConfirmTransactionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// BankingExcludeTransactionWithBody request with any body
 	BankingExcludeTransactionWithBody(ctx context.Context, id int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2841,6 +3016,9 @@ type ClientInterface interface {
 
 	// BankingFileTransactionToDLA request
 	BankingFileTransactionToDLA(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// BankingListInvoiceCandidates request
+	BankingListInvoiceCandidates(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// BankingDeleteReceipt request
 	BankingDeleteReceipt(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -3002,6 +3180,11 @@ type ClientInterface interface {
 	// InvoicingGetInvoicePrintPayload request
 	InvoicingGetInvoicePrintPayload(ctx context.Context, id string, params *InvoicingGetInvoicePrintPayloadParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// InvoicingCreateRecurringTemplateFromInvoiceWithBody request with any body
+	InvoicingCreateRecurringTemplateFromInvoiceWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	InvoicingCreateRecurringTemplateFromInvoice(ctx context.Context, id string, body InvoicingCreateRecurringTemplateFromInvoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// InvoicingSendInvoiceReminder request
 	InvoicingSendInvoiceReminder(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -3010,6 +3193,17 @@ type ClientInterface interface {
 
 	// InvoicingSendInvoice request
 	InvoicingSendInvoice(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// InvoicingListRecurringTemplates request
+	InvoicingListRecurringTemplates(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// InvoicingCreateRecurringTemplateWithBody request with any body
+	InvoicingCreateRecurringTemplateWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	InvoicingCreateRecurringTemplate(ctx context.Context, body InvoicingCreateRecurringTemplateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// InvoicingCancelRecurringTemplate request
+	InvoicingCancelRecurringTemplate(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// JurisdictionGetDeadlines request
 	JurisdictionGetDeadlines(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -3268,8 +3462,20 @@ func (c *Client) BankingGetReviewQueue(ctx context.Context, reqEditors ...Reques
 	return c.Client.Do(req)
 }
 
-func (c *Client) BankingConfirmTransaction(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewBankingConfirmTransactionRequest(c.Server, id)
+func (c *Client) BankingConfirmTransactionWithBody(ctx context.Context, id int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBankingConfirmTransactionRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) BankingConfirmTransaction(ctx context.Context, id int64, body BankingConfirmTransactionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBankingConfirmTransactionRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3306,6 +3512,18 @@ func (c *Client) BankingExcludeTransaction(ctx context.Context, id int64, body B
 
 func (c *Client) BankingFileTransactionToDLA(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewBankingFileTransactionToDLARequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) BankingListInvoiceCandidates(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBankingListInvoiceCandidatesRequest(c.Server, id)
 	if err != nil {
 		return nil, err
 	}
@@ -4012,6 +4230,30 @@ func (c *Client) InvoicingGetInvoicePrintPayload(ctx context.Context, id string,
 	return c.Client.Do(req)
 }
 
+func (c *Client) InvoicingCreateRecurringTemplateFromInvoiceWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewInvoicingCreateRecurringTemplateFromInvoiceRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) InvoicingCreateRecurringTemplateFromInvoice(ctx context.Context, id string, body InvoicingCreateRecurringTemplateFromInvoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewInvoicingCreateRecurringTemplateFromInvoiceRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) InvoicingSendInvoiceReminder(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewInvoicingSendInvoiceReminderRequest(c.Server, id)
 	if err != nil {
@@ -4038,6 +4280,54 @@ func (c *Client) InvoicingRevertInvoice(ctx context.Context, id string, reqEdito
 
 func (c *Client) InvoicingSendInvoice(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewInvoicingSendInvoiceRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) InvoicingListRecurringTemplates(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewInvoicingListRecurringTemplatesRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) InvoicingCreateRecurringTemplateWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewInvoicingCreateRecurringTemplateRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) InvoicingCreateRecurringTemplate(ctx context.Context, body InvoicingCreateRecurringTemplateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewInvoicingCreateRecurringTemplateRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) InvoicingCancelRecurringTemplate(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewInvoicingCancelRecurringTemplateRequest(c.Server, id)
 	if err != nil {
 		return nil, err
 	}
@@ -4868,8 +5158,19 @@ func NewBankingGetReviewQueueRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
-// NewBankingConfirmTransactionRequest generates requests for BankingConfirmTransaction
-func NewBankingConfirmTransactionRequest(server string, id int64) (*http.Request, error) {
+// NewBankingConfirmTransactionRequest calls the generic BankingConfirmTransaction builder with application/json body
+func NewBankingConfirmTransactionRequest(server string, id int64, body BankingConfirmTransactionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewBankingConfirmTransactionRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewBankingConfirmTransactionRequestWithBody generates requests for BankingConfirmTransaction with any type of body
+func NewBankingConfirmTransactionRequestWithBody(server string, id int64, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -4894,10 +5195,12 @@ func NewBankingConfirmTransactionRequest(server string, id int64) (*http.Request
 		return nil, err
 	}
 
-	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	req, err := http.NewRequest("POST", queryURL.String(), body)
 	if err != nil {
 		return nil, err
 	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -4976,6 +5279,40 @@ func NewBankingFileTransactionToDLARequest(server string, id int64) (*http.Reque
 	}
 
 	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewBankingListInvoiceCandidatesRequest generates requests for BankingListInvoiceCandidates
+func NewBankingListInvoiceCandidatesRequest(server string, id int64) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/banking/transactions/%s/invoice-candidates", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -6679,6 +7016,53 @@ func NewInvoicingGetInvoicePrintPayloadRequest(server string, id string, params 
 	return req, nil
 }
 
+// NewInvoicingCreateRecurringTemplateFromInvoiceRequest calls the generic InvoicingCreateRecurringTemplateFromInvoice builder with application/json body
+func NewInvoicingCreateRecurringTemplateFromInvoiceRequest(server string, id string, body InvoicingCreateRecurringTemplateFromInvoiceJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewInvoicingCreateRecurringTemplateFromInvoiceRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewInvoicingCreateRecurringTemplateFromInvoiceRequestWithBody generates requests for InvoicingCreateRecurringTemplateFromInvoice with any type of body
+func NewInvoicingCreateRecurringTemplateFromInvoiceRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/invoicing/invoices/%s/recurring-template", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewInvoicingSendInvoiceReminderRequest generates requests for InvoicingSendInvoiceReminder
 func NewInvoicingSendInvoiceReminderRequest(server string, id string) (*http.Request, error) {
 	var err error
@@ -6764,6 +7148,107 @@ func NewInvoicingSendInvoiceRequest(server string, id string) (*http.Request, er
 	}
 
 	operationPath := fmt.Sprintf("/api/invoicing/invoices/%s/send", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewInvoicingListRecurringTemplatesRequest generates requests for InvoicingListRecurringTemplates
+func NewInvoicingListRecurringTemplatesRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/invoicing/recurring-templates")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewInvoicingCreateRecurringTemplateRequest calls the generic InvoicingCreateRecurringTemplate builder with application/json body
+func NewInvoicingCreateRecurringTemplateRequest(server string, body InvoicingCreateRecurringTemplateJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewInvoicingCreateRecurringTemplateRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewInvoicingCreateRecurringTemplateRequestWithBody generates requests for InvoicingCreateRecurringTemplate with any type of body
+func NewInvoicingCreateRecurringTemplateRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/invoicing/recurring-templates")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewInvoicingCancelRecurringTemplateRequest generates requests for InvoicingCancelRecurringTemplate
+func NewInvoicingCancelRecurringTemplateRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/invoicing/recurring-templates/%s/cancel", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -7606,8 +8091,10 @@ type ClientWithResponsesInterface interface {
 	// BankingGetReviewQueueWithResponse request
 	BankingGetReviewQueueWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*BankingGetReviewQueueResponse, error)
 
-	// BankingConfirmTransactionWithResponse request
-	BankingConfirmTransactionWithResponse(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*BankingConfirmTransactionResponse, error)
+	// BankingConfirmTransactionWithBodyWithResponse request with any body
+	BankingConfirmTransactionWithBodyWithResponse(ctx context.Context, id int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*BankingConfirmTransactionResponse, error)
+
+	BankingConfirmTransactionWithResponse(ctx context.Context, id int64, body BankingConfirmTransactionJSONRequestBody, reqEditors ...RequestEditorFn) (*BankingConfirmTransactionResponse, error)
 
 	// BankingExcludeTransactionWithBodyWithResponse request with any body
 	BankingExcludeTransactionWithBodyWithResponse(ctx context.Context, id int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*BankingExcludeTransactionResponse, error)
@@ -7616,6 +8103,9 @@ type ClientWithResponsesInterface interface {
 
 	// BankingFileTransactionToDLAWithResponse request
 	BankingFileTransactionToDLAWithResponse(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*BankingFileTransactionToDLAResponse, error)
+
+	// BankingListInvoiceCandidatesWithResponse request
+	BankingListInvoiceCandidatesWithResponse(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*BankingListInvoiceCandidatesResponse, error)
 
 	// BankingDeleteReceiptWithResponse request
 	BankingDeleteReceiptWithResponse(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*BankingDeleteReceiptResponse, error)
@@ -7777,6 +8267,11 @@ type ClientWithResponsesInterface interface {
 	// InvoicingGetInvoicePrintPayloadWithResponse request
 	InvoicingGetInvoicePrintPayloadWithResponse(ctx context.Context, id string, params *InvoicingGetInvoicePrintPayloadParams, reqEditors ...RequestEditorFn) (*InvoicingGetInvoicePrintPayloadResponse, error)
 
+	// InvoicingCreateRecurringTemplateFromInvoiceWithBodyWithResponse request with any body
+	InvoicingCreateRecurringTemplateFromInvoiceWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*InvoicingCreateRecurringTemplateFromInvoiceResponse, error)
+
+	InvoicingCreateRecurringTemplateFromInvoiceWithResponse(ctx context.Context, id string, body InvoicingCreateRecurringTemplateFromInvoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*InvoicingCreateRecurringTemplateFromInvoiceResponse, error)
+
 	// InvoicingSendInvoiceReminderWithResponse request
 	InvoicingSendInvoiceReminderWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*InvoicingSendInvoiceReminderResponse, error)
 
@@ -7785,6 +8280,17 @@ type ClientWithResponsesInterface interface {
 
 	// InvoicingSendInvoiceWithResponse request
 	InvoicingSendInvoiceWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*InvoicingSendInvoiceResponse, error)
+
+	// InvoicingListRecurringTemplatesWithResponse request
+	InvoicingListRecurringTemplatesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*InvoicingListRecurringTemplatesResponse, error)
+
+	// InvoicingCreateRecurringTemplateWithBodyWithResponse request with any body
+	InvoicingCreateRecurringTemplateWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*InvoicingCreateRecurringTemplateResponse, error)
+
+	InvoicingCreateRecurringTemplateWithResponse(ctx context.Context, body InvoicingCreateRecurringTemplateJSONRequestBody, reqEditors ...RequestEditorFn) (*InvoicingCreateRecurringTemplateResponse, error)
+
+	// InvoicingCancelRecurringTemplateWithResponse request
+	InvoicingCancelRecurringTemplateWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*InvoicingCancelRecurringTemplateResponse, error)
 
 	// JurisdictionGetDeadlinesWithResponse request
 	JurisdictionGetDeadlinesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*JurisdictionGetDeadlinesResponse, error)
@@ -8260,6 +8766,32 @@ func (r BankingFileTransactionToDLAResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r BankingFileTransactionToDLAResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type BankingListInvoiceCandidatesResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON200                   *BankingInvoiceCandidatesResponse
+	ApplicationproblemJSON401 *Problem
+	ApplicationproblemJSON404 *Problem
+	ApplicationproblemJSON409 *Problem
+	ApplicationproblemJSON422 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r BankingListInvoiceCandidatesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r BankingListInvoiceCandidatesResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -9351,6 +9883,33 @@ func (r InvoicingGetInvoicePrintPayloadResponse) StatusCode() int {
 	return 0
 }
 
+type InvoicingCreateRecurringTemplateFromInvoiceResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON201                   *InvoicingRecurringTemplate
+	ApplicationproblemJSON400 *Problem
+	ApplicationproblemJSON401 *Problem
+	ApplicationproblemJSON404 *Problem
+	ApplicationproblemJSON413 *Problem
+	ApplicationproblemJSON422 *ValidationProblem
+}
+
+// Status returns HTTPResponse.Status
+func (r InvoicingCreateRecurringTemplateFromInvoiceResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r InvoicingCreateRecurringTemplateFromInvoiceResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type InvoicingSendInvoiceReminderResponse struct {
 	Body                      []byte
 	HTTPResponse              *http.Response
@@ -9421,6 +9980,81 @@ func (r InvoicingSendInvoiceResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r InvoicingSendInvoiceResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type InvoicingListRecurringTemplatesResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON200                   *InvoicingRecurringTemplatesResponse
+	ApplicationproblemJSON401 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r InvoicingListRecurringTemplatesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r InvoicingListRecurringTemplatesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type InvoicingCreateRecurringTemplateResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON201                   *InvoicingRecurringTemplate
+	ApplicationproblemJSON400 *Problem
+	ApplicationproblemJSON401 *Problem
+	ApplicationproblemJSON404 *Problem
+	ApplicationproblemJSON413 *Problem
+	ApplicationproblemJSON422 *ValidationProblem
+}
+
+// Status returns HTTPResponse.Status
+func (r InvoicingCreateRecurringTemplateResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r InvoicingCreateRecurringTemplateResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type InvoicingCancelRecurringTemplateResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON200                   *InvoicingRecurringTemplate
+	ApplicationproblemJSON401 *Problem
+	ApplicationproblemJSON404 *Problem
+	ApplicationproblemJSON409 *ValidationProblem
+}
+
+// Status returns HTTPResponse.Status
+func (r InvoicingCancelRecurringTemplateResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r InvoicingCancelRecurringTemplateResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -9965,9 +10599,17 @@ func (c *ClientWithResponses) BankingGetReviewQueueWithResponse(ctx context.Cont
 	return ParseBankingGetReviewQueueResponse(rsp)
 }
 
-// BankingConfirmTransactionWithResponse request returning *BankingConfirmTransactionResponse
-func (c *ClientWithResponses) BankingConfirmTransactionWithResponse(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*BankingConfirmTransactionResponse, error) {
-	rsp, err := c.BankingConfirmTransaction(ctx, id, reqEditors...)
+// BankingConfirmTransactionWithBodyWithResponse request with arbitrary body returning *BankingConfirmTransactionResponse
+func (c *ClientWithResponses) BankingConfirmTransactionWithBodyWithResponse(ctx context.Context, id int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*BankingConfirmTransactionResponse, error) {
+	rsp, err := c.BankingConfirmTransactionWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseBankingConfirmTransactionResponse(rsp)
+}
+
+func (c *ClientWithResponses) BankingConfirmTransactionWithResponse(ctx context.Context, id int64, body BankingConfirmTransactionJSONRequestBody, reqEditors ...RequestEditorFn) (*BankingConfirmTransactionResponse, error) {
+	rsp, err := c.BankingConfirmTransaction(ctx, id, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -9998,6 +10640,15 @@ func (c *ClientWithResponses) BankingFileTransactionToDLAWithResponse(ctx contex
 		return nil, err
 	}
 	return ParseBankingFileTransactionToDLAResponse(rsp)
+}
+
+// BankingListInvoiceCandidatesWithResponse request returning *BankingListInvoiceCandidatesResponse
+func (c *ClientWithResponses) BankingListInvoiceCandidatesWithResponse(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*BankingListInvoiceCandidatesResponse, error) {
+	rsp, err := c.BankingListInvoiceCandidates(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseBankingListInvoiceCandidatesResponse(rsp)
 }
 
 // BankingDeleteReceiptWithResponse request returning *BankingDeleteReceiptResponse
@@ -10508,6 +11159,23 @@ func (c *ClientWithResponses) InvoicingGetInvoicePrintPayloadWithResponse(ctx co
 	return ParseInvoicingGetInvoicePrintPayloadResponse(rsp)
 }
 
+// InvoicingCreateRecurringTemplateFromInvoiceWithBodyWithResponse request with arbitrary body returning *InvoicingCreateRecurringTemplateFromInvoiceResponse
+func (c *ClientWithResponses) InvoicingCreateRecurringTemplateFromInvoiceWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*InvoicingCreateRecurringTemplateFromInvoiceResponse, error) {
+	rsp, err := c.InvoicingCreateRecurringTemplateFromInvoiceWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseInvoicingCreateRecurringTemplateFromInvoiceResponse(rsp)
+}
+
+func (c *ClientWithResponses) InvoicingCreateRecurringTemplateFromInvoiceWithResponse(ctx context.Context, id string, body InvoicingCreateRecurringTemplateFromInvoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*InvoicingCreateRecurringTemplateFromInvoiceResponse, error) {
+	rsp, err := c.InvoicingCreateRecurringTemplateFromInvoice(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseInvoicingCreateRecurringTemplateFromInvoiceResponse(rsp)
+}
+
 // InvoicingSendInvoiceReminderWithResponse request returning *InvoicingSendInvoiceReminderResponse
 func (c *ClientWithResponses) InvoicingSendInvoiceReminderWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*InvoicingSendInvoiceReminderResponse, error) {
 	rsp, err := c.InvoicingSendInvoiceReminder(ctx, id, reqEditors...)
@@ -10533,6 +11201,41 @@ func (c *ClientWithResponses) InvoicingSendInvoiceWithResponse(ctx context.Conte
 		return nil, err
 	}
 	return ParseInvoicingSendInvoiceResponse(rsp)
+}
+
+// InvoicingListRecurringTemplatesWithResponse request returning *InvoicingListRecurringTemplatesResponse
+func (c *ClientWithResponses) InvoicingListRecurringTemplatesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*InvoicingListRecurringTemplatesResponse, error) {
+	rsp, err := c.InvoicingListRecurringTemplates(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseInvoicingListRecurringTemplatesResponse(rsp)
+}
+
+// InvoicingCreateRecurringTemplateWithBodyWithResponse request with arbitrary body returning *InvoicingCreateRecurringTemplateResponse
+func (c *ClientWithResponses) InvoicingCreateRecurringTemplateWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*InvoicingCreateRecurringTemplateResponse, error) {
+	rsp, err := c.InvoicingCreateRecurringTemplateWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseInvoicingCreateRecurringTemplateResponse(rsp)
+}
+
+func (c *ClientWithResponses) InvoicingCreateRecurringTemplateWithResponse(ctx context.Context, body InvoicingCreateRecurringTemplateJSONRequestBody, reqEditors ...RequestEditorFn) (*InvoicingCreateRecurringTemplateResponse, error) {
+	rsp, err := c.InvoicingCreateRecurringTemplate(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseInvoicingCreateRecurringTemplateResponse(rsp)
+}
+
+// InvoicingCancelRecurringTemplateWithResponse request returning *InvoicingCancelRecurringTemplateResponse
+func (c *ClientWithResponses) InvoicingCancelRecurringTemplateWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*InvoicingCancelRecurringTemplateResponse, error) {
+	rsp, err := c.InvoicingCancelRecurringTemplate(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseInvoicingCancelRecurringTemplateResponse(rsp)
 }
 
 // JurisdictionGetDeadlinesWithResponse request returning *JurisdictionGetDeadlinesResponse
@@ -11495,6 +12198,60 @@ func ParseBankingFileTransactionToDLAResponse(rsp *http.Response) (*BankingFileT
 			return nil, err
 		}
 		response.ApplicationproblemJSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseBankingListInvoiceCandidatesResponse parses an HTTP response from a BankingListInvoiceCandidatesWithResponse call
+func ParseBankingListInvoiceCandidatesResponse(rsp *http.Response) (*BankingListInvoiceCandidatesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &BankingListInvoiceCandidatesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest BankingInvoiceCandidatesResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest Problem
@@ -13471,6 +14228,67 @@ func ParseInvoicingGetInvoicePrintPayloadResponse(rsp *http.Response) (*Invoicin
 	return response, nil
 }
 
+// ParseInvoicingCreateRecurringTemplateFromInvoiceResponse parses an HTTP response from a InvoicingCreateRecurringTemplateFromInvoiceWithResponse call
+func ParseInvoicingCreateRecurringTemplateFromInvoiceResponse(rsp *http.Response) (*InvoicingCreateRecurringTemplateFromInvoiceResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &InvoicingCreateRecurringTemplateFromInvoiceResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest InvoicingRecurringTemplate
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ValidationProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseInvoicingSendInvoiceReminderResponse parses an HTTP response from a InvoicingSendInvoiceReminderWithResponse call
 func ParseInvoicingSendInvoiceReminderResponse(rsp *http.Response) (*InvoicingSendInvoiceReminderResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -13613,6 +14431,147 @@ func ParseInvoicingSendInvoiceResponse(rsp *http.Response) (*InvoicingSendInvoic
 			return nil, err
 		}
 		response.ApplicationproblemJSON422 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseInvoicingListRecurringTemplatesResponse parses an HTTP response from a InvoicingListRecurringTemplatesWithResponse call
+func ParseInvoicingListRecurringTemplatesResponse(rsp *http.Response) (*InvoicingListRecurringTemplatesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &InvoicingListRecurringTemplatesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest InvoicingRecurringTemplatesResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseInvoicingCreateRecurringTemplateResponse parses an HTTP response from a InvoicingCreateRecurringTemplateWithResponse call
+func ParseInvoicingCreateRecurringTemplateResponse(rsp *http.Response) (*InvoicingCreateRecurringTemplateResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &InvoicingCreateRecurringTemplateResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest InvoicingRecurringTemplate
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ValidationProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseInvoicingCancelRecurringTemplateResponse parses an HTTP response from a InvoicingCancelRecurringTemplateWithResponse call
+func ParseInvoicingCancelRecurringTemplateResponse(rsp *http.Response) (*InvoicingCancelRecurringTemplateResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &InvoicingCancelRecurringTemplateResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest InvoicingRecurringTemplate
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ValidationProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
 
 	}
 

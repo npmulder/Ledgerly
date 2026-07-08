@@ -94,6 +94,8 @@ type Invoice struct {
 	SettledDate         *time.Time        `json:"settled_date"`
 	SettledAmount       *Money            `json:"settled_amount"`
 	PDFAsset            *string           `json:"pdf_asset"`
+	RecurringTemplateID *string           `json:"recurring_template_id"`
+	RecurringRunDate    *time.Time        `json:"recurring_run_date"`
 	Lines               []InvoiceLine     `json:"lines"`
 	Reminders           []InvoiceReminder `json:"reminders,omitempty"`
 	Totals              InvoiceTotals     `json:"totals"`

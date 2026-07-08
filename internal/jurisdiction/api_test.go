@@ -225,8 +225,8 @@ func TestIsleOfManAccessorsReturnHandoffValues2025_26(t *testing.T) {
 			name: "advisor rules",
 			check: func(t *testing.T) {
 				got := AdvisorRules()
-				if len(got) != 6 {
-					t.Fatalf("AdvisorRules length = %d, want 6", len(got))
+				if len(got) != 7 {
+					t.Fatalf("AdvisorRules length = %d, want 7", len(got))
 				}
 				want := map[string]struct {
 					severity     string
@@ -243,6 +243,14 @@ func TestIsleOfManAccessorsReturnHandoffValues2025_26(t *testing.T) {
 						textTemplate: "Invoice {{ invoice_number }} is {{ days_overdue }} days overdue. Send a reminder to {{ client_name }}.",
 						ctaLabel:     "Send reminder",
 						ctaAction:    "invoicing.sendReminder",
+					},
+					"recurring_invoice_draft_waiting": {
+						severity:     "teal",
+						surfaces:     []string{"dashboard", "invoices"},
+						factQuery:    []string{"recurring_draft_client_name", "recurring_draft_count", "recurring_draft_invoice_id", "recurring_draft_run_date"},
+						textTemplate: "Recurring invoice draft for {{ recurring_draft_client_name }} is ready for {{ recurring_draft_run_date }}.",
+						ctaLabel:     "Open draft",
+						ctaAction:    "navigate:/invoices/{{ recurring_draft_invoice_id }}",
 					},
 					"dla_overdrawn_bik": {
 						severity:     "amber",
