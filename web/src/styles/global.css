@@ -1869,6 +1869,7 @@
 
 .reports-screen,
 .reports-layout,
+.reports-main,
 .reports-rail {
   display: grid;
   align-content: start;
@@ -1954,6 +1955,10 @@
   align-items: start;
 }
 
+.reports-main {
+  gap: var(--layout-grid-gap);
+}
+
 .reports-card-title {
   display: flex;
   align-items: center;
@@ -2009,11 +2014,48 @@
   max-width: 520px;
 }
 
+.reports-balance-control {
+  display: grid;
+  grid-template-columns: minmax(150px, 220px) auto;
+  gap: 10px;
+  align-items: end;
+  margin-bottom: 14px;
+}
+
 .reports-line-list,
 .reports-vat-lines,
-.reports-calendar-list {
+.reports-calendar-list,
+.reports-balance-sections {
   display: grid;
   min-width: 0;
+}
+
+.reports-balance-sections {
+  gap: 12px;
+}
+
+.reports-balance-section {
+  display: grid;
+  min-width: 0;
+}
+
+.reports-section-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text);
+  font-size: var(--type-body-size);
+  font-weight: 800;
+  line-height: var(--type-body-line-height);
+}
+
+.reports-section-heading > span:first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .reports-line {
@@ -2061,6 +2103,29 @@
 
 .reports-money--positive {
   color: var(--color-success);
+}
+
+.reports-balance-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.reports-balance-badge--balanced {
+  background: var(--color-success-tint);
+  color: var(--color-success);
+}
+
+.reports-balance-badge--unbalanced {
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
 }
 
 .reports-card-note {
@@ -2307,7 +2372,10 @@
 
 .director-row {
   display: grid;
-  grid-template-columns: minmax(180px, 1.2fr) minmax(150px, 0.8fr) minmax(86px, auto) minmax(92px, auto);
+  grid-template-columns: minmax(180px, 1.2fr) minmax(150px, 0.8fr) minmax(
+      86px,
+      auto
+    ) minmax(92px, auto);
   gap: 10px;
   align-items: end;
   padding: 12px;
@@ -3770,7 +3838,8 @@ article.ui-stat-card.dashboard-stat-card--unavailable {
   }
 
   .reports-layout,
-  .reports-custom-range {
+  .reports-custom-range,
+  .reports-balance-control {
     grid-template-columns: 1fr;
   }
 

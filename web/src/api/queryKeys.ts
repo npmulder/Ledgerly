@@ -116,6 +116,11 @@ export const queryKeys = {
     health: (): ApiQueryKey => ["platform", "healthz", {}],
   },
   reports: {
+    balanceSheet: (asOf: string): ApiQueryKey => [
+      "reports",
+      "balanceSheet",
+      { asOf },
+    ],
     calendar: (): ApiQueryKey => ["reports", "calendar", {}],
     pl: (from: string, to: string): ApiQueryKey => [
       "reports",

@@ -12,6 +12,11 @@ test("reports period switch refetches and seeded FX/CIT lines render", async ({
   await expect(page.getByText("Realised FX gains on settlement")).toBeVisible();
   await expect(page.getByText("IoM income tax at 0%")).toBeVisible();
   await expect(page.getByLabel("P&L lines").getByText("£0.00")).toBeVisible();
+  await expect(page.getByText("Balance sheet · 30 Jun 2026")).toBeVisible();
+  await expect(
+    page.getByLabel("Balance sheet sections").getByText("Cash GBP"),
+  ).toBeVisible();
+  await expect(page.getByText("Balanced")).toBeVisible();
   expect(plRequests).toContain("/api/reports/pl?from=2026-04-01&to=2026-06-30");
 
   const refetch = page.waitForRequest((request) => {
@@ -95,6 +100,13 @@ async function mockReportsApi(
       });
       return;
     }
+    if (path === "/api/reports/balance-sheet") {
+      await fulfillJson(route, {
+        ...balanceSheetFixture(),
+        as_of: url.searchParams.get("asOf"),
+      });
+      return;
+    }
     if (path === "/api/reports/vat") {
       await fulfillJson(route, overrides.vat ?? vatFixture());
       return;
@@ -110,6 +122,51 @@ async function mockReportsApi(
       404,
     );
   });
+}
+
+function balanceSheetFixture() {
+  return {
+    as_of: "2026-06-30",
+    assets: {
+      label: "Assets",
+      lines: [
+        {
+          account_code: "1000-cash-gbp",
+          account_name: "Cash GBP",
+          amount: money(1_588_350),
+        },
+      ],
+      total: money(1_588_350),
+    },
+    balanced: true,
+    equity: {
+      label: "Equity",
+      lines: [
+        {
+          account_code: "current-year-profit",
+          account_name: "Current-year profit",
+          amount: money(1_592_470),
+        },
+      ],
+      total: money(1_592_470),
+    },
+    financial_year: "2026-27",
+    liabilities: {
+      label: "Liabilities",
+      lines: [
+        {
+          account_code: "2200-vat-control",
+          account_name: "VAT control",
+          amount: money(-4_120),
+        },
+      ],
+      total: money(-4_120),
+    },
+    total_assets: money(1_588_350),
+    total_equity: money(1_592_470),
+    total_liabilities: money(-4_120),
+    total_liabilities_and_equity: money(1_588_350),
+  };
 }
 
 function plFixture() {
@@ -252,7 +309,9 @@ function identityProfile(overrides: Record<string, unknown> = {}) {
       region: "",
     },
     shareholders: [{ class: "ordinary £1", name: "N. Meyer", shares: 100 }],
-    directors: [{ appointed_date: "2020-07-14", is_chair: true, name: "N. Meyer" }],
+    directors: [
+      { appointed_date: "2020-07-14", is_chair: true, name: "N. Meyer" },
+    ],
     trading_name: "NPM Limited",
     vat_number: null,
     year_end: { day: 31, month: 3 },

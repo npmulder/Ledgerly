@@ -1,6 +1,8 @@
 import { apiClient } from "@/api/client";
 import type { components } from "@/api/generated/schema";
 
+export type ReportsBalanceSheet =
+  components["schemas"]["ReportsBalanceSheetResponse"];
 export type ReportsFiling = components["schemas"]["ReportsFiling"];
 export type ReportsFilingCalendar =
   components["schemas"]["ReportsFilingCalendarResponse"];
@@ -20,6 +22,12 @@ export type ReportsPLPrintPayload = {
 export function getReportsPL(from: string, to: string) {
   return apiClient.get("/api/reports/pl", {
     query: { from, to },
+  });
+}
+
+export function getReportsBalanceSheet(asOf: string) {
+  return apiClient.get("/api/reports/balance-sheet", {
+    query: { asOf },
   });
 }
 

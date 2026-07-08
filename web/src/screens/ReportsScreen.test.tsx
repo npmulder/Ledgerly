@@ -11,6 +11,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type {
+  ReportsBalanceSheet,
   ReportsFiling,
   ReportsFilingCalendar,
   ReportsPL,
@@ -25,6 +26,37 @@ afterEach(() => {
 });
 
 describe("ReportsScreen", () => {
+  it("renders balance sheet sections and refetches the selected as-at date", async () => {
+    const user = userEvent.setup();
+    const fetchImpl = vi.fn(reportsFetchHandler());
+    vi.stubGlobal("fetch", fetchImpl);
+    const reportYear = currentReportYear();
+
+    renderReportsScreen();
+
+    const balanceSheet = await screen.findByLabelText("Balance sheet sections");
+    expect(within(balanceSheet).getByText("Cash GBP")).toBeInTheDocument();
+    expect(within(balanceSheet).getByText("VAT control")).toBeInTheDocument();
+    expect(
+      within(balanceSheet).getByText("Current-year profit"),
+    ).toBeInTheDocument();
+    expect(within(balanceSheet).getByText("Assets total")).toBeInTheDocument();
+    expect(screen.getByText("Balanced")).toBeInTheDocument();
+
+    const dateForm = screen.getByRole("form", { name: "Balance sheet date" });
+    fireEvent.change(within(dateForm).getByLabelText("As at"), {
+      target: { value: `${reportYear}-03-31` },
+    });
+    await user.click(within(dateForm).getByRole("button", { name: "Apply" }));
+
+    await waitFor(() => {
+      expect(fetchImpl).toHaveBeenCalledWith(
+        `/api/reports/balance-sheet?asOf=${reportYear}-03-31`,
+        expect.objectContaining({ method: "GET" }),
+      );
+    });
+  });
+
   it("renders P&L fixture grouping, FX gains, CIT, and net total lines", async () => {
     vi.stubGlobal("fetch", reportsFetch());
 
@@ -275,7 +307,8 @@ describe("ReportsScreen", () => {
     fetchImpl.mockClear();
 
     await user.clear(screen.getByLabelText("From"));
-    await user.click(screen.getByRole("button", { name: "Apply" }));
+    const rangeForm = screen.getByRole("form", { name: "Custom report range" });
+    await user.click(within(rangeForm).getByRole("button", { name: "Apply" }));
 
     expect(fetchImpl).not.toHaveBeenCalled();
     expect(
@@ -310,7 +343,8 @@ describe("ReportsScreen", () => {
     fireEvent.change(screen.getByLabelText("To"), {
       target: { value: `${reportYear}-05-31` },
     });
-    await user.click(screen.getByRole("button", { name: "Apply" }));
+    const rangeForm = screen.getByRole("form", { name: "Custom report range" });
+    await user.click(within(rangeForm).getByRole("button", { name: "Apply" }));
 
     expect(
       await screen.findByText(`Profit & loss · May-May ${reportYear}`),
@@ -348,6 +382,7 @@ function reportsFetch(overrides: Partial<ReportsFixtures> = {}) {
 }
 
 type ReportsFixtures = {
+  balanceSheet: ReportsBalanceSheet;
   calendar: ReportsFilingCalendar;
   pl: ReportsPL;
   vat: ReportsVAT;
@@ -355,6 +390,7 @@ type ReportsFixtures = {
 
 function reportsFetchHandler(overrides: Partial<ReportsFixtures> = {}) {
   const fixtures = {
+    balanceSheet: balanceSheetFixture(),
     calendar: calendarFixture(),
     pl: plFixture(),
     vat: vatFixture(),
@@ -370,6 +406,12 @@ function reportsFetchHandler(overrides: Partial<ReportsFixtures> = {}) {
           from: url.searchParams.get("from") ?? fixtures.pl.period.from,
           to: url.searchParams.get("to") ?? fixtures.pl.period.to,
         },
+      });
+    }
+    if (url.pathname === "/api/reports/balance-sheet") {
+      return jsonResponse({
+        ...fixtures.balanceSheet,
+        as_of: url.searchParams.get("asOf") ?? fixtures.balanceSheet.as_of,
       });
     }
     if (url.pathname === "/api/reports/vat") {
@@ -395,6 +437,51 @@ function reportsFetchHandler(overrides: Partial<ReportsFixtures> = {}) {
       { status: 404, title: "Not Found", type: "about:blank" },
       404,
     );
+  };
+}
+
+function balanceSheetFixture(): ReportsBalanceSheet {
+  return {
+    as_of: "2026-06-30",
+    assets: {
+      label: "Assets",
+      lines: [
+        {
+          account_code: "1000-cash-gbp",
+          account_name: "Cash GBP",
+          amount: money(1_588_350),
+        },
+      ],
+      total: money(1_588_350),
+    },
+    balanced: true,
+    equity: {
+      label: "Equity",
+      lines: [
+        {
+          account_code: "current-year-profit",
+          account_name: "Current-year profit",
+          amount: money(1_592_470),
+        },
+      ],
+      total: money(1_592_470),
+    },
+    financial_year: "2026-27",
+    liabilities: {
+      label: "Liabilities",
+      lines: [
+        {
+          account_code: "2200-vat-control",
+          account_name: "VAT control",
+          amount: money(-4_120),
+        },
+      ],
+      total: money(-4_120),
+    },
+    total_assets: money(1_588_350),
+    total_equity: money(1_592_470),
+    total_liabilities: money(-4_120),
+    total_liabilities_and_equity: money(1_588_350),
   };
 }
 

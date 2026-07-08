@@ -97,6 +97,29 @@ func TestHTTPReportsEndpointsReturnDerivedJSON(t *testing.T) {
 		t.Fatalf("decode profit-ytd response: %v; body=%s", err, profitResult.Body.String())
 	}
 	assertMoneyResponse(t, profit.Profit, 1_592_470)
+
+	balanceSheetResult := performReportsRequest(router, http.MethodGet, "/api/reports/balance-sheet?asOf=2026-06-30", true)
+	if balanceSheetResult.Code != http.StatusOK {
+		t.Fatalf("balance sheet status = %d, want %d; body=%s", balanceSheetResult.Code, http.StatusOK, balanceSheetResult.Body.String())
+	}
+	assertReportsAmountsAreJSONIntegers(t, balanceSheetResult.Body.Bytes())
+	var balanceSheet balanceSheetResponse
+	if err := json.Unmarshal(balanceSheetResult.Body.Bytes(), &balanceSheet); err != nil {
+		t.Fatalf("decode balance sheet response: %v; body=%s", err, balanceSheetResult.Body.String())
+	}
+	if balanceSheet.AsOf != "2026-06-30" || balanceSheet.FinancialYear != "2026-27" {
+		t.Fatalf("balance sheet date/year = %s/%s, want 2026-06-30/2026-27", balanceSheet.AsOf, balanceSheet.FinancialYear)
+	}
+	if !balanceSheet.Balanced {
+		t.Fatalf("balance sheet balanced = false; body=%s", balanceSheetResult.Body.String())
+	}
+	assertMoneyResponse(t, balanceSheet.TotalAssets, 1_588_350)
+	assertMoneyResponse(t, balanceSheet.TotalLiabilities, -4_120)
+	assertMoneyResponse(t, balanceSheet.TotalEquity, 1_592_470)
+	assertMoneyResponse(t, balanceSheet.TotalLiabilitiesAndEquity, 1_588_350)
+	assertBalanceSheetResponseLine(t, balanceSheet.Assets.Lines, "1000-cash-gbp", "Cash GBP", 1_588_350)
+	assertBalanceSheetResponseLine(t, balanceSheet.Liabilities.Lines, string(vatControlAccount), "VAT control", -4_120)
+	assertBalanceSheetResponseLine(t, balanceSheet.Equity.Lines, string(currentYearProfitCode), currentYearProfitLabel, 1_592_470)
 }
 
 func TestHTTPReportsVATNotRegisteredOmitsBoxes(t *testing.T) {
@@ -125,6 +148,7 @@ func TestHTTPReportsRoutesRequireAuthentication(t *testing.T) {
 
 	for _, path := range []string{
 		"/api/reports/pl?from=2026-04-01&to=2026-06-30",
+		"/api/reports/balance-sheet?asOf=2026-06-30",
 		"/api/reports/vat?period=2026-Q2",
 		"/api/reports/calendar",
 		"/api/reports/profit-ytd?taxYear=2026-27",
@@ -168,18 +192,32 @@ func newReportsHTTPTestRouterWithIdentity(t *testing.T, identityAPI fakeIdentity
 	t.Helper()
 
 	fakeLedger := newFakeLedger(
-		fakeEntry(1, "2026-04-10", "manual", "consulting-income", fakePosting("4000-sales", -100_000)),
-		fakeEntry(2, "2026-05-02", "manual", "software", fakePosting("5010-software", 20_000)),
-		fakeEntry(3, "2026-06-20", "manual", "fx", fakePosting(realisedFXAccount, -2_160)),
-		fakeEntry(4, "2026-06-25", invoicing.ModuleName, "invoice:INV-2026-0009:send", fakePosting(salesAccount, -1_510_310)),
+		fakeEntry(1, "2026-04-10", "manual", "consulting-income",
+			fakePosting("1000-cash-gbp", 100_000),
+			fakePosting("4000-sales", -100_000),
+		),
+		fakeEntry(2, "2026-05-02", "manual", "software",
+			fakePosting("1000-cash-gbp", -20_000),
+			fakePosting("5010-software", 20_000),
+		),
+		fakeEntry(3, "2026-06-20", "manual", "fx",
+			fakePosting("1000-cash-gbp", 2_160),
+			fakePosting(realisedFXAccount, -2_160),
+		),
+		fakeEntry(4, "2026-06-25", invoicing.ModuleName, "invoice:INV-2026-0009:send",
+			fakePosting("1000-cash-gbp", 1_510_310),
+			fakePosting(salesAccount, -1_510_310),
+		),
 		fakeEntry(5, "2026-06-30", ModuleName, "manual-input-vat:q2-2026", ledger.Posting{
 			AccountCode: vatControlAccount,
 			Amount:      money.Money{Amount: 4_120, Currency: gbpCurrency},
 			AmountGBP:   money.Money{Amount: 4_120, Currency: gbpCurrency},
-		}),
+		}, fakePosting("1000-cash-gbp", -4_120)),
 	)
 	fakeLedger.accounts = append(fakeLedger.accounts,
+		ledger.Account{Code: "1000-cash-gbp", Name: "Cash GBP", Type: ledger.AccountTypeAsset},
 		ledger.Account{Code: vatControlAccount, Name: "VAT control", Type: ledger.AccountTypeLiability},
+		ledger.Account{Code: retainedEarningsAccountCode, Name: "Retained earnings", Type: ledger.AccountTypeEquity},
 	)
 
 	invoicingAPI := reportsHTTPInvoicing{}
@@ -256,6 +294,21 @@ func reportsHTTPInvoice() invoicing.Invoice {
 		ClientID: "client_contoso",
 		Currency: invoicing.CurrencyEUR,
 	}
+}
+
+func assertBalanceSheetResponseLine(t *testing.T, lines []balanceSheetLineResponse, code string, name string, amount int64) {
+	t.Helper()
+	for _, line := range lines {
+		if line.AccountCode != code {
+			continue
+		}
+		if line.AccountName != name {
+			t.Fatalf("balance sheet response line %s name = %q, want %q", code, line.AccountName, name)
+		}
+		assertMoneyResponse(t, line.Amount, amount)
+		return
+	}
+	t.Fatalf("balance sheet response line %s missing from %+v", code, lines)
 }
 
 func performReportsRequest(router http.Handler, method string, path string, authenticated bool) *httptest.ResponseRecorder {
