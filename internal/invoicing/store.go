@@ -482,7 +482,9 @@ INSERT INTO invoices (
 	settled_date,
 	settled_amount_minor,
 	settled_amount_currency,
-	pdf_asset
+	pdf_asset,
+	recurring_template_id,
+	recurring_run_date
 ) VALUES (
 	$1,
 	$2,
@@ -497,7 +499,9 @@ INSERT INTO invoices (
 	$11,
 	$12,
 	$13,
-	$14
+	$14,
+	$15,
+	$16
 )
 RETURNING `+invoiceColumnsSQL(),
 		invoice.ID,
@@ -514,6 +518,8 @@ RETURNING `+invoiceColumnsSQL(),
 		nullableInvoiceMoneyAmount(invoice.SettledAmount),
 		nullableInvoiceMoneyCurrency(invoice.SettledAmount),
 		nullableString(invoice.PDFAsset),
+		nullableString(invoice.RecurringTemplateID),
+		nullableTime(invoice.RecurringRunDate),
 	))
 }
 
@@ -847,6 +853,8 @@ func invoiceColumnsSQL() string {
 	settled_amount_minor,
 	settled_amount_currency,
 	pdf_asset,
+	recurring_template_id,
+	recurring_run_date,
 	created_at,
 	updated_at`
 }
@@ -867,6 +875,8 @@ func scanInvoiceRow(row clientRow) (Invoice, error) {
 		settledAmount       sql.NullInt64
 		settledCurrency     sql.NullString
 		pdfAsset            sql.NullString
+		recurringTemplateID sql.NullString
+		recurringRunDate    sql.NullTime
 	)
 	err := row.Scan(
 		&invoice.ID,
@@ -886,6 +896,8 @@ func scanInvoiceRow(row clientRow) (Invoice, error) {
 		&settledAmount,
 		&settledCurrency,
 		&pdfAsset,
+		&recurringTemplateID,
+		&recurringRunDate,
 		&invoice.CreatedAt,
 		&invoice.UpdatedAt,
 	)
@@ -924,6 +936,13 @@ func scanInvoiceRow(row clientRow) (Invoice, error) {
 	invoice.SettledAmount = invoiceMoneyFromNullable(settledAmount, settledCurrency)
 	if pdfAsset.Valid {
 		invoice.PDFAsset = &pdfAsset.String
+	}
+	if recurringTemplateID.Valid {
+		invoice.RecurringTemplateID = &recurringTemplateID.String
+	}
+	if recurringRunDate.Valid {
+		value := dateOnly(recurringRunDate.Time)
+		invoice.RecurringRunDate = &value
 	}
 	invoice.IssueDate = dateOnly(invoice.IssueDate)
 	invoice.DueDate = dateOnly(invoice.DueDate)

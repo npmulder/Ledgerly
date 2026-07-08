@@ -117,7 +117,6 @@ func CompanyVATRegistered(registered bool) CompanyOverride {
 		profile.IsVATRegistered = registered
 	}
 }
-
 func npmCompanyProfile() identity.CompanyProfile {
 	return identity.CompanyProfile{
 		TradingName:   "NPM Limited",

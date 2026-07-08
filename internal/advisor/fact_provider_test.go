@@ -29,6 +29,12 @@ func TestInvoicingFactProviderMapsOverdueInvoices(t *testing.T) {
 			DaysOverdue:   5,
 			Amount:        money.Money{Amount: 120000, Currency: "GBP"},
 		}},
+		recurringDrafts: []invoicing.RecurringDraftInvoiceFact{{
+			InvoiceID:  "draft_456",
+			ClientName: "Fabrikam Ltd",
+			RunDate:    time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC),
+			Amount:     money.Money{Amount: 150000, Currency: "GBP"},
+		}},
 	})
 
 	facts, err := provider.Gather(context.Background())
@@ -63,6 +69,22 @@ func TestInvoicingFactProviderMapsOverdueInvoices(t *testing.T) {
 	}
 	if got := facts[FactInvoiceNumber]; got != "2026-0001" {
 		t.Fatalf("invoice_number = %#v, want 2026-0001", got)
+	}
+	recurring := facts[FactRecurringDrafts].([]RecurringDraftFact)
+	if len(recurring) != 1 {
+		t.Fatalf("invoices.recurringDrafts length = %d, want 1", len(recurring))
+	}
+	if got := recurring[0]; got.ID != "draft_456" || got.Client != "Fabrikam Ltd" {
+		t.Fatalf("recurring draft identity = %#v", got)
+	}
+	if got := facts[FactRecurringDraftCount]; got != 1 {
+		t.Fatalf("recurring_draft_count = %#v, want 1", got)
+	}
+	if got := facts[FactRecurringDraftClientName]; got != "Fabrikam Ltd" {
+		t.Fatalf("recurring_draft_client_name = %#v, want Fabrikam Ltd", got)
+	}
+	if got := facts[FactRecurringDraftInvoiceID]; got != "draft_456" {
+		t.Fatalf("recurring_draft_invoice_id = %#v, want draft_456", got)
 	}
 }
 
@@ -348,12 +370,17 @@ func TestGatherAllPartialFailureRecordsErrorAndEvaluationContinues(t *testing.T)
 }
 
 type fakeInvoicingReadAPI struct {
-	overdue []invoicing.OverdueInvoiceFact
-	err     error
+	overdue         []invoicing.OverdueInvoiceFact
+	recurringDrafts []invoicing.RecurringDraftInvoiceFact
+	err             error
 }
 
 func (f fakeInvoicingReadAPI) OverdueInvoices(context.Context) ([]invoicing.OverdueInvoiceFact, error) {
 	return f.overdue, f.err
+}
+
+func (f fakeInvoicingReadAPI) RecurringDraftInvoices(context.Context) ([]invoicing.RecurringDraftInvoiceFact, error) {
+	return f.recurringDrafts, f.err
 }
 
 type fakeDLAReadAPI struct {

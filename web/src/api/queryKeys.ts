@@ -89,6 +89,11 @@ export const queryKeys = {
       "invoices",
       { limit, offset, search, status },
     ],
+    recurringTemplates: (): ApiQueryKey => [
+      "invoicing",
+      "recurringTemplates",
+      {},
+    ],
   },
   jurisdiction: {
     pack: (): ApiQueryKey => ["jurisdiction", "pack", {}],

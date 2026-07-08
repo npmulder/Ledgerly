@@ -8,6 +8,8 @@ export type InvoicingClientRequest =
   components["schemas"]["InvoicingClientRequest"];
 export type InvoicingCreateDraftInvoiceRequest =
   components["schemas"]["InvoicingCreateDraftInvoiceRequest"];
+export type InvoicingCreateRecurringFromInvoiceRequest =
+  components["schemas"]["InvoicingCreateRecurringFromInvoiceRequest"];
 export type InvoicingInvoice = components["schemas"]["InvoicingInvoice"];
 export type InvoicingInvoiceListItem =
   components["schemas"]["InvoicingInvoiceListItem"];
@@ -25,6 +27,12 @@ export type InvoicingInvoicesResponse =
 export type InvoicingMoneyAmount =
   components["schemas"]["InvoicingMoneyAmount"];
 export type InvoicingMoney = components["schemas"]["InvoicingMoney"];
+export type InvoicingRecurringTemplate =
+  components["schemas"]["InvoicingRecurringTemplate"];
+export type InvoicingRecurringTemplateRequest =
+  components["schemas"]["InvoicingRecurringTemplateRequest"];
+export type InvoicingRecurringTemplatesResponse =
+  components["schemas"]["InvoicingRecurringTemplatesResponse"];
 export type InvoicingSendInvoiceResult =
   components["schemas"]["InvoicingSendInvoiceResult"];
 export type InvoicingReminderResult =
@@ -47,10 +55,7 @@ export function createInvoicingClient(input: InvoicingClientRequest) {
   return apiClient.post("/api/invoicing/clients", input);
 }
 
-export function patchInvoicingClient(
-  id: string,
-  input: InvoicingClientPatch,
-) {
+export function patchInvoicingClient(id: string, input: InvoicingClientPatch) {
   return apiClient.patch(clientPath(id), input);
 }
 
@@ -77,6 +82,27 @@ export function getInvoices({
 
 export function createDraftInvoice(input: InvoicingCreateDraftInvoiceRequest) {
   return apiClient.post("/api/invoicing/invoices", input);
+}
+
+export function getRecurringTemplates() {
+  return apiClient.get("/api/invoicing/recurring-templates");
+}
+
+export function createRecurringTemplate(
+  input: InvoicingRecurringTemplateRequest,
+) {
+  return apiClient.post("/api/invoicing/recurring-templates", input);
+}
+
+export function createRecurringTemplateFromInvoice(
+  id: string,
+  input: InvoicingCreateRecurringFromInvoiceRequest,
+) {
+  return apiClient.post(invoiceRecurringTemplatePath(id), input);
+}
+
+export function cancelRecurringTemplate(id: string) {
+  return apiClient.post(recurringTemplateCancelPath(id));
 }
 
 export function listInvoices() {
@@ -143,6 +169,12 @@ function invoicePath(id: string) {
   )}` as "/api/invoicing/invoices/{id}";
 }
 
+function invoiceRecurringTemplatePath(id: string) {
+  return `/api/invoicing/invoices/${encodeURIComponent(
+    id,
+  )}/recurring-template` as "/api/invoicing/invoices/{id}/recurring-template";
+}
+
 function invoiceSendPath(id: string) {
   return `/api/invoicing/invoices/${encodeURIComponent(
     id,
@@ -165,4 +197,10 @@ function invoicePrintPath(id: string) {
   return `/api/invoicing/invoices/${encodeURIComponent(
     id,
   )}/print` as "/api/invoicing/invoices/{id}/print";
+}
+
+function recurringTemplateCancelPath(id: string) {
+  return `/api/invoicing/recurring-templates/${encodeURIComponent(
+    id,
+  )}/cancel` as "/api/invoicing/recurring-templates/{id}/cancel";
 }
