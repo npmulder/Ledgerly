@@ -34,11 +34,17 @@ type Service struct {
 	payeeRuleAutoPostThreshold int
 	dlaPersonalPatterns        []string
 	reconciliationHooks        ReconciliationCommandHooks
+	audit                      AuditRecorder
 }
 
 const payeeRuleManagementCreatedBy = matchEngineCreatedByPrefix + "payee-rule-management"
 
 type ServiceOption func(*Service)
+
+// AuditRecorder records service-layer banking mutations in the caller's transaction.
+type AuditRecorder interface {
+	Record(ctx context.Context, tx db.Tx, module, entity, entityID string, before, after any) error
+}
 
 func WithParser(provider Provider, parser StatementParser) ServiceOption {
 	return func(s *Service) {
@@ -89,6 +95,9 @@ func WithMoneyFX(fx MoneyFX) ServiceOption {
 func WithInvoicingSettler(settler InvoiceSettler) ServiceOption {
 	return func(s *Service) {
 		s.invoices = settler
+		if provider, ok := settler.(invoicingMatchCandidateProvider); ok {
+			s.invoiceCandidates = invoicingInvoiceCandidateSource{provider: provider}
+		}
 	}
 }
 
@@ -113,6 +122,12 @@ func WithReconciliationCommandHooks(hooks ReconciliationCommandHooks) ServiceOpt
 func WithReceiptAssetStore(store ReceiptAssetStore) ServiceOption {
 	return func(s *Service) {
 		s.receiptAssets = store
+	}
+}
+
+func WithAuditRecorder(recorder AuditRecorder) ServiceOption {
+	return func(s *Service) {
+		s.audit = recorder
 	}
 }
 
@@ -342,7 +357,26 @@ func (s *Service) CreatePayeeRule(ctx context.Context, input PayeeRuleInput) (Pa
 	if err := s.validatePayeeRuleAccount(ctx, normalized.AccountCode); err != nil {
 		return PayeeRule{}, err
 	}
-	return s.store.InsertPayeeRule(ctx, s.pool, normalized)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return PayeeRule{}, fmt.Errorf("banking: begin payee rule create transaction: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+	rule, err := s.store.InsertPayeeRule(ctx, tx, normalized)
+	if err != nil {
+		return PayeeRule{}, err
+	}
+	if err := s.recordAudit(ctx, tx, "payee_rule", fmt.Sprint(rule.ID), nil, payeeRuleAuditValue(rule, true)); err != nil {
+		return PayeeRule{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return PayeeRule{}, fmt.Errorf("banking: commit payee rule create transaction: %w", err)
+	}
+	return rule, nil
 }
 
 func (s *Service) PayeeRules(ctx context.Context) ([]PayeeRule, error) {
@@ -386,6 +420,9 @@ func (s *Service) UpdatePayeeRule(ctx context.Context, id PayeeRuleID, input Pay
 	if err = s.refreshActivePayeeRuleSuggestions(ctx, tx, before, &rule); err != nil {
 		return PayeeRule{}, err
 	}
+	if err := s.recordAudit(ctx, tx, "payee_rule", fmt.Sprint(rule.ID), payeeRuleAuditValue(before, true), payeeRuleAuditValue(rule, true)); err != nil {
+		return PayeeRule{}, err
+	}
 	if err = tx.Commit(ctx); err != nil {
 		return PayeeRule{}, fmt.Errorf("banking: commit payee rule update transaction: %w", err)
 	}
@@ -416,6 +453,9 @@ func (s *Service) DeletePayeeRule(ctx context.Context, id PayeeRuleID) error {
 		return err
 	}
 	if err = s.refreshActivePayeeRuleSuggestions(ctx, tx, rule, nil); err != nil {
+		return err
+	}
+	if err := s.recordAudit(ctx, tx, "payee_rule", fmt.Sprint(rule.ID), payeeRuleAuditValue(rule, true), nil); err != nil {
 		return err
 	}
 	if err = tx.Commit(ctx); err != nil {
@@ -455,6 +495,9 @@ func (s *Service) LearnFromRecode(ctx context.Context, txnID TransactionID, acco
 	if err != nil {
 		return PayeeRule{}, err
 	}
+	if err := s.recordAudit(ctx, tx, "payee_rule", fmt.Sprint(rule.ID), nil, payeeRuleAuditValue(rule, true)); err != nil {
+		return PayeeRule{}, err
+	}
 	if err = tx.Commit(ctx); err != nil {
 		return PayeeRule{}, fmt.Errorf("banking: commit rule learning transaction: %w", err)
 	}
@@ -466,6 +509,44 @@ func (s *Service) MatchingPayeeRules(ctx context.Context, payee string) ([]Payee
 		return nil, fmt.Errorf("banking: payee rule matching requires pool")
 	}
 	return s.store.MatchingPayeeRules(ctx, s.pool, payee)
+}
+
+func (s *Service) recordAudit(ctx context.Context, tx db.Tx, entity, entityID string, before, after any) error {
+	if s.audit == nil {
+		return nil
+	}
+	return s.audit.Record(ctx, tx, ModuleName, entity, entityID, before, after)
+}
+
+type payeeRuleAuditRecord struct {
+	Matcher       string               `json:"matcher"`
+	MatchMode     PayeeRuleMatchMode   `json:"match_mode"`
+	AccountCode   ledger.AccountCode   `json:"account_code"`
+	TimesApplied  int                  `json:"times_applied"`
+	LastAppliedAt *string              `json:"last_applied_at"`
+	CreatedFrom   PayeeRuleCreatedFrom `json:"created_from"`
+}
+
+func payeeRuleAuditValue(rule PayeeRule, exists bool) any {
+	if !exists {
+		return nil
+	}
+	return payeeRuleAuditRecord{
+		Matcher:       rule.Matcher,
+		MatchMode:     rule.MatchMode,
+		AccountCode:   rule.AccountCode,
+		TimesApplied:  rule.TimesApplied,
+		LastAppliedAt: timeStringPointer(rule.LastAppliedAt),
+		CreatedFrom:   rule.CreatedFrom,
+	}
+}
+
+func timeStringPointer(value *time.Time) *string {
+	if value == nil {
+		return nil
+	}
+	formatted := value.UTC().Format(time.RFC3339Nano)
+	return &formatted
 }
 
 func (s *Service) validatePayeeRuleAccount(ctx context.Context, accountCode ledger.AccountCode) error {

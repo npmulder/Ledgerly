@@ -3,6 +3,7 @@ package identity
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"image"
@@ -59,6 +60,20 @@ func TestUpdateProfilePatchValidation(t *testing.T) {
 	}
 	if updated.Shareholders == nil || len(updated.Shareholders) != 0 {
 		t.Fatalf("Shareholders = %#v, want non-nil empty slice", updated.Shareholders)
+	}
+
+	var nilDirectors []Director
+	updated, err = (UpdateProfilePatch{Directors: &nilDirectors}).apply(profile)
+	if err != nil {
+		t.Fatalf("UpdateProfilePatch.apply() nil directors error = %v", err)
+	}
+	if updated.Directors == nil || len(updated.Directors) != 0 {
+		t.Fatalf("Directors = %#v, want non-nil empty slice", updated.Directors)
+	}
+
+	badDirectors := []Director{{Name: " "}}
+	if _, err := (UpdateProfilePatch{Directors: &badDirectors}).apply(profile); err == nil {
+		t.Fatal("UpdateProfilePatch.apply() blank director name error = nil, want error")
 	}
 }
 
@@ -124,6 +139,42 @@ WHERE id = 1`).Scan(&registered); err != nil {
 	}
 	if !registered {
 		t.Fatal("is_vat_registered = false, want true for legacy profile with VAT number")
+	}
+}
+
+func TestDirectorsMigrationBackfillsFirstShareholder(t *testing.T) {
+	ctx, pool := temporaryDatabaseNamed(t, fmt.Sprintf("ledgerly_director_backfill_%d", time.Now().UnixNano()))
+
+	migratePoolFromDir(t, ctx, pool, identityMigrationSubsetDir(t,
+		"001_bootstrap.sql",
+		"003_company_profile.sql",
+	))
+	if _, err := pool.Exec(ctx, `
+UPDATE identity.company_profile
+SET shareholders = '[{"name":"Legacy Director","shares":100,"class":"ordinary £1"}]'::jsonb
+WHERE id = 1`); err != nil {
+		t.Fatalf("seed legacy shareholder-only profile: %v", err)
+	}
+
+	migratePoolFromDir(t, ctx, pool, identityMigrationSubsetDir(t,
+		"001_bootstrap.sql",
+		"003_company_profile.sql",
+		"008_directors.sql",
+	))
+
+	var directors []byte
+	if err := pool.QueryRow(ctx, `
+SELECT directors
+FROM identity.company_profile
+WHERE id = 1`).Scan(&directors); err != nil {
+		t.Fatalf("read backfilled directors: %v", err)
+	}
+	var decoded []Director
+	if err := json.Unmarshal(directors, &decoded); err != nil {
+		t.Fatalf("decode backfilled directors: %v; json=%s", err, string(directors))
+	}
+	if len(decoded) != 1 || decoded[0].Name != "Legacy Director" || !decoded[0].IsChair {
+		t.Fatalf("directors = %+v, want Legacy Director chair backfill", decoded)
 	}
 }
 
@@ -195,6 +246,11 @@ func TestUpdateProfilePartialRoundTrip(t *testing.T) {
 		{Name: "N. Meyer", Shares: 100, Class: "ordinary £1"},
 		{Name: "Employee Trust", Shares: 10, Class: "growth"},
 	}
+	appointedDate := "2020-07-14"
+	directors := []Director{
+		{Name: "N. Meyer", AppointedDate: &appointedDate, IsChair: true},
+		{Name: "A. Patel"},
+	}
 
 	if err := service.UpdateProfile(ctx, UpdateProfilePatch{
 		TradingName:     &tradingName,
@@ -202,6 +258,7 @@ func TestUpdateProfilePartialRoundTrip(t *testing.T) {
 		VATNumber:       &vatNumber,
 		BankDetails:     &bankDetails,
 		Shareholders:    &shareholders,
+		Directors:       &directors,
 	}); err != nil {
 		t.Fatalf("UpdateProfile() error = %v", err)
 	}
@@ -237,6 +294,14 @@ func TestUpdateProfilePartialRoundTrip(t *testing.T) {
 	}
 	if len(got.Shareholders) != 2 || got.Shareholders[1].Name != "Employee Trust" {
 		t.Fatalf("Shareholders = %#v, want partial update value", got.Shareholders)
+	}
+	if len(got.Directors) != 2 ||
+		got.Directors[0].Name != "N. Meyer" ||
+		got.Directors[0].AppointedDate == nil ||
+		*got.Directors[0].AppointedDate != appointedDate ||
+		!got.Directors[0].IsChair ||
+		got.Directors[1].Name != "A. Patel" {
+		t.Fatalf("Directors = %#v, want partial update value", got.Directors)
 	}
 	assertDate(t, got.IncorporationDate, 2020, time.July, 14)
 	if got.YearEnd.Month != time.March || got.YearEnd.Day != 31 {
@@ -313,6 +378,24 @@ func TestUpdateProfileClearsShareholders(t *testing.T) {
 	}
 	if got.Shareholders == nil || len(got.Shareholders) != 0 {
 		t.Fatalf("Shareholders = %#v, want non-nil empty slice", got.Shareholders)
+	}
+}
+
+func TestUpdateProfileClearsDirectors(t *testing.T) {
+	ctx, tx := migratedIdentityTx(t)
+	service := New(tx, discardBus())
+
+	directors := []Director{}
+	if err := service.UpdateProfile(ctx, UpdateProfilePatch{Directors: &directors}); err != nil {
+		t.Fatalf("UpdateProfile() clear directors error = %v", err)
+	}
+
+	got, err := service.Profile(ctx)
+	if err != nil {
+		t.Fatalf("Profile() error = %v", err)
+	}
+	if got.Directors == nil || len(got.Directors) != 0 {
+		t.Fatalf("Directors = %#v, want non-nil empty slice", got.Directors)
 	}
 }
 
@@ -656,9 +739,12 @@ func TestUpdateProfileInitializesMissingProductionProfile(t *testing.T) {
 	if got.Shareholders == nil || len(got.Shareholders) != 0 {
 		t.Fatalf("Shareholders = %#v, want non-nil empty slice", got.Shareholders)
 	}
+	if got.Directors == nil || len(got.Directors) != 0 {
+		t.Fatalf("Directors = %#v, want non-nil empty slice", got.Directors)
+	}
 }
 
-func TestCompanyFactsReturnsIncorporationDateAndYearEnd(t *testing.T) {
+func TestCompanyFactsReturnsProfileFacts(t *testing.T) {
 	ctx, tx := migratedIdentityTx(t)
 	service := New(tx, discardBus())
 	isVATRegistered := true
@@ -677,6 +763,9 @@ func TestCompanyFactsReturnsIncorporationDateAndYearEnd(t *testing.T) {
 	}
 	if !facts.IsVATRegistered {
 		t.Fatal("IsVATRegistered = false, want true")
+	}
+	if len(facts.Directors) != 2 || facts.Directors[0].Name != "N. Meyer" || facts.Directors[1].Name != "A. Patel" {
+		t.Fatalf("Directors = %#v, want seeded directors", facts.Directors)
 	}
 }
 
@@ -878,6 +967,15 @@ func assertNPMProfile(t *testing.T, profile CompanyProfile) {
 	if shareholder.Name != "N. Meyer" || shareholder.Shares != 100 || shareholder.Class != "ordinary £1" {
 		t.Fatalf("Shareholder = %#v, want N. Meyer 100 ordinary £1", shareholder)
 	}
+	if len(profile.Directors) != 2 {
+		t.Fatalf("Directors = %#v, want two directors", profile.Directors)
+	}
+	if profile.Directors[0].Name != "N. Meyer" || !profile.Directors[0].IsChair {
+		t.Fatalf("Director[0] = %#v, want N. Meyer chair", profile.Directors[0])
+	}
+	if profile.Directors[1].Name != "A. Patel" {
+		t.Fatalf("Director[1] = %#v, want A. Patel", profile.Directors[1])
+	}
 }
 
 func assertDate(t *testing.T, got time.Time, year int, month time.Month, day int) {
@@ -963,6 +1061,9 @@ func npmProfile() CompanyProfile {
 		Shareholders: []Shareholder{
 			{Name: "N. Meyer", Shares: 100, Class: "ordinary £1"},
 		},
+		Directors: []Director{
+			{Name: "N. Meyer", IsChair: true},
+		},
 	}
 }
 
@@ -987,6 +1088,7 @@ func acmeProfile() CompanyProfile {
 		YearEnd:           YearEnd{Month: time.December, Day: 31},
 		BankDetails:       BankDetails{},
 		Shareholders:      []Shareholder{},
+		Directors:         []Director{},
 	}
 }
 
@@ -1018,7 +1120,8 @@ INSERT INTO identity.company_profile (
 	year_end_day,
 	vat_number,
 	bank_details,
-	shareholders
+	shareholders,
+	directors
 ) VALUES (
 	1,
 	'NPM Limited',
@@ -1030,5 +1133,6 @@ INSERT INTO identity.company_profile (
 	31,
 	NULL,
 	'{"iban":"","bic":"","bank_name":""}'::jsonb,
-	'[{"name":"N. Meyer","shares":100,"class":"ordinary £1"}]'::jsonb
+	'[{"name":"N. Meyer","shares":100,"class":"ordinary £1"}]'::jsonb,
+	'[{"name":"N. Meyer","appointed_date":"2020-07-14","is_chair":true},{"name":"A. Patel","appointed_date":"2020-07-14"}]'::jsonb
 )`

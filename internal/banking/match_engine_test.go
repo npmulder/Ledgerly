@@ -120,6 +120,25 @@ func TestInvoiceScorerTable(t *testing.T) {
 		}
 	}
 
+	sentTie := base
+	sentTie.InvoiceID = "sent-tie"
+	sentTie.Number = "INV-2026-100"
+	sentTie.ClientName = "Other Client"
+	draftTie := sentTie
+	draftTie.InvoiceID = "draft-tie"
+	draftTie.Number = ""
+	draftTie.Status = "draft"
+	tieTxn := txn
+	tieTxn.Payee = "Unknown payer"
+	tieTxn.Reference = "bank transfer"
+	tieMatch, ok := bestInvoiceMatch(tieTxn, []InvoiceMatchCandidate{draftTie, sentTie})
+	if !ok {
+		t.Fatal("bestInvoiceMatch() tie = false, want sent candidate")
+	}
+	if tieMatch.candidate.InvoiceID != "sent-tie" {
+		t.Fatalf("best invoice tie ID = %q, want sent-tie", tieMatch.candidate.InvoiceID)
+	}
+
 	weaker := base
 	weaker.InvoiceID = "weaker"
 	weaker.Number = "INV-2026-9"
@@ -739,6 +758,43 @@ func TestDefaultInvoiceCandidatesUseOpenSentAndDraftInvoicingRecords(t *testing.
 	}
 }
 
+func TestInvoicingSettlerCandidateProviderOverridesDefaultSource(t *testing.T) {
+	pool, _ := temporaryMigratedBankingDatabase(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	provider := &candidateProviderSettler{
+		candidates: []invoicing.MatchCandidate{{
+			InvoiceID:  "service-candidate",
+			ClientName: "Service Candidate Ltd",
+			IssueDate:  time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC),
+			DueDate:    time.Date(2026, 7, 31, 0, 0, 0, 0, time.UTC),
+			Amount:     invoicing.Money{Amount: 100_000, Currency: "GBP"},
+			Status:     invoicing.InvoiceStatusDraft,
+		}},
+	}
+	service := NewService(pool, nil, WithInvoicingSettler(provider))
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("Begin() error = %v", err)
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+
+	candidates, err := service.invoiceCandidates.InvoiceCandidates(ctx, tx, "GBP")
+	if err != nil {
+		t.Fatalf("InvoiceCandidates() error = %v", err)
+	}
+	if provider.calls != 1 {
+		t.Fatalf("provider calls = %d, want 1", provider.calls)
+	}
+	if len(candidates) != 1 || candidates[0].InvoiceID != "service-candidate" || candidates[0].Amount.Amount != 100_000 {
+		t.Fatalf("candidates = %#v, want service-provided draft candidate", candidates)
+	}
+}
+
 func TestInvoiceSentSubscriberWritesThroughPublisherTransaction(t *testing.T) {
 	pool, ledgerPool := temporaryMigratedBankingDatabase(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -1106,6 +1162,20 @@ type mutableInvoiceCandidates struct {
 
 func (m *mutableInvoiceCandidates) InvoiceCandidates(context.Context, db.Tx, string) ([]InvoiceMatchCandidate, error) {
 	return append([]InvoiceMatchCandidate{}, m.items...), nil
+}
+
+type candidateProviderSettler struct {
+	calls      int
+	candidates []invoicing.MatchCandidate
+}
+
+func (s *candidateProviderSettler) MarkSettled(context.Context, db.Tx, string, string, time.Time, invoicing.Money) (invoicing.Invoice, error) {
+	return invoicing.Invoice{}, nil
+}
+
+func (s *candidateProviderSettler) InvoiceMatchCandidates(context.Context, db.Tx, string) ([]invoicing.MatchCandidate, error) {
+	s.calls++
+	return append([]invoicing.MatchCandidate{}, s.candidates...), nil
 }
 
 type suggestionProjectionValue struct {

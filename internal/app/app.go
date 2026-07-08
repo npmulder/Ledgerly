@@ -24,6 +24,7 @@ import (
 	_ "github.com/lib/pq"
 
 	"github.com/npmulder/ledgerly/internal/advisor"
+	"github.com/npmulder/ledgerly/internal/audit"
 	"github.com/npmulder/ledgerly/internal/banking"
 	"github.com/npmulder/ledgerly/internal/dividends"
 	"github.com/npmulder/ledgerly/internal/dla"
@@ -79,6 +80,7 @@ type ModuleDeps struct {
 	PDFEngine      invoicing.InvoicePDFEngine
 	PDFBaseURL     string
 	MailSender     mail.Sender
+	AuditRecorder  *audit.Recorder
 
 	ReportsInvoicing  reports.Invoicing
 	ReportsDLA        reports.DLA
@@ -123,6 +125,7 @@ type Dependencies struct {
 	MoneyFXPool   *pgxpool.Pool
 	InvoicingPool *pgxpool.Pool
 	AdvisorPool   *pgxpool.Pool
+	AuditPool     *pgxpool.Pool
 
 	Bus        *bus.Bus
 	BusOptions []bus.Option
@@ -175,6 +178,7 @@ type App struct {
 	MoneyFXPool     *pgxpool.Pool
 	InvoicingPool   *pgxpool.Pool
 	AdvisorPool     *pgxpool.Pool
+	AuditPool       *pgxpool.Pool
 	IdentityService *identity.Service
 	AdvisorFacts    advisor.FactRegistry
 	Advisor         *advisor.Service
@@ -224,6 +228,10 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		openPool = OpenPoolWithRetry
 	}
 
+	auditPool, err := modulePool(ctx, cfg.Runtime.DatabaseURL, audit.ModuleName, deps.AuditPool, openPool, &closeFuncs)
+	if err != nil {
+		return nil, err
+	}
 	identityPool, err := modulePool(ctx, cfg.Runtime.DatabaseURL, "identity", deps.IdentityPool, openPool, &closeFuncs)
 	if err != nil {
 		return nil, err
@@ -263,6 +271,7 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		busOptions = append(busOptions, deps.BusOptions...)
 		eventBus = bus.New(busOptions...)
 	}
+	auditRecorder := audit.NewRecorder(audit.WithActor(auditActorFromContext))
 
 	ledgerService := ledger.New(ledgerPool, eventBus)
 	trialBalanceStatus := ledger.NewTrialBalanceStatus()
@@ -308,6 +317,7 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 	if strings.TrimSpace(cfg.Runtime.DataDir) != "" {
 		profileOptions = append(profileOptions, identity.WithDataDir(cfg.Runtime.DataDir))
 	}
+	profileOptions = append(profileOptions, identity.WithAuditRecorder(auditRecorder))
 	profileOptions = append(profileOptions, deps.IdentityProfileOptions...)
 	identityProfile := identity.NewTransactionalProfileService(identityPool, eventBus, profileOptions...)
 	identityHTTPOptions := []identity.HTTPOption{identity.WithProfileAPI(identityProfile)}
@@ -357,16 +367,19 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 				Month: facts.YearEnd.Month,
 				Day:   facts.YearEnd.Day,
 			},
+			IsVATRegistered: facts.IsVATRegistered,
 		}, nil
 	}
 
 	modules := []httpserver.Module{
 		identity.HTTPModule(identityHandler),
 		jurisdictionHTTPModule(jurisdictionFacts, clk),
+		audit.HTTPModule(audit.NewService(auditPool)),
 	}
 	fragments := []httpserver.OpenAPIFragment{
 		identity.OpenAPIFragment(),
 		jurisdictionOpenAPIFragment(),
+		audit.OpenAPIFragment(),
 	}
 
 	moneyFXModule, err := moneyfx.New(moneyfx.Config{
@@ -390,6 +403,10 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		invoicing.WithRateLockReader(invoicingMoneyFXLockReader{module: moneyFXModule}),
 		invoicing.WithLedger(ledgerService),
 		invoicing.WithEventBus(eventBus),
+		invoicing.WithIdentity(identityProfile),
+		invoicing.WithInvoicePDFAssetStore(pdfAssetStore),
+		invoicing.WithInvoicePDFEngine(deps.InvoicingPDFEngine),
+		invoicing.WithInvoicePDFBaseURL(pdfBaseURL),
 	)
 	reportsService := reports.New(
 		ledgerService,
@@ -404,6 +421,7 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		banking.WithDLAFileDrawer(dlaService),
 		banking.WithEventBus(eventBus),
 		banking.WithDirectorNames(identityDirectorNames{profile: identityProfile}),
+		banking.WithAuditRecorder(auditRecorder),
 	}
 	if pdfAssetWriter.writer != nil {
 		bankingOptions = append(bankingOptions, banking.WithReceiptAssetStore(pdfAssetWriter))
@@ -478,6 +496,7 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		PDFEngine:      deps.InvoicingPDFEngine,
 		PDFBaseURL:     pdfBaseURL,
 		MailSender:     mailSender,
+		AuditRecorder:  auditRecorder,
 	})
 	if err != nil {
 		return nil, err
@@ -636,6 +655,7 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		Bus:             eventBus,
 		Clock:           clk,
 		HealthDB:        healthDB,
+		AuditPool:       auditPool,
 		IdentityPool:    identityPool,
 		BankingPool:     bankingPool,
 		DLAPool:         dlaPool,
@@ -673,6 +693,7 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 func OpenAPIDocument(version string) map[string]any {
 	return httpserver.OpenAPIDocument(
 		version,
+		audit.OpenAPIFragment(),
 		identity.OpenAPIFragment(),
 		jurisdictionOpenAPIFragment(),
 		moneyfx.OpenAPIFragment(),
@@ -735,6 +756,7 @@ func buildInvoicingModule(_ context.Context, deps ModuleDeps) (Module, error) {
 		PDFBaseURL:     deps.PDFBaseURL,
 		Mailer:         deps.MailSender,
 		Logger:         deps.Logger,
+		AuditRecorder:  deps.AuditRecorder,
 	})
 	if err != nil {
 		return Module{}, err
@@ -775,6 +797,20 @@ func buildReportsModule(_ context.Context, deps ModuleDeps) (Module, error) {
 	}, nil
 }
 
+func auditActorFromContext(ctx context.Context) string {
+	principal, ok := identity.PrincipalFromContext(ctx)
+	if !ok {
+		return "system"
+	}
+	if email := strings.TrimSpace(principal.User.Email); email != "" {
+		return email
+	}
+	if principal.User.ID > 0 {
+		return fmt.Sprintf("user:%d", principal.User.ID)
+	}
+	return "system"
+}
+
 func registerScheduledJobs(runner *platformcron.Runner, jobs []ScheduledJob) error {
 	for _, job := range jobs {
 		if err := runner.Register(job.Name, job.Schedule, platformcron.Job(job.Run)); err != nil {
@@ -801,7 +837,7 @@ func (d identityDirectorNames) DirectorNames(ctx context.Context) ([]string, err
 		}
 		return nil, err
 	}
-	return identityProfileDirectorNames(profile), nil
+	return profile.DirectorNames(), nil
 }
 
 func subscribeBankingIdentityProfileRefresh(eventBus *bus.Bus, profile identity.Identity, opts []identity.ProfileOption, bankingService *banking.Service) {
@@ -821,7 +857,7 @@ func subscribeBankingIdentityProfileRefresh(eventBus *bus.Bus, profile identity.
 			}
 			return err
 		}
-		_, err = bankingService.RefreshDirectorNameSuggestionsTx(ctx, tx, identityProfileDirectorNames(updated))
+		_, err = bankingService.RefreshDirectorNameSuggestionsTx(ctx, tx, updated.DirectorNames())
 		return err
 	})
 }
@@ -831,16 +867,6 @@ func identityProfileForBankingRefresh(ctx context.Context, tx db.Tx, eventBus *b
 		return profile.Profile(ctx)
 	}
 	return identity.NewProfileService(tx, eventBus, opts...).Profile(ctx)
-}
-
-func identityProfileDirectorNames(profile identity.CompanyProfile) []string {
-	names := make([]string, 0, len(profile.Shareholders))
-	for _, shareholder := range profile.Shareholders {
-		if name := strings.TrimSpace(shareholder.Name); name != "" {
-			names = append(names, name)
-		}
-	}
-	return names
 }
 
 func subscribeAdvisorTriggers(eventBus *bus.Bus, service *advisor.Service) {

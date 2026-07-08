@@ -334,6 +334,10 @@ func identityComponents() map[string]any {
 					"incorporation_date": map[string]any{"type": "string", "format": "date"},
 					"year_end_month":     map[string]any{"type": "integer", "minimum": 1, "maximum": 12},
 					"year_end_day":       map[string]any{"type": "integer", "minimum": 1, "maximum": 31},
+					"directors": map[string]any{
+						"type":  "array",
+						"items": map[string]any{"$ref": "#/components/schemas/Director"},
+					},
 				},
 				"additionalProperties": false,
 			},
@@ -451,6 +455,16 @@ func identityComponents() map[string]any {
 				},
 				"additionalProperties": false,
 			},
+			"Director": map[string]any{
+				"type":     "object",
+				"required": []string{"name"},
+				"properties": map[string]any{
+					"name":           map[string]any{"type": "string"},
+					"appointed_date": map[string]any{"type": "string", "format": "date"},
+					"is_chair":       map[string]any{"type": "boolean"},
+				},
+				"additionalProperties": false,
+			},
 			"IdentityProfile": map[string]any{
 				"type": "object",
 				"required": []string{
@@ -464,6 +478,7 @@ func identityComponents() map[string]any {
 					"vat_number",
 					"bank_details",
 					"shareholders",
+					"directors",
 					"logo_asset_id",
 					"logo_asset_url",
 				},
@@ -535,6 +550,10 @@ func identityProfileProperties(patch bool) map[string]any {
 		"shareholders": map[string]any{
 			"type":  "array",
 			"items": map[string]any{"$ref": "#/components/schemas/Shareholder"},
+		},
+		"directors": map[string]any{
+			"type":  "array",
+			"items": map[string]any{"$ref": "#/components/schemas/Director"},
 		},
 		"logo_asset_id":  map[string]any{"type": "string", "format": "uuid", "nullable": true},
 		"logo_asset_url": map[string]any{"type": "string", "format": "uri-reference", "nullable": true},

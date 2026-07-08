@@ -1,5 +1,7 @@
 export { AmountText } from "@/components/AmountText";
 export type { AmountTextProps } from "@/components/AmountText";
+export { AuditHistoryPanel } from "@/components/AuditHistoryPanel";
+export type { AuditHistoryPanelProps } from "@/components/AuditHistoryPanel";
 export { AdvisorPanel, AdvisorStrip } from "@/components/Advisor";
 export type {
   AdvisorPanelProps,

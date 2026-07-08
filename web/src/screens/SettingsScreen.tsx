@@ -36,6 +36,7 @@ import { getJurisdictionPack } from "@/api/jurisdiction";
 import { queryKeys } from "@/api/queryKeys";
 import {
   AmountText,
+  AuditHistoryPanel,
   Badge,
   Button,
   Card,
@@ -91,6 +92,7 @@ const monthOptions = [
 type CompanyFormState = {
   companyNumber: string;
   country: string;
+  directors: DirectorFormState[];
   incorporationDate: string;
   legalName: string;
   line1: string;
@@ -104,6 +106,17 @@ type CompanyFormState = {
   yearEndDay: string;
   yearEndMonth: string;
 };
+
+type DirectorFormState = {
+  appointedDate: string;
+  isChair: boolean;
+  name: string;
+};
+
+type CompanyTextField = Exclude<
+  keyof CompanyFormState,
+  "directors" | "isVATRegistered"
+>;
 
 type ClientCurrency = InvoicingClient["default_currency"];
 type ClientVATTreatment = InvoicingClient["vat_treatment"];
@@ -320,6 +333,9 @@ function CompanySettings() {
     },
     onSuccess: (updatedProfile) => {
       queryClient.setQueryData(queryKeys.identity.profile(), updatedProfile);
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.audit.history("identity", "profile", "1"),
+      });
       setFormDraft(null);
     },
   });
@@ -343,6 +359,9 @@ function CompanySettings() {
               }
             : currentProfile,
       );
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.audit.history("identity", "profile", "1"),
+      });
       setLogoPreviewUrl(null);
     },
   });
@@ -365,7 +384,7 @@ function CompanySettings() {
     submitLabel = isCreatingProfile ? "Creating" : "Saving";
   }
 
-  function handleFieldChange(field: keyof CompanyFormState) {
+  function handleFieldChange(field: CompanyTextField) {
     return (event: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
       setFormDraft((current) => ({
         ...(current ?? profileToForm(profile)),
@@ -379,6 +398,64 @@ function CompanySettings() {
       ...(current ?? profileToForm(profile)),
       isVATRegistered: event.target.checked,
     }));
+  }
+
+  function handleDirectorFieldChange(
+    index: number,
+    field: "appointedDate" | "name",
+  ) {
+    return (event: ChangeEvent<HTMLInputElement>) => {
+      const value = event.target.value;
+      setFormDraft((current) => {
+        const next = current ?? profileToForm(profile);
+        return {
+          ...next,
+          directors: next.directors.map((director, directorIndex) =>
+            directorIndex === index
+              ? { ...director, [field]: value }
+              : director,
+          ),
+        };
+      });
+    };
+  }
+
+  function handleDirectorChairChange(index: number) {
+    return (event: ChangeEvent<HTMLInputElement>) => {
+      const checked = event.target.checked;
+      setFormDraft((current) => {
+        const next = current ?? profileToForm(profile);
+        return {
+          ...next,
+          directors: next.directors.map((director, directorIndex) => ({
+            ...director,
+            isChair: checked && directorIndex === index,
+          })),
+        };
+      });
+    };
+  }
+
+  function handleAddDirector() {
+    setFormDraft((current) => {
+      const next = current ?? profileToForm(profile);
+      return {
+        ...next,
+        directors: [...next.directors, emptyDirectorForm()],
+      };
+    });
+  }
+
+  function handleRemoveDirector(index: number) {
+    setFormDraft((current) => {
+      const next = current ?? profileToForm(profile);
+      return {
+        ...next,
+        directors: next.directors.filter(
+          (_director, directorIndex) => directorIndex !== index,
+        ),
+      };
+    });
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -445,7 +522,9 @@ function CompanySettings() {
             {submitLabel}
           </Button>
         }
-        title={isCreatingProfile ? "Create company profile" : "Company identity"}
+        title={
+          isCreatingProfile ? "Create company profile" : "Company identity"
+        }
       >
         <div className="company-settings">
           {isCreatingProfile ? null : (
@@ -488,7 +567,9 @@ function CompanySettings() {
                   ref={fileInputRef}
                   type="file"
                 />
-                <span>PNG or JPEG, appears on invoices, vouchers and emails</span>
+                <span>
+                  PNG or JPEG, appears on invoices, vouchers and emails
+                </span>
               </div>
             </div>
           )}
@@ -663,6 +744,67 @@ function CompanySettings() {
                 </Select>
               </div>
             </div>
+            <div className="ui-field company-field-grid__wide">
+              <div className="director-editor-heading">
+                <span className="ui-field__label" id="directors-label">
+                  Directors
+                </span>
+                <Button onClick={handleAddDirector} size="small" type="button">
+                  + Add director
+                </Button>
+              </div>
+              <div
+                aria-labelledby="directors-label"
+                className="director-editor"
+                role="group"
+              >
+                {form.directors.length === 0 ? (
+                  <p className="type-secondary">No directors recorded.</p>
+                ) : null}
+                {form.directors.map((director, index) => (
+                  <div className="director-row" key={index}>
+                    <Field label="Name">
+                      <Input
+                        aria-label={`Director ${index + 1} name`}
+                        onChange={handleDirectorFieldChange(index, "name")}
+                        required
+                        value={director.name}
+                      />
+                    </Field>
+                    <Field label="Appointed">
+                      <Input
+                        aria-label={`Director ${index + 1} appointed date`}
+                        onChange={handleDirectorFieldChange(
+                          index,
+                          "appointedDate",
+                        )}
+                        type="date"
+                        value={director.appointedDate}
+                      />
+                    </Field>
+                    <label className="director-chair-toggle">
+                      <input
+                        checked={director.isChair}
+                        onChange={handleDirectorChairChange(index)}
+                        type="checkbox"
+                      />
+                      <span>Chair</span>
+                    </label>
+                    <Button
+                      aria-label={`Remove director ${
+                        director.name.trim() || index + 1
+                      }`}
+                      onClick={() => handleRemoveDirector(index)}
+                      size="small"
+                      type="button"
+                      variant="secondary"
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
           {isCreatingProfile ? null : (
             <div className="company-profile-summary">
@@ -674,6 +816,9 @@ function CompanySettings() {
           )}
         </div>
       </Card>
+      {!isCreatingProfile ? (
+        <AuditHistoryPanel entity="profile" entityId="1" module="identity" />
+      ) : null}
     </form>
   );
 }
@@ -686,9 +831,7 @@ function ClientsSettings() {
   });
   const clients = clientsQuery.data?.clients ?? [];
   const [editingClientId, setEditingClientId] = useState<string | null>(null);
-  const [formDraft, setFormDraft] = useState<ClientFormState>(
-    emptyClientForm,
-  );
+  const [formDraft, setFormDraft] = useState<ClientFormState>(emptyClientForm);
 
   const saveMutation = useMutation({
     mutationFn: (request: InvoicingClientRequest) =>
@@ -700,7 +843,10 @@ function ClientsSettings() {
         queryKey: queryKeys.invoicing.clients(false),
       });
     },
-    onSuccess: () => {
+    onSuccess: (saved) => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.audit.history("invoicing", "client", saved.id),
+      });
       setEditingClientId(null);
       setFormDraft(emptyClientForm());
     },
@@ -713,6 +859,9 @@ function ClientsSettings() {
       });
     },
     onSuccess: (_result, id) => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.audit.history("invoicing", "client", id),
+      });
       if (editingClientId === id) {
         setEditingClientId(null);
         setFormDraft(emptyClientForm());
@@ -842,7 +991,11 @@ function ClientsSettings() {
       <form className="settings-detail" onSubmit={handleClientSubmit}>
         <Card
           actions={
-            <Button disabled={saveMutation.isPending} size="small" type="submit">
+            <Button
+              disabled={saveMutation.isPending}
+              size="small"
+              type="submit"
+            >
               {saveMutation.isPending ? "Saving" : "Save client"}
             </Button>
           }
@@ -984,6 +1137,13 @@ function ClientsSettings() {
             </div>
           </div>
         </Card>
+        {editingClientId ? (
+          <AuditHistoryPanel
+            entity="client"
+            entityId={editingClientId}
+            module="invoicing"
+          />
+        ) : null}
       </form>
     </div>
   );
@@ -1235,6 +1395,11 @@ function profileToForm(profile: IdentityProfile | undefined): CompanyFormState {
   return {
     companyNumber: profile?.company_number ?? "",
     country: profile?.registered_office.country ?? "",
+    directors: (profile?.directors ?? []).map((director) => ({
+      appointedDate: director.appointed_date ?? "",
+      isChair: director.is_chair ?? false,
+      name: director.name,
+    })),
     incorporationDate: profile?.incorporation_date ?? "",
     legalName: profile?.legal_name ?? "",
     line1: profile?.registered_office.line1 ?? "",
@@ -1253,6 +1418,11 @@ function profileToForm(profile: IdentityProfile | undefined): CompanyFormState {
 function formToPatch(form: CompanyFormState): IdentityProfilePatch {
   return {
     company_number: form.companyNumber.trim(),
+    directors: form.directors.map((director) => ({
+      appointed_date: director.appointedDate || undefined,
+      is_chair: director.isChair || undefined,
+      name: director.name.trim(),
+    })),
     incorporation_date: form.incorporationDate,
     legal_name: form.legalName.trim(),
     registered_office: {
@@ -1302,8 +1472,7 @@ function applyProfilePatch(
     bank_details: patch.bank_details ?? profile.bank_details,
     company_number: patch.company_number ?? profile.company_number,
     incorporation_date: patch.incorporation_date ?? profile.incorporation_date,
-    is_vat_registered:
-      patch.is_vat_registered ?? profile.is_vat_registered,
+    is_vat_registered: patch.is_vat_registered ?? profile.is_vat_registered,
     legal_name: patch.legal_name ?? profile.legal_name,
     logo_asset_id:
       patch.logo_asset_id === undefined
@@ -1311,10 +1480,19 @@ function applyProfilePatch(
         : patch.logo_asset_id,
     registered_office: patch.registered_office ?? profile.registered_office,
     shareholders: patch.shareholders ?? profile.shareholders,
+    directors: patch.directors ?? profile.directors,
     trading_name: patch.trading_name ?? profile.trading_name,
     vat_number:
       patch.vat_number === undefined ? profile.vat_number : patch.vat_number,
     year_end: patch.year_end ?? profile.year_end,
+  };
+}
+
+function emptyDirectorForm(): DirectorFormState {
+  return {
+    appointedDate: "",
+    isChair: false,
+    name: "",
   };
 }
 
@@ -1394,10 +1572,7 @@ function formToClientRequest(form: ClientFormState): InvoicingClientRequest {
     default_currency: form.defaultCurrency,
     email: form.email.trim() || null,
     name: form.name.trim(),
-    retainer_amount: moneyFromInput(
-      form.retainerAmount,
-      form.defaultCurrency,
-    ),
+    retainer_amount: moneyFromInput(form.retainerAmount, form.defaultCurrency),
     terms_days: clientTermsDays(form.termsDays),
     vat_number: form.vatNumber.trim() || null,
     vat_treatment: form.vatTreatment,
@@ -1478,10 +1653,7 @@ function MoneyAmountText({
   readonly amount: InvoicingMoneyAmount;
 }) {
   return (
-    <AmountText
-      amountMinor={amount.amount_minor}
-      currency={amount.currency}
-    />
+    <AmountText amountMinor={amount.amount_minor} currency={amount.currency} />
   );
 }
 

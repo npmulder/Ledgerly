@@ -83,6 +83,153 @@ describe("BankingScreen", () => {
     expect(formatConfidence(91)).toBe("91% match");
   });
 
+  it("creates a GBP account from the empty state and imports a CSV", async () => {
+    const user = userEvent.setup();
+    const api = bankingApi({
+      accounts: [],
+      queue: { matches: [], rules: [], suggestions: [] },
+      recent: [],
+    });
+    vi.stubGlobal("fetch", api.fetch);
+
+    renderBanking();
+
+    expect(await screen.findByText("No bank accounts")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Import CSV" })).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "Add account" }));
+    const dialog = await screen.findByRole("dialog", {
+      name: "Add bank account",
+    });
+    await user.type(
+      within(dialog).getByLabelText("Account name"),
+      "Operating GBP",
+    );
+    await user.click(
+      within(dialog).getByRole("button", { name: "Create account" }),
+    );
+
+    expect(
+      await screen.findByText("Created Operating GBP. CSV import ready."),
+    ).toBeInTheDocument();
+    const accountList = await screen.findByLabelText("Bank accounts");
+    const accountCard = within(accountList)
+      .getByText("Operating GBP")
+      .closest("button");
+    expect(accountCard).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Import CSV" })).toBeEnabled();
+
+    await user.upload(
+      screen.getByLabelText("CSV statement file"),
+      new File(["Date,Description,Money In,Money Out\n"], "statement.csv", {
+        type: "text/csv",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(
+        api.fetch.mock.calls.some(
+          ([input, init]) =>
+            urlFromRequest(input).pathname ===
+              "/api/banking/accounts/1/import" && init?.method === "POST",
+        ),
+      ).toBe(true);
+    });
+    expect(
+      await screen.findByText("statement.csv: 0 new, 0 duplicates"),
+    ).toBeInTheDocument();
+  });
+
+  it("creates a EUR account from the populated account list and selects it", async () => {
+    const user = userEvent.setup();
+    const api = bankingApi({
+      accounts: accountsFixture(),
+      queue: { matches: [], rules: [], suggestions: [] },
+      recent: [],
+    });
+    vi.stubGlobal("fetch", api.fetch);
+
+    renderBanking();
+
+    const accountList = await screen.findByLabelText("Bank accounts");
+    await user.click(
+      within(accountList).getByRole("button", { name: "Add account" }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "Add bank account",
+    });
+    await user.type(
+      within(dialog).getByLabelText("Account name"),
+      "Operating EUR",
+    );
+    await user.selectOptions(within(dialog).getByLabelText("Currency"), "EUR");
+    await user.click(
+      within(dialog).getByRole("button", { name: "Create account" }),
+    );
+
+    await waitFor(() => {
+      const createCall = api.fetch.mock.calls.find(
+        ([input, init]) =>
+          urlFromRequest(input).pathname === "/api/banking/accounts" &&
+          init?.method === "POST",
+      );
+      expect(JSON.parse(String(createCall?.[1]?.body))).toMatchObject({
+        currency: "EUR",
+        name: "Operating EUR",
+        provider: "revolut",
+      });
+    });
+    const newCard = within(await screen.findByLabelText("Bank accounts"))
+      .getByText("Operating EUR")
+      .closest("button");
+    expect(newCard).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("shows validation and duplicate account errors without posting", async () => {
+    const user = userEvent.setup();
+    const api = bankingApi({
+      accounts: accountsFixture(),
+      queue: { matches: [], rules: [], suggestions: [] },
+      recent: [],
+    });
+    vi.stubGlobal("fetch", api.fetch);
+
+    renderBanking();
+
+    const accountList = await screen.findByLabelText("Bank accounts");
+    await user.click(
+      within(accountList).getByRole("button", { name: "Add account" }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "Add bank account",
+    });
+
+    await user.click(
+      within(dialog).getByRole("button", { name: "Create account" }),
+    );
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "Enter an account name.",
+    );
+
+    await user.type(
+      within(dialog).getByLabelText("Account name"),
+      "Revolut GBP",
+    );
+    await user.click(
+      within(dialog).getByRole("button", { name: "Create account" }),
+    );
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      'A Revolut Business GBP account named "Revolut GBP" already exists.',
+    );
+    expect(
+      api.fetch.mock.calls.some(
+        ([input, init]) =>
+          urlFromRequest(input).pathname === "/api/banking/accounts" &&
+          init?.method === "POST",
+      ),
+    ).toBe(false);
+  });
+
   it("labels draft invoice matches as send-and-allocate actions", async () => {
     vi.stubGlobal(
       "fetch",
@@ -509,6 +656,9 @@ function bankingApi({
   recent: BankingRecentTransaction[];
 }) {
   let expenseAccounts = expenseAccountsFixture();
+  let bankingAccounts = [...accounts];
+  let nextAccountID =
+    Math.max(0, ...bankingAccounts.map((account) => account.id)) + 1;
   return {
     fetch: vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = urlFromRequest(input);
@@ -527,8 +677,32 @@ function bankingApi({
         expenseAccounts = [...expenseAccounts, account];
         return jsonResponse(account, 201);
       }
-      if (path === "/api/banking/accounts") {
-        return jsonResponse({ accounts });
+      if (path === "/api/banking/accounts" && method === "GET") {
+        return jsonResponse({ accounts: bankingAccounts });
+      }
+      if (path === "/api/banking/accounts" && method === "POST") {
+        const body = JSON.parse(String(init?.body));
+        const account = bankingAccount({
+          currency: body.currency,
+          id: nextAccountID,
+          ledger_account_code: `1000-cash-revolut-${body.currency.toLowerCase()}`,
+          name: body.name,
+          provider: body.provider,
+        });
+        nextAccountID += 1;
+        bankingAccounts = [...bankingAccounts, account];
+        return jsonResponse(account, 201);
+      }
+      if (path.match(/^\/api\/banking\/accounts\/\d+\/import$/)) {
+        return jsonResponse({
+          account_id: Number(path.split("/")[4]),
+          batch_id: 99,
+          duplicates: 0,
+          filename: "statement.csv",
+          imported_at: "2026-07-07T10:00:00Z",
+          new: 0,
+          total: 0,
+        });
       }
       if (path === "/api/banking/review") {
         return jsonResponse(queue);
@@ -627,25 +801,32 @@ function ledgerAccount(overrides: Partial<LedgerAccount>): LedgerAccount {
 
 function accountsFixture(): BankingAccount[] {
   return [
-    {
-      created_at: "2026-07-01T09:00:00Z",
+    bankingAccount({
       currency: "GBP",
       id: 1,
       ledger_account_code: "1000-cash-gbp",
       name: "Revolut GBP",
-      provider: "revolut",
-      unreconciled_count: 0,
-    },
-    {
-      created_at: "2026-07-01T09:00:00Z",
+    }),
+    bankingAccount({
       currency: "EUR",
       id: 2,
       ledger_account_code: "1001-cash-eur",
       name: "Revolut EUR",
-      provider: "revolut",
-      unreconciled_count: 0,
-    },
+    }),
   ];
+}
+
+function bankingAccount(overrides: Partial<BankingAccount>): BankingAccount {
+  return {
+    created_at: "2026-07-01T09:00:00Z",
+    currency: "GBP",
+    id: 1,
+    ledger_account_code: "1000-cash-gbp",
+    name: "Revolut GBP",
+    provider: "revolut",
+    unreconciled_count: 0,
+    ...overrides,
+  };
 }
 
 function reviewQueueFixture(): BankingReviewQueue {

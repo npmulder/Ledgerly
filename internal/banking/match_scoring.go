@@ -156,6 +156,12 @@ func compareInvoiceMatch(a, b invoiceMatchResult) int {
 		}
 		return 1
 	}
+	if aStatus, bStatus := invoiceMatchStatusRank(a.candidate.Status), invoiceMatchStatusRank(b.candidate.Status); aStatus != bStatus {
+		if aStatus < bStatus {
+			return -1
+		}
+		return 1
+	}
 	aNumber := strings.TrimSpace(a.candidate.Number)
 	bNumber := strings.TrimSpace(b.candidate.Number)
 	if aNumber != bNumber {
@@ -171,6 +177,17 @@ func compareInvoiceMatch(a, b invoiceMatchResult) int {
 		return 1
 	}
 	return 0
+}
+
+func invoiceMatchStatusRank(status string) int {
+	switch strings.TrimSpace(status) {
+	case "sent":
+		return 0
+	case "draft":
+		return 1
+	default:
+		return 2
+	}
 }
 
 func scoreInvoiceCandidate(txn Transaction, candidate InvoiceMatchCandidate) (float64, []string, bool) {

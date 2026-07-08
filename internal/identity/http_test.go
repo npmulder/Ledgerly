@@ -81,6 +81,9 @@ func TestFirstRunRegisterWithProfileCreatesSessionAndProfile(t *testing.T) {
 	if body.Profile.YearEnd.Month != 12 || body.Profile.YearEnd.Day != 31 {
 		t.Fatalf("response year_end = %+v, want 31 December", body.Profile.YearEnd)
 	}
+	if body.Profile.Directors == nil || len(body.Profile.Directors) != 0 {
+		t.Fatalf("response directors = %+v, want empty slice", body.Profile.Directors)
+	}
 
 	user := store.userByEmail("owner@example.com")
 	if user.PasswordHash == "" || !strings.HasPrefix(user.PasswordHash, "$argon2id$") {
@@ -94,6 +97,38 @@ func TestFirstRunRegisterWithProfileCreatesSessionAndProfile(t *testing.T) {
 	me := performJSON(router, nethttp.MethodGet, "/api/identity/me", nil, cookie)
 	if me.Code != nethttp.StatusOK {
 		t.Fatalf("me after register-with-profile status = %d, want %d; body=%s", me.Code, nethttp.StatusOK, me.Body.String())
+	}
+}
+
+func TestFirstRunRegisterWithProfileCapturesDirectors(t *testing.T) {
+	router, store, _ := newTestRouter(t, LoginRateLimit{Capacity: 100, RefillEvery: time.Hour})
+	payload := firstRunProfilePayload()
+	payload["directors"] = []map[string]any{
+		{
+			"name":           "N. Meyer",
+			"appointed_date": "2020-07-14",
+			"is_chair":       true,
+		},
+		{
+			"name": "A. Patel",
+		},
+	}
+
+	response := performJSON(router, nethttp.MethodPost, "/api/identity/register-with-profile", payload, nil)
+	if response.Code != nethttp.StatusCreated {
+		t.Fatalf("register-with-profile status = %d, want %d; body=%s", response.Code, nethttp.StatusCreated, response.Body.String())
+	}
+
+	var body registerWithProfileResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode register-with-profile response: %v; body=%s", err, response.Body.String())
+	}
+	if len(body.Profile.Directors) != 2 || body.Profile.Directors[0].Name != "N. Meyer" || body.Profile.Directors[0].AppointedDate == nil || *body.Profile.Directors[0].AppointedDate != "2020-07-14" || !body.Profile.Directors[0].IsChair || body.Profile.Directors[1].Name != "A. Patel" {
+		t.Fatalf("response directors = %+v, want two directors", body.Profile.Directors)
+	}
+	profile := store.profileForTest()
+	if profile == nil || len(profile.Directors) != 2 || profile.Directors[1].Name != "A. Patel" {
+		t.Fatalf("stored directors = %+v, want two directors", profile)
 	}
 }
 
@@ -162,6 +197,23 @@ func TestRegisterWithProfileValidationErrorsUseFieldPointers(t *testing.T) {
 		if !found {
 			t.Fatalf("problem errors = %+v, missing pointer %s", problem.Errors, pointer)
 		}
+	}
+}
+
+func TestRegisterWithProfileDirectorValidationUsesDirectorsPointer(t *testing.T) {
+	router, _, _ := newTestRouter(t, LoginRateLimit{Capacity: 100, RefillEvery: time.Hour})
+	payload := firstRunProfilePayload()
+	payload["directors"] = []map[string]any{
+		{"name": " "},
+	}
+
+	response := performJSON(router, nethttp.MethodPost, "/api/identity/register-with-profile", payload, nil)
+	if response.Code != nethttp.StatusBadRequest {
+		t.Fatalf("invalid register-with-profile directors status = %d, want %d; body=%s", response.Code, nethttp.StatusBadRequest, response.Body.String())
+	}
+	problem := decodeValidationProblem(t, response)
+	if len(problem.Errors) != 1 || problem.Errors[0].Pointer != "/directors" {
+		t.Fatalf("problem errors = %+v, want pointer /directors", problem.Errors)
 	}
 }
 
@@ -505,6 +557,16 @@ func TestProfileGetPatchRoundTrip(t *testing.T) {
 		"trading_name":      "NPM Trading",
 		"is_vat_registered": true,
 		"vat_number":        "IM1234567",
+		"directors": []map[string]any{
+			{
+				"name":           "N. Meyer",
+				"appointed_date": "2020-07-14",
+				"is_chair":       true,
+			},
+			{
+				"name": "A. Patel",
+			},
+		},
 		"year_end": map[string]int{
 			"month": 12,
 			"day":   31,
@@ -526,6 +588,9 @@ func TestProfileGetPatchRoundTrip(t *testing.T) {
 	if patchedProfile.YearEnd.Month != 12 || patchedProfile.YearEnd.Day != 31 {
 		t.Fatalf("patched year_end = %+v, want month=12 day=31", patchedProfile.YearEnd)
 	}
+	if len(patchedProfile.Directors) != 2 || patchedProfile.Directors[0].Name != "N. Meyer" || patchedProfile.Directors[0].AppointedDate == nil || *patchedProfile.Directors[0].AppointedDate != "2020-07-14" || !patchedProfile.Directors[0].IsChair || patchedProfile.Directors[1].Name != "A. Patel" {
+		t.Fatalf("patched directors = %+v, want two directors", patchedProfile.Directors)
+	}
 
 	roundTrip := performJSON(router, nethttp.MethodGet, "/api/identity/profile", nil, cookie)
 	if roundTrip.Code != nethttp.StatusOK {
@@ -537,6 +602,9 @@ func TestProfileGetPatchRoundTrip(t *testing.T) {
 	}
 	if !roundTripProfile.IsVATRegistered {
 		t.Fatal("round-trip is_vat_registered = false, want true")
+	}
+	if len(roundTripProfile.Directors) != 2 || roundTripProfile.Directors[1].Name != "A. Patel" {
+		t.Fatalf("round-trip directors = %+v, want two directors", roundTripProfile.Directors)
 	}
 }
 
@@ -616,6 +684,28 @@ func TestInvalidProfilePatchReturnsFieldPointers(t *testing.T) {
 	}
 }
 
+func TestProfilePatchDirectorValidationUsesDirectorsPointer(t *testing.T) {
+	router, _, _, _ := newTestRouterWithProfile(t, LoginRateLimit{Capacity: 100, RefillEvery: time.Hour})
+	registerOwner(t, router)
+	cookie := loginOwner(t, router)
+
+	response := performJSON(router, nethttp.MethodPatch, "/api/identity/profile", map[string]any{
+		"directors": []map[string]any{
+			{
+				"name":           "N. Meyer",
+				"appointed_date": "not-a-date",
+			},
+		},
+	}, cookie)
+	if response.Code != nethttp.StatusUnprocessableEntity {
+		t.Fatalf("invalid profile directors status = %d, want %d; body=%s", response.Code, nethttp.StatusUnprocessableEntity, response.Body.String())
+	}
+	problem := decodeValidationProblem(t, response)
+	if len(problem.Errors) != 1 || problem.Errors[0].Pointer != "/directors" {
+		t.Fatalf("problem errors = %+v, want pointer /directors", problem.Errors)
+	}
+}
+
 func TestProfilePatchRejectsNullStructuredFields(t *testing.T) {
 	router, _, _, _ := newTestRouterWithProfile(t, LoginRateLimit{Capacity: 100, RefillEvery: time.Hour})
 	registerOwner(t, router)
@@ -628,6 +718,7 @@ func TestProfilePatchRejectsNullStructuredFields(t *testing.T) {
 	}{
 		{name: "registered office", body: map[string]any{"registered_office": nil}, pointer: "/registered_office"},
 		{name: "bank details", body: map[string]any{"bank_details": nil}, pointer: "/bank_details"},
+		{name: "directors", body: map[string]any{"directors": nil}, pointer: "/directors"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			response := performJSON(router, nethttp.MethodPatch, "/api/identity/profile", tc.body, cookie)
@@ -805,7 +896,7 @@ func TestOpenAPIIncludesIdentityRequestBodies(t *testing.T) {
 
 	components := document["components"].(map[string]any)
 	schemas := components["schemas"].(map[string]any)
-	for _, schema := range []string{"IdentityRegisterWithProfileRequest", "IdentityRegisterWithProfileResult", "IdentityProfile", "IdentityProfilePatch", "IdentityLogoUploadResponse", "ValidationProblem"} {
+	for _, schema := range []string{"Director", "IdentityRegisterWithProfileRequest", "IdentityRegisterWithProfileResult", "IdentityProfile", "IdentityProfilePatch", "IdentityLogoUploadResponse", "ValidationProblem"} {
 		if schemas[schema] == nil {
 			t.Fatalf("%s schema missing from OpenAPI fragment", schema)
 		}
@@ -1071,6 +1162,10 @@ func newMemoryIdentity(t *testing.T) *memoryIdentity {
 			Shareholders: []Shareholder{
 				{Name: "N. Meyer", Shares: 100, Class: "ordinary GBP 1"},
 			},
+			Directors: []Director{
+				{Name: "N. Meyer", IsChair: true},
+				{Name: "A. Patel"},
+			},
 			LogoAssetID: &logoID,
 		},
 		assets: map[AssetID]Asset{
@@ -1149,6 +1244,7 @@ func (s *memoryIdentity) CompanyFacts(context.Context) (CompanyFacts, error) {
 		IncorporationDate: s.profile.IncorporationDate,
 		YearEnd:           s.profile.YearEnd,
 		IsVATRegistered:   s.profile.IsVATRegistered,
+		Directors:         append([]Director{}, s.profile.Directors...),
 	}, nil
 }
 
@@ -1170,6 +1266,7 @@ func cloneCompanyProfile(profile CompanyProfile) CompanyProfile {
 		clone.LogoAssetID = &logoID
 	}
 	clone.Shareholders = append([]Shareholder{}, profile.Shareholders...)
+	clone.Directors = append([]Director{}, profile.Directors...)
 	return clone
 }
 
