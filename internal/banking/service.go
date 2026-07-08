@@ -646,6 +646,23 @@ func (s *Service) RecentlyReconciled(ctx context.Context, accountID AccountID, l
 	return s.store.RecentlyReconciled(ctx, s.pool, accountID, normalizeRecentlyReconciledLimit(limit))
 }
 
+func (s *Service) ReconciledHistory(ctx context.Context, filter ReconciledHistoryFilter) (ReconciledHistoryPage, error) {
+	if s.pool == nil {
+		return ReconciledHistoryPage{}, fmt.Errorf("banking: reconciled history requires pool")
+	}
+	normalized, err := normalizeReconciledHistoryFilter(filter)
+	if err != nil {
+		return ReconciledHistoryPage{}, err
+	}
+	page, err := s.store.ReconciledHistory(ctx, s.pool, normalized)
+	if err != nil {
+		return ReconciledHistoryPage{}, err
+	}
+	page.Limit = normalized.Limit
+	page.Offset = normalized.Offset
+	return page, nil
+}
+
 func (s *Service) InvoiceCandidatesForTransaction(ctx context.Context, txnID TransactionID) ([]InvoiceMatchCandidate, error) {
 	if s.pool == nil {
 		return nil, fmt.Errorf("banking: invoice candidate lookup requires pool")
@@ -1036,4 +1053,55 @@ func normalizeRecentlyReconciledLimit(limit int) int {
 		return MaxRecentlyReconciledLimit
 	}
 	return limit
+}
+
+func normalizeReconciledHistoryFilter(filter ReconciledHistoryFilter) (ReconciledHistoryFilter, error) {
+	normalized := filter
+	normalized.Search = strings.TrimSpace(normalized.Search)
+	if normalized.Kind != "" && !validReconciliationKind(normalized.Kind) {
+		return ReconciledHistoryFilter{}, fmt.Errorf("banking: reconciled history kind %q: %w", normalized.Kind, ErrInvalidTransactionFilter)
+	}
+	if normalized.From != nil {
+		from, dateErr := dateOnly(*normalized.From)
+		if dateErr != nil {
+			return ReconciledHistoryFilter{}, fmt.Errorf("banking: reconciled history from date: %w", ErrInvalidTransactionFilter)
+		}
+		normalized.From = &from
+	}
+	if normalized.To != nil {
+		to, dateErr := dateOnly(*normalized.To)
+		if dateErr != nil {
+			return ReconciledHistoryFilter{}, fmt.Errorf("banking: reconciled history to date: %w", ErrInvalidTransactionFilter)
+		}
+		normalized.To = &to
+	}
+	if normalized.From != nil && normalized.To != nil && normalized.From.After(*normalized.To) {
+		return ReconciledHistoryFilter{}, fmt.Errorf("banking: reconciled history from date %s is after to date %s: %w",
+			normalized.From.Format(time.DateOnly),
+			normalized.To.Format(time.DateOnly),
+			ErrInvalidTransactionFilter,
+		)
+	}
+	if normalized.Limit == 0 {
+		normalized.Limit = DefaultReconciledHistoryLimit
+	}
+	if normalized.Limit < 0 || normalized.Limit > MaxReconciledHistoryLimit {
+		return ReconciledHistoryFilter{}, fmt.Errorf("banking: reconciled history limit must be between 1 and %d: %w",
+			MaxReconciledHistoryLimit,
+			ErrInvalidTransactionFilter,
+		)
+	}
+	if normalized.Offset < 0 {
+		return ReconciledHistoryFilter{}, fmt.Errorf("banking: reconciled history offset must be non-negative: %w", ErrInvalidTransactionFilter)
+	}
+	return normalized, nil
+}
+
+func validReconciliationKind(kind ReconciliationKind) bool {
+	switch kind {
+	case ReconciliationKindMatch, ReconciliationKindSuggestion, ReconciliationKindRule, ReconciliationKindManual:
+		return true
+	default:
+		return false
+	}
 }

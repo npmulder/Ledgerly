@@ -18,6 +18,7 @@ import {
   getBankingAccounts,
   getBankingFeed,
   getBankingInvoiceCandidates,
+  getReconciledHistory,
   getBankingReviewQueue,
   getRecentlyReconciled,
   importBankingCSV,
@@ -29,6 +30,9 @@ import {
   type BankingInvoiceCandidate,
   type BankingMoney,
   type BankingRecentTransaction,
+  type BankingReconciledHistoryResponse,
+  type BankingReconciledHistoryTransaction,
+  type BankingReconciliationKind,
   type BankingReviewCard,
   type BankingReviewQueue,
   type BankingTransaction,
@@ -46,6 +50,12 @@ import {
   PageTitle,
   Select,
   SplitMain,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeaderCell,
+  TableRow,
   formatMinorUnits,
 } from "@/components";
 import { formatConfidence } from "@/screens/bankingFormat";
@@ -56,7 +66,28 @@ import {
 } from "@/screens/ExpenseCategoryPicker";
 
 const recentLimit = 8;
+const historyPageSize = 10;
 const receiptAccept = "application/pdf,image/png,image/jpeg";
+
+type BankingView = "review" | "history";
+
+type HistoryFilters = {
+  accountID: number | null;
+  from: string;
+  kind: BankingReconciliationKind | "";
+  offset: number;
+  search: string;
+  to: string;
+};
+
+const defaultHistoryFilters = (): HistoryFilters => ({
+  accountID: null,
+  from: "",
+  kind: "",
+  offset: 0,
+  search: "",
+  to: "",
+});
 
 const defaultAccountDraft = (): BankingCreateAccountRequest => ({
   currency: "GBP",
@@ -100,6 +131,10 @@ export function BankingScreen() {
   const [selectedAccountID, setSelectedAccountID] = useState<number | null>(
     null,
   );
+  const [activeView, setActiveView] = useState<BankingView>("review");
+  const [historyFilters, setHistoryFilters] = useState<HistoryFilters>(
+    defaultHistoryFilters,
+  );
   const [isCreateAccountOpen, setCreateAccountOpen] = useState(false);
   const [accountDraft, setAccountDraft] =
     useState<BankingCreateAccountRequest>(defaultAccountDraft);
@@ -141,6 +176,28 @@ export function BankingScreen() {
       selectedAccount?.id ?? null,
       "unreconciled",
     ),
+  });
+  const historyQuery = useQuery({
+    enabled: activeView === "history",
+    queryFn: () =>
+      getReconciledHistory({
+        accountID: historyFilters.accountID,
+        from: historyFilters.from,
+        kind: historyFilters.kind,
+        limit: historyPageSize,
+        offset: historyFilters.offset,
+        search: historyFilters.search,
+        to: historyFilters.to,
+      }),
+    queryKey: queryKeys.banking.history({
+      accountId: historyFilters.accountID,
+      from: historyFilters.from,
+      kind: historyFilters.kind,
+      limit: historyPageSize,
+      offset: historyFilters.offset,
+      search: historyFilters.search,
+      to: historyFilters.to,
+    }),
   });
   const allReviewCards = useMemo(
     () => flattenReviewQueue(reviewQuery.data),
@@ -431,6 +488,23 @@ export function BankingScreen() {
     importMutation.mutate({ accountID: selectedAccount.id, file });
   }
 
+  function updateHistoryFilters(
+    patch: Partial<Omit<HistoryFilters, "offset">>,
+  ) {
+    setHistoryFilters((current) => ({ ...current, ...patch, offset: 0 }));
+  }
+
+  function updateHistoryOffset(offset: number) {
+    setHistoryFilters((current) => ({
+      ...current,
+      offset: Math.max(0, offset),
+    }));
+  }
+
+  function resetHistoryFilters() {
+    setHistoryFilters(defaultHistoryFilters());
+  }
+
   function rememberRecentKind(response: BankingCommandResponse) {
     const kind = commandKind(response);
     const transactionID = response.transaction?.id;
@@ -508,6 +582,12 @@ export function BankingScreen() {
           fallbackTitle="Unable to load unmatched transactions."
         />
       ) : null}
+      {historyQuery.isError ? (
+        <ProblemAlert
+          error={historyQuery.error}
+          fallbackTitle="Unable to load reconciled history."
+        />
+      ) : null}
 
       <AdvisorStrip surface="banking" />
 
@@ -521,112 +601,149 @@ export function BankingScreen() {
         useReviewCounts={!!reviewQuery.data}
       />
 
-      <SplitMain>
-        <section className="banking-review" aria-label={queueTitle}>
-          <div className="banking-section-heading">
-            <div>
-              <p className="type-uppercase-label">Review queue</p>
-              <h2>{selectedAccount?.name ?? "No account selected"}</h2>
+      <div
+        className="banking-view-tabs"
+        role="tablist"
+        aria-label="Banking views"
+      >
+        <button
+          aria-selected={activeView === "review"}
+          className="banking-view-tab"
+          onClick={() => setActiveView("review")}
+          role="tab"
+          type="button"
+        >
+          Review queue
+        </button>
+        <button
+          aria-selected={activeView === "history"}
+          className="banking-view-tab"
+          onClick={() => setActiveView("history")}
+          role="tab"
+          type="button"
+        >
+          Reconciled history
+        </button>
+      </div>
+
+      {activeView === "review" ? (
+        <SplitMain>
+          <section className="banking-review" aria-label={queueTitle}>
+            <div className="banking-section-heading">
+              <div>
+                <p className="type-uppercase-label">Review queue</p>
+                <h2>{selectedAccount?.name ?? "No account selected"}</h2>
+              </div>
+              <Badge variant="count">{selectedWorkCount}</Badge>
             </div>
-            <Badge variant="count">{selectedWorkCount}</Badge>
-          </div>
 
-          {reviewQuery.isPending ? (
-            <Card>
-              <p className="type-secondary">Loading review queue.</p>
-            </Card>
-          ) : null}
+            {reviewQuery.isPending ? (
+              <Card>
+                <p className="type-secondary">Loading review queue.</p>
+              </Card>
+            ) : null}
 
-          {!reviewQuery.isPending && accounts.length === 0 ? (
-            <EmptyState title="No bank accounts">
-              <span className="banking-empty-state__content">
-                <span>
-                  Add a Revolut bank account before importing statements.
+            {!reviewQuery.isPending && accounts.length === 0 ? (
+              <EmptyState title="No bank accounts">
+                <span className="banking-empty-state__content">
+                  <span>
+                    Add a Revolut bank account before importing statements.
+                  </span>
+                  <span className="banking-empty-state__actions">
+                    <Button onClick={openCreateAccount} type="button">
+                      Add account
+                    </Button>
+                  </span>
                 </span>
-                <span className="banking-empty-state__actions">
-                  <Button onClick={openCreateAccount} type="button">
-                    Add account
-                  </Button>
-                </span>
-              </span>
-            </EmptyState>
-          ) : null}
+              </EmptyState>
+            ) : null}
 
-          {scopedReviewCards.map((card) => (
-            <ReviewCard
+            {scopedReviewCards.map((card) => (
+              <ReviewCard
+                busy={isCommandPending}
+                card={card}
+                key={`${card.kind}-${card.suggestion_id}`}
+                onAttachReceipt={(transactionID, file) =>
+                  attachReceiptMutation.mutate({ file, transactionID })
+                }
+                onDeleteReceipt={(transactionID) =>
+                  deleteReceiptMutation.mutate({ transactionID })
+                }
+                onExclude={(selectedCard, reason) =>
+                  excludeMutation.mutate({ card: selectedCard, reason })
+                }
+                onFileDLA={(transactionID) => dlaMutation.mutate(transactionID)}
+                onMatchInvoice={(transactionID, invoiceID) =>
+                  confirmMutation.mutate({ invoiceID, transactionID })
+                }
+                onRecode={(transactionID, accountCode) =>
+                  recodeMutation.mutate({ accountCode, transactionID })
+                }
+              />
+            ))}
+
+            {manualAllocationTransactions.map((transaction) => (
+              <ManualAllocationCard
+                busy={isCommandPending}
+                key={`manual-${transaction.id}`}
+                onAttachReceipt={(transactionID, file) =>
+                  attachReceiptMutation.mutate({ file, transactionID })
+                }
+                onConfirm={(transactionID, invoiceID) =>
+                  confirmMutation.mutate({ invoiceID, transactionID })
+                }
+                onDeleteReceipt={(transactionID) =>
+                  deleteReceiptMutation.mutate({ transactionID })
+                }
+                transaction={transaction}
+              />
+            ))}
+
+            {isEmptyQueue ? (
+              <EmptyState title="All caught up…">
+                No banking review cards are waiting for this account.
+              </EmptyState>
+            ) : null}
+
+            {hasUnmatchedImports ? (
+              <EmptyState title="Review pending">
+                Imported transactions are waiting for suggested matches.
+              </EmptyState>
+            ) : null}
+          </section>
+
+          <aside className="banking-rail" aria-label="Banking side panel">
+            {isEmptyQueue ? (
+              <EmptyState title="All caught up…">
+                Recently imported transactions have all been reconciled or
+                excluded.
+              </EmptyState>
+            ) : null}
+            <RecentlyReconciled
               busy={isCommandPending}
-              card={card}
-              key={`${card.kind}-${card.suggestion_id}`}
+              isLoading={recentQuery.isPending}
+              items={scopedRecent}
+              kindByTransactionID={recentKinds}
               onAttachReceipt={(transactionID, file) =>
                 attachReceiptMutation.mutate({ file, transactionID })
               }
               onDeleteReceipt={(transactionID) =>
                 deleteReceiptMutation.mutate({ transactionID })
               }
-              onExclude={(selectedCard, reason) =>
-                excludeMutation.mutate({ card: selectedCard, reason })
-              }
-              onFileDLA={(transactionID) => dlaMutation.mutate(transactionID)}
-              onMatchInvoice={(transactionID, invoiceID) =>
-                confirmMutation.mutate({ invoiceID, transactionID })
-              }
-              onRecode={(transactionID, accountCode) =>
-                recodeMutation.mutate({ accountCode, transactionID })
-              }
             />
-          ))}
-
-          {manualAllocationTransactions.map((transaction) => (
-            <ManualAllocationCard
-              busy={isCommandPending}
-              key={`manual-${transaction.id}`}
-              onAttachReceipt={(transactionID, file) =>
-                attachReceiptMutation.mutate({ file, transactionID })
-              }
-              onConfirm={(transactionID, invoiceID) =>
-                confirmMutation.mutate({ invoiceID, transactionID })
-              }
-              onDeleteReceipt={(transactionID) =>
-                deleteReceiptMutation.mutate({ transactionID })
-              }
-              transaction={transaction}
-            />
-          ))}
-
-          {isEmptyQueue ? (
-            <EmptyState title="All caught up…">
-              No banking review cards are waiting for this account.
-            </EmptyState>
-          ) : null}
-
-          {hasUnmatchedImports ? (
-            <EmptyState title="Review pending">
-              Imported transactions are waiting for suggested matches.
-            </EmptyState>
-          ) : null}
-        </section>
-
-        <aside className="banking-rail" aria-label="Banking side panel">
-          {isEmptyQueue ? (
-            <EmptyState title="All caught up…">
-              Recently imported transactions have all been reconciled or
-              excluded.
-            </EmptyState>
-          ) : null}
-          <RecentlyReconciled
-            busy={isCommandPending}
-            isLoading={recentQuery.isPending}
-            items={scopedRecent}
-            kindByTransactionID={recentKinds}
-            onAttachReceipt={(transactionID, file) =>
-              attachReceiptMutation.mutate({ file, transactionID })
-            }
-            onDeleteReceipt={(transactionID) =>
-              deleteReceiptMutation.mutate({ transactionID })
-            }
-          />
-        </aside>
-      </SplitMain>
+          </aside>
+        </SplitMain>
+      ) : (
+        <ReconciledHistoryPanel
+          accounts={accounts}
+          filters={historyFilters}
+          isLoading={historyQuery.isPending}
+          onFilterChange={updateHistoryFilters}
+          onPageChange={updateHistoryOffset}
+          onReset={resetHistoryFilters}
+          page={historyQuery.data}
+        />
+      )}
 
       {isCreateAccountOpen ? (
         <AccountCreateModal
@@ -806,6 +923,219 @@ function AccountCreateModal({
         </div>
       </form>
     </div>
+  );
+}
+
+function ReconciledHistoryPanel({
+  accounts,
+  filters,
+  isLoading,
+  onFilterChange,
+  onPageChange,
+  onReset,
+  page,
+}: {
+  readonly accounts: BankingAccount[];
+  readonly filters: HistoryFilters;
+  readonly isLoading: boolean;
+  readonly onFilterChange: (
+    patch: Partial<Omit<HistoryFilters, "offset">>,
+  ) => void;
+  readonly onPageChange: (offset: number) => void;
+  readonly onReset: () => void;
+  readonly page: BankingReconciledHistoryResponse | undefined;
+}) {
+  const rows = page?.transactions ?? [];
+  const totalCount = page?.total_count ?? 0;
+  const limit = page?.limit ?? historyPageSize;
+  const offset = page?.offset ?? filters.offset;
+  const pageStart = totalCount === 0 ? 0 : offset + 1;
+  const pageEnd = Math.min(offset + rows.length, totalCount);
+  const canPageBack = offset > 0;
+  const canPageForward = offset + limit < totalCount;
+
+  return (
+    <section className="banking-history" aria-label="Reconciled history">
+      <div className="banking-section-heading">
+        <div>
+          <p className="type-uppercase-label">Reconciled history</p>
+          <h2>{totalCount} reconciled</h2>
+        </div>
+        <Badge variant="count">{rows.length}</Badge>
+      </div>
+
+      <form
+        className="banking-history-filters"
+        onSubmit={(event) => event.preventDefault()}
+      >
+        <Field label="Account">
+          <Select
+            onChange={(event) =>
+              onFilterChange({
+                accountID:
+                  event.target.value === "all"
+                    ? null
+                    : Number(event.target.value),
+              })
+            }
+            value={
+              filters.accountID === null ? "all" : String(filters.accountID)
+            }
+          >
+            <option value="all">All accounts</option>
+            {accounts.map((account) => (
+              <option key={account.id} value={account.id}>
+                {account.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="From">
+          <Input
+            onChange={(event) => onFilterChange({ from: event.target.value })}
+            type="date"
+            value={filters.from}
+          />
+        </Field>
+        <Field label="To">
+          <Input
+            onChange={(event) => onFilterChange({ to: event.target.value })}
+            type="date"
+            value={filters.to}
+          />
+        </Field>
+        <Field label="Search">
+          <Input
+            onChange={(event) => onFilterChange({ search: event.target.value })}
+            placeholder="Payee or reference"
+            type="search"
+            value={filters.search}
+          />
+        </Field>
+        <Field label="Kind">
+          <Select
+            onChange={(event) =>
+              onFilterChange({
+                kind: event.target.value as HistoryFilters["kind"],
+              })
+            }
+            value={filters.kind}
+          >
+            <option value="">All kinds</option>
+            <option value="match">Invoice match</option>
+            <option value="suggestion">DLA suggestion</option>
+            <option value="rule">Payee rule</option>
+            <option value="manual">Manual</option>
+          </Select>
+        </Field>
+        <Button onClick={onReset} type="button" variant="secondary">
+          Clear
+        </Button>
+      </form>
+
+      {isLoading ? (
+        <p className="type-secondary">Loading reconciled history.</p>
+      ) : null}
+      {!isLoading && rows.length === 0 ? (
+        <EmptyState title="No reconciled transactions">
+          No rows match the current filters.
+        </EmptyState>
+      ) : null}
+      {rows.length > 0 ? <ReconciledHistoryTable rows={rows} /> : null}
+
+      <div className="banking-history-pagination">
+        <span className="type-secondary">
+          {pageStart}-{pageEnd} of {totalCount}
+        </span>
+        <span className="banking-history-pagination__actions">
+          <Button
+            disabled={!canPageBack}
+            onClick={() => onPageChange(Math.max(0, offset - limit))}
+            type="button"
+            variant="secondary"
+          >
+            Previous
+          </Button>
+          <Button
+            disabled={!canPageForward}
+            onClick={() => onPageChange(offset + limit)}
+            type="button"
+            variant="secondary"
+          >
+            Next
+          </Button>
+        </span>
+      </div>
+    </section>
+  );
+}
+
+function ReconciledHistoryTable({
+  rows,
+}: {
+  readonly rows: BankingReconciledHistoryTransaction[];
+}) {
+  return (
+    <Table
+      aria-label="Reconciled transaction history"
+      className="banking-history-table"
+    >
+      <TableHead>
+        <TableRow>
+          <TableHeaderCell>Date</TableHeaderCell>
+          <TableHeaderCell>Payee / reference</TableHeaderCell>
+          <TableHeaderCell>Kind</TableHeaderCell>
+          <TableHeaderCell align="right">Amount</TableHeaderCell>
+          <TableHeaderCell>Reconciled</TableHeaderCell>
+          <TableHeaderCell>Actor</TableHeaderCell>
+          <TableHeaderCell>Receipt</TableHeaderCell>
+          <TableHeaderCell>Actions</TableHeaderCell>
+        </TableRow>
+      </TableHead>
+      <TableBody>
+        {rows.map((item) => (
+          <TableRow key={`${item.transaction.id}-${item.reconciled_at}`}>
+            <TableCell data-label="Date">
+              <span className="type-mono-numeral">
+                {formatShortDate(item.transaction.date)}
+              </span>
+            </TableCell>
+            <TableCell data-label="Payee / reference">
+              <span className="banking-history-table__copy">
+                <strong>{item.transaction.payee}</strong>
+                <span>{item.transaction.reference || "No reference"}</span>
+              </span>
+            </TableCell>
+            <TableCell data-label="Kind">
+              {reconciliationKindLabel(item.kind)}
+            </TableCell>
+            <TableCell align="right" data-label="Amount" variant="mono-numeric">
+              {formatMoney(item.transaction.amount)}
+            </TableCell>
+            <TableCell data-label="Reconciled">
+              {formatDateTime(item.reconciled_at)}
+            </TableCell>
+            <TableCell data-label="Actor">{item.actor}</TableCell>
+            <TableCell data-label="Receipt">
+              {item.transaction.receipt ? (
+                <span className="banking-history-table__receipt">
+                  <Badge variant="neutral">Receipt</Badge>
+                  <a href={item.transaction.receipt.url}>Preview</a>
+                </span>
+              ) : (
+                <Badge variant="neutral">No receipt</Badge>
+              )}
+            </TableCell>
+            <TableCell data-label="Actions">
+              <span
+                aria-hidden="true"
+                className="banking-history-table__actions"
+              />
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
   );
 }
 
@@ -1411,6 +1741,7 @@ async function refreshBankingData(
       queryKey: ["banking", "invoiceCandidates"],
     }),
     queryClient.invalidateQueries({ queryKey: ["banking", "recent"] }),
+    queryClient.invalidateQueries({ queryKey: ["banking", "history"] }),
   ]);
 }
 
@@ -1480,7 +1811,9 @@ function accountCreateErrorMessage(error: unknown) {
 function reviewCardTitle(card: BankingReviewCard) {
   switch (card.kind) {
     case "match":
-      return isDraftInvoiceMatch(card) ? "Draft invoice match" : "Invoice match";
+      return isDraftInvoiceMatch(card)
+        ? "Draft invoice match"
+        : "Invoice match";
     case "rule":
       return "Payee rule";
     case "suggestion":
@@ -1604,4 +1937,28 @@ function formatShortDate(value: string) {
     month: "short",
     timeZone: "UTC",
   }).format(new Date(`${value}T00:00:00Z`));
+}
+
+function formatDateTime(value: string) {
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    month: "short",
+    timeZone: "UTC",
+    year: "numeric",
+  }).format(new Date(value));
+}
+
+function reconciliationKindLabel(kind: BankingReconciliationKind) {
+  switch (kind) {
+    case "match":
+      return "Invoice match";
+    case "suggestion":
+      return "DLA suggestion";
+    case "rule":
+      return "Payee rule";
+    case "manual":
+      return "Manual";
+  }
 }

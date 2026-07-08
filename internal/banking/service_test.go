@@ -792,6 +792,125 @@ func TestFeedReviewQueueRecentlyReconciledAndCounts(t *testing.T) {
 	assertStoredTransactionState(t, ctx, pool, otherUnreconciled, TransactionStateUnreconciled)
 }
 
+func TestReconciledHistoryFiltersAndPagination(t *testing.T) {
+	pool, ledgerPool := temporaryMigratedBankingDatabase(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	service := NewService(pool, ledger.New(ledgerPool))
+	account, err := service.CreateAccount(ctx, AccountInput{
+		Name:     "History GBP",
+		Provider: ProviderRevolut,
+		Currency: "GBP",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount() account error = %v", err)
+	}
+	otherAccount, err := service.CreateAccount(ctx, AccountInput{
+		Name:     "History EUR",
+		Provider: ProviderRevolut,
+		Currency: "EUR",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount() other account error = %v", err)
+	}
+
+	matchTxn := importSingleBankingTxn(t, ctx, pool, service, account.ID, revolutTestTxn{
+		Date:      time.Date(2026, 9, 1, 9, 0, 0, 0, time.UTC),
+		ID:        "history-match",
+		Payee:     "Contoso GMBH",
+		Reference: "INV-HISTORY-1",
+		Amount:    money.Money{Amount: 120000, Currency: "GBP"},
+	})
+	ruleTxn := importSingleBankingTxn(t, ctx, pool, service, account.ID, revolutTestTxn{
+		Date:      time.Date(2026, 9, 2, 9, 0, 0, 0, time.UTC),
+		ID:        "history-rule",
+		Payee:     "SaaS Vendor",
+		Reference: "subscription",
+		Amount:    money.Money{Amount: -2400, Currency: "GBP"},
+	})
+	dlaTxn := importSingleBankingTxn(t, ctx, pool, service, account.ID, revolutTestTxn{
+		Date:      time.Date(2026, 9, 3, 9, 0, 0, 0, time.UTC),
+		ID:        "history-dla",
+		Payee:     "Director transfer",
+		Reference: "drawing",
+		Amount:    money.Money{Amount: -50000, Currency: "GBP"},
+	})
+	otherTxn := importSingleBankingTxn(t, ctx, pool, service, otherAccount.ID, revolutTestTxn{
+		Date:      time.Date(2026, 9, 4, 9, 0, 0, 0, time.UTC),
+		ID:        "history-other",
+		Payee:     "EUR Client",
+		Reference: "INV-EUR-HISTORY",
+		Amount:    money.Money{Amount: 2000, Currency: "EUR"},
+		Balance:   money.Money{Amount: 2000, Currency: "EUR"},
+	})
+	unreconciledTxn := importSingleBankingTxn(t, ctx, pool, service, account.ID, revolutTestTxn{
+		Date:      time.Date(2026, 9, 5, 9, 0, 0, 0, time.UTC),
+		ID:        "history-unreconciled",
+		Payee:     "Pending Vendor",
+		Reference: "pending",
+		Amount:    money.Money{Amount: -1000, Currency: "GBP"},
+	})
+
+	mustRecordSuggestion(t, ctx, service, matchTxn, SuggestionKindInvoiceMatch, 0.980, "inv-history-1", "invoice match")
+	mustRecordSuggestion(t, ctx, service, ruleTxn, SuggestionKindPayeeRule, 0.900, "6200-software", "payee rule")
+	mustRecordSuggestion(t, ctx, service, dlaTxn, SuggestionKindDLA, 0.800, "director-loan", "director drawing")
+	mustRecordSuggestion(t, ctx, service, otherTxn, SuggestionKindInvoiceMatch, 0.950, "inv-eur-history", "invoice match")
+	mustTransition(t, ctx, service, matchTxn, TransactionStateReconciled, "reviewer")
+	mustTransition(t, ctx, service, ruleTxn, TransactionStateReconciled, "reviewer")
+	mustTransition(t, ctx, service, dlaTxn, TransactionStateReconciled, "reviewer")
+	mustTransition(t, ctx, service, otherTxn, TransactionStateReconciled, "reviewer")
+
+	from := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC)
+	filtered, err := service.ReconciledHistory(ctx, ReconciledHistoryFilter{
+		AccountID: account.ID,
+		From:      &from,
+		To:        &to,
+		Search:    "vendor",
+		Kind:      ReconciliationKindRule,
+		Limit:     5,
+	})
+	if err != nil {
+		t.Fatalf("ReconciledHistory(filtered) error = %v", err)
+	}
+	if filtered.TotalCount != 1 || len(filtered.Transactions) != 1 {
+		t.Fatalf("filtered history count/len = %d/%d, want 1/1; page=%+v", filtered.TotalCount, len(filtered.Transactions), filtered)
+	}
+	row := filtered.Transactions[0]
+	if row.Transaction.ID != ruleTxn || row.Kind != ReconciliationKindRule || row.Actor != "reviewer" || row.ReconciledAt.IsZero() {
+		t.Fatalf("filtered history row = %+v, want rule transaction with actor/timestamp", row)
+	}
+
+	firstPage, err := service.ReconciledHistory(ctx, ReconciledHistoryFilter{Limit: 2})
+	if err != nil {
+		t.Fatalf("ReconciledHistory(first page) error = %v", err)
+	}
+	if firstPage.TotalCount != 4 || len(firstPage.Transactions) != 2 || firstPage.Limit != 2 || firstPage.Offset != 0 {
+		t.Fatalf("first history page = %+v, want total 4 len 2 limit 2 offset 0", firstPage)
+	}
+	secondPage, err := service.ReconciledHistory(ctx, ReconciledHistoryFilter{Limit: 2, Offset: 2})
+	if err != nil {
+		t.Fatalf("ReconciledHistory(second page) error = %v", err)
+	}
+	if secondPage.TotalCount != 4 || len(secondPage.Transactions) != 2 || secondPage.Offset != 2 {
+		t.Fatalf("second history page = %+v, want total 4 len 2 offset 2", secondPage)
+	}
+	if hasRecentTransaction(firstPage.Transactions, secondPage.Transactions[0].Transaction.ID) || hasRecentTransaction(firstPage.Transactions, secondPage.Transactions[1].Transaction.ID) {
+		t.Fatalf("history pages overlap: first=%v second=%v", reconciledTransactionIDs(firstPage.Transactions), reconciledTransactionIDs(secondPage.Transactions))
+	}
+
+	referenceMatch, err := service.ReconciledHistory(ctx, ReconciledHistoryFilter{Search: "inv-eur", Limit: 10})
+	if err != nil {
+		t.Fatalf("ReconciledHistory(reference search) error = %v", err)
+	}
+	if referenceMatch.TotalCount != 1 || len(referenceMatch.Transactions) != 1 || referenceMatch.Transactions[0].Transaction.ID != otherTxn {
+		t.Fatalf("reference search page = %+v, want other account invoice row", referenceMatch)
+	}
+	assertStoredTransactionState(t, ctx, pool, unreconciledTxn, TransactionStateUnreconciled)
+}
+
 func TestPayeeNormalizationAndRules(t *testing.T) {
 	normalization := []struct {
 		input string
@@ -1153,6 +1272,14 @@ func transactionIDs(txns []Transaction) []TransactionID {
 	ids := make([]TransactionID, len(txns))
 	for i, txn := range txns {
 		ids[i] = txn.ID
+	}
+	return ids
+}
+
+func reconciledTransactionIDs(items []ReconciledTransaction) []TransactionID {
+	ids := make([]TransactionID, len(items))
+	for i, item := range items {
+		ids[i] = item.Transaction.ID
 	}
 	return ids
 }

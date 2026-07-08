@@ -489,6 +489,22 @@ func TestHTTPFeedRecentAndCommandsHappyAndConflict(t *testing.T) {
 	if len(recentForAccount.Transactions) != 3 {
 		t.Fatalf("recent account count = %d, want 3; recent=%+v", len(recentForAccount.Transactions), recentForAccount)
 	}
+	historyResponse := performBankingRequest(router, http.MethodGet, fmt.Sprintf("/api/banking/reconciled-history?account=%d&search=subscription&kind=rule&limit=2&offset=0", account.ID), nil, "", true)
+	if historyResponse.Code != http.StatusOK {
+		t.Fatalf("history status = %d, want %d; body=%s", historyResponse.Code, http.StatusOK, historyResponse.Body.String())
+	}
+	var history reconciledHistoryResponse
+	decodeBankingResponse(t, historyResponse, &history)
+	if history.TotalCount != 1 || history.Limit != 2 || history.Offset != 0 || len(history.Transactions) != 1 {
+		t.Fatalf("history page = %+v, want one filtered row with limit/offset metadata", history)
+	}
+	if history.Transactions[0].Transaction.ID != int64(recodeTxn) || history.Transactions[0].Kind != ReconciliationKindRule || history.Transactions[0].Actor != reconciliationActor {
+		t.Fatalf("history row = %+v, want recode rule row", history.Transactions[0])
+	}
+	badHistoryResponse := performBankingRequest(router, http.MethodGet, "/api/banking/reconciled-history?kind=bad", nil, "", true)
+	if badHistoryResponse.Code != http.StatusBadRequest {
+		t.Fatalf("bad history kind status = %d, want %d; body=%s", badHistoryResponse.Code, http.StatusBadRequest, badHistoryResponse.Body.String())
+	}
 	badRecentResponse := performBankingRequest(router, http.MethodGet, "/api/banking/recent?account=bad", nil, "", true)
 	if badRecentResponse.Code != http.StatusBadRequest {
 		t.Fatalf("bad recent account status = %d, want %d; body=%s", badRecentResponse.Code, http.StatusBadRequest, badRecentResponse.Body.String())
@@ -567,6 +583,15 @@ func TestHTTPReceiptUploadGetDeleteAndSurvivesReconciliation(t *testing.T) {
 	decodeBankingResponse(t, recentHTTPResponse, &recent)
 	if len(recent.Transactions) != 1 || recent.Transactions[0].Transaction.Receipt == nil {
 		t.Fatalf("recent receipt metadata missing after reconciliation: %+v", recent)
+	}
+	historyResponse := performBankingRequest(router, http.MethodGet, fmt.Sprintf("/api/banking/reconciled-history?account=%d", account.ID), nil, "", true)
+	if historyResponse.Code != http.StatusOK {
+		t.Fatalf("history receipt status = %d, want %d; body=%s", historyResponse.Code, http.StatusOK, historyResponse.Body.String())
+	}
+	var history reconciledHistoryResponse
+	decodeBankingResponse(t, historyResponse, &history)
+	if len(history.Transactions) != 1 || history.Transactions[0].Transaction.Receipt == nil {
+		t.Fatalf("history receipt metadata missing after reconciliation: %+v", history)
 	}
 
 	getAfterConfirm := performBankingRequest(router, http.MethodGet, fmt.Sprintf("/api/banking/transactions/%d/receipt", txnID), nil, "", true)

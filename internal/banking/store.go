@@ -881,6 +881,53 @@ func (Store) RecentlyReconciled(ctx context.Context, tx db.Tx, accountID Account
 	return items, nil
 }
 
+func (Store) ReconciledHistory(ctx context.Context, tx db.Tx, filter ReconciledHistoryFilter) (ReconciledHistoryPage, error) {
+	var (
+		fromDate any
+		toDate   any
+	)
+	if filter.From != nil {
+		fromDate = *filter.From
+	}
+	if filter.To != nil {
+		toDate = *filter.To
+	}
+	args := []any{
+		int64(filter.AccountID),
+		fromDate,
+		toDate,
+		filter.Search,
+		string(filter.Kind),
+	}
+	var totalCount int
+	if err := tx.QueryRow(ctx, reconciledHistoryCountSQL(), args...).Scan(&totalCount); err != nil {
+		return ReconciledHistoryPage{}, fmt.Errorf("banking: reconciled history count: %w", err)
+	}
+	rows, err := tx.Query(ctx, reconciledHistoryRowsSQL(), append(args, filter.Limit, filter.Offset)...)
+	if err != nil {
+		return ReconciledHistoryPage{}, fmt.Errorf("banking: reconciled history: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]ReconciledTransaction, 0, min(filter.Limit, totalCount))
+	for rows.Next() {
+		item, err := scanReconciledHistoryTransaction(rows)
+		if err != nil {
+			return ReconciledHistoryPage{}, err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return ReconciledHistoryPage{}, fmt.Errorf("banking: collect reconciled history: %w", err)
+	}
+	return ReconciledHistoryPage{
+		Transactions: items,
+		TotalCount:   totalCount,
+		Limit:        filter.Limit,
+		Offset:       filter.Offset,
+	}, nil
+}
+
 func (Store) UpsertReceipt(ctx context.Context, tx db.Tx, receipt Receipt) (Receipt, error) {
 	assetRef := strings.TrimSpace(receipt.AssetRef)
 	filename := strings.TrimSpace(receipt.Filename)
@@ -1029,6 +1076,61 @@ func scanAccount(row pgx.CollectableRow) (BankAccount, error) {
 
 func transactionSelectSQL() string {
 	return "SELECT " + transactionColumns("") + "\nFROM transactions\n"
+}
+
+func reconciledHistoryRowsSQL() string {
+	return `SELECT ` + transactionColumns("t") + `,
+	c.changed_at,
+	c.actor,
+	` + reconciledHistoryKindSQL() + `
+FROM transaction_state_changes c
+JOIN transactions t ON t.id = c.txn_id
+LEFT JOIN LATERAL (
+	SELECT s.kind
+	FROM suggestions s
+	WHERE s.txn_id = t.id
+	ORDER BY s.created_at DESC, s.id DESC
+	LIMIT 1
+) latest ON true
+WHERE ` + reconciledHistoryWhereSQL() + `
+ORDER BY c.changed_at DESC, c.id DESC
+LIMIT $6 OFFSET $7`
+}
+
+func reconciledHistoryCountSQL() string {
+	return `SELECT count(*)
+FROM transaction_state_changes c
+JOIN transactions t ON t.id = c.txn_id
+LEFT JOIN LATERAL (
+	SELECT s.kind
+	FROM suggestions s
+	WHERE s.txn_id = t.id
+	ORDER BY s.created_at DESC, s.id DESC
+	LIMIT 1
+) latest ON true
+WHERE ` + reconciledHistoryWhereSQL()
+}
+
+func reconciledHistoryWhereSQL() string {
+	kind := reconciledHistoryKindSQL()
+	return `c.to_state = 'reconciled'
+	AND t.state = 'reconciled'
+	AND ($1::bigint = 0 OR t.account_id = $1)
+	AND ($2::date IS NULL OR t.date >= $2::date)
+	AND ($3::date IS NULL OR t.date <= $3::date)
+	AND ($4::text = '' OR position(lower($4::text) in lower(t.payee)) > 0 OR position(lower($4::text) in lower(t.reference)) > 0)
+	AND ($5::text = '' OR ` + kind + ` = $5::text)`
+}
+
+func reconciledHistoryKindSQL() string {
+	return `COALESCE(
+	CASE latest.kind::text
+	WHEN 'invoice-match' THEN 'match'
+	WHEN 'dla' THEN 'suggestion'
+	WHEN 'payee-rule' THEN 'rule'
+	END,
+	'manual'
+)`
 }
 
 func transactionColumns(alias string) string {
@@ -1439,6 +1541,51 @@ func scanReconciledTransaction(row transactionRow) (ReconciledTransaction, error
 	item.Transaction.Date = item.Transaction.Date.UTC()
 	item.Transaction.CreatedAt = item.Transaction.CreatedAt.UTC()
 	item.ReconciledAt = item.ReconciledAt.UTC()
+	return item, nil
+}
+
+func scanReconciledHistoryTransaction(row transactionRow) (ReconciledTransaction, error) {
+	var (
+		item      ReconciledTransaction
+		txnID     int64
+		accountID int64
+		amount    int64
+		currency  string
+		meta      []byte
+		batchID   int64
+		state     string
+		kind      string
+	)
+	if err := row.Scan(
+		&txnID,
+		&accountID,
+		&item.Transaction.Date,
+		&amount,
+		&currency,
+		&item.Transaction.Payee,
+		&item.Transaction.Reference,
+		&meta,
+		&batchID,
+		&state,
+		&item.Transaction.CreatedAt,
+		&item.ReconciledAt,
+		&item.Actor,
+		&kind,
+	); err != nil {
+		return ReconciledTransaction{}, fmt.Errorf("banking: scan reconciled history transaction: %w", err)
+	}
+	if err := json.Unmarshal(meta, &item.Transaction.ProviderMeta); err != nil {
+		return ReconciledTransaction{}, fmt.Errorf("banking: unmarshal reconciled history transaction provider metadata: %w", err)
+	}
+	item.Transaction.ID = TransactionID(txnID)
+	item.Transaction.AccountID = AccountID(accountID)
+	item.Transaction.Amount = money.Money{Amount: amount, Currency: currency}
+	item.Transaction.ImportBatchID = ImportBatchID(batchID)
+	item.Transaction.State = TransactionState(state)
+	item.Transaction.Date = item.Transaction.Date.UTC()
+	item.Transaction.CreatedAt = item.Transaction.CreatedAt.UTC()
+	item.ReconciledAt = item.ReconciledAt.UTC()
+	item.Kind = ReconciliationKind(kind)
 	return item, nil
 }
 

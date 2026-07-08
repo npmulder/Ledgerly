@@ -198,6 +198,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/banking/reconciled-history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Search reconciled transaction history
+         * @description Returns offset-paginated reconciled transactions with account, transaction date, payee/reference search, and reconciliation-kind filters.
+         */
+        get: operations["bankingGetReconciledHistory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/banking/review": {
         parameters: {
             query?: never;
@@ -1629,6 +1649,21 @@ export interface components {
         BankingRecodeRequest: {
             account_code: string;
         };
+        BankingReconciledHistoryResponse: {
+            limit: number;
+            offset: number;
+            total_count: number;
+            transactions: components["schemas"]["BankingReconciledHistoryTransaction"][];
+        };
+        BankingReconciledHistoryTransaction: {
+            actor: string;
+            kind: components["schemas"]["BankingReconciliationKind"];
+            /** Format: date-time */
+            reconciled_at: string;
+            transaction: components["schemas"]["BankingTransaction"];
+        };
+        /** @enum {string} */
+        BankingReconciliationKind: "match" | "suggestion" | "rule" | "manual";
         BankingReviewCard: {
             /** Format: double */
             confidence: number;
@@ -3289,6 +3324,59 @@ export interface operations {
                 };
             };
             /** @description Invalid recent query */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    bankingGetReconciledHistory: {
+        parameters: {
+            query?: {
+                /** @description Filter by bank account ID. */
+                account?: number;
+                /** @description Filter to transactions on or after this date. */
+                from?: string;
+                /** @description Filter to transactions on or before this date. */
+                to?: string;
+                /** @description Search transaction payee and reference. */
+                search?: string;
+                /** @description Filter by reconciliation kind. */
+                kind?: "match" | "suggestion" | "rule" | "manual";
+                /** @description Maximum history rows. */
+                limit?: number;
+                /** @description Zero-based row offset. */
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Reconciled transaction history */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BankingReconciledHistoryResponse"];
+                };
+            };
+            /** @description Invalid history query */
             400: {
                 headers: {
                     [name: string]: unknown;
