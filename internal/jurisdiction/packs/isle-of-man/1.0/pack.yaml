@@ -5,6 +5,16 @@ meta:
   version: "1.0"
   name: Isle of Man
   currency: GBP
+company_acts:
+  companies-act-1931:
+    label: Companies Act 1931
+    minimum_directors: 2
+    corporate_directors: false
+    company_number_suffixes: [C]
+  companies-act-2006:
+    label: Companies Act 2006
+    minimum_directors: 1
+    company_number_suffixes: [V]
 tax:
   year_end:
     month: 4
@@ -125,3 +135,12 @@ advisor_rules:
     cta:
       label: Refresh rates
       action: moneyfx.refreshRates
+  - id: company_minimum_directors
+    severity: amber
+    surfaces: [dashboard, settings]
+    fact_query: [act_name, director_count, minimum_directors]
+    condition: minimum_directors > 0 and director_count < minimum_directors
+    text_template: 'Your company is registered under the {{ act_name }} and must have at least {{ minimum_directors }} directors - profile lists {{ director_count }}.'
+    cta:
+      label: Open company settings
+      action: 'navigate:/settings/company'

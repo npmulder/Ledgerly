@@ -1406,7 +1406,7 @@ export interface components {
         /** @enum {string} */
         AdvisorSeverity: "amber" | "teal";
         /** @enum {string} */
-        AdvisorSurface: "dashboard" | "invoices" | "banking" | "dla" | "dividends" | "reports";
+        AdvisorSurface: "dashboard" | "settings" | "invoices" | "banking" | "dla" | "dividends" | "reports";
         AdvisorWarning: {
             message: string;
             rule_id: string;
@@ -1950,6 +1950,7 @@ export interface components {
         /** @enum {string} */
         IdentityPATScope: "read-only" | "full";
         IdentityProfile: {
+            act_type: string | null;
             bank_details: components["schemas"]["BankDetails"];
             company_number: string;
             directors: components["schemas"]["Director"][];
@@ -1968,6 +1969,7 @@ export interface components {
             year_end: components["schemas"]["YearEnd"];
         };
         IdentityProfilePatch: {
+            act_type?: string | null;
             bank_details?: components["schemas"]["BankDetails"];
             company_number?: string;
             directors?: components["schemas"]["Director"][];
@@ -1991,6 +1993,7 @@ export interface components {
             password: string;
         };
         IdentityRegisterWithProfileRequest: {
+            act_type?: string | null;
             company_number: string;
             directors?: components["schemas"]["Director"][];
             /** Format: email */
@@ -2265,6 +2268,13 @@ export interface components {
             locked_rate: components["schemas"]["InvoicingLockedRate"];
             number: string;
         };
+        JurisdictionCompanyAct: {
+            act_type: string;
+            company_number_suffixes: string[];
+            corporate_directors: boolean | null;
+            label: string;
+            minimum_directors: number;
+        };
         JurisdictionFilingDeadline: {
             authority: string;
             /** Format: date */
@@ -2277,6 +2287,7 @@ export interface components {
             deadlines: components["schemas"]["JurisdictionFilingDeadline"][];
         };
         JurisdictionPack: {
+            company_acts: components["schemas"]["JurisdictionCompanyAct"][];
             meta: components["schemas"]["JurisdictionPackMeta"];
             rule_summaries: components["schemas"]["JurisdictionRuleSummary"][];
         };
@@ -2511,7 +2522,7 @@ export interface operations {
         parameters: {
             query?: {
                 /** @description Advisor display surface. */
-                surface?: "dashboard" | "invoices" | "banking" | "dla" | "dividends" | "reports";
+                surface?: "dashboard" | "settings" | "invoices" | "banking" | "dla" | "dividends" | "reports";
             };
             header?: never;
             path?: never;

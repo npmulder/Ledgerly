@@ -40,6 +40,9 @@ func TestIsleOfManRenderedInsightTextSnapshots(t *testing.T) {
 		FactDividendEstimate:      money.Money{Amount: 15000, Currency: "GBP"},
 		FactDividendEstimateMinor: int64(15000),
 		FactStaleDays:             5,
+		FactRuleCompanyActName:    "Companies Act 1931",
+		FactRuleDirectorCount:     1,
+		FactRuleMinimumDirectors:  2,
 	}
 	delta, err := Evaluate(rules, facts, time.Date(2026, time.July, 6, 0, 0, 0, 0, time.UTC))
 	if err != nil {

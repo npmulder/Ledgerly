@@ -14,6 +14,7 @@ import (
 
 	"github.com/npmulder/ledgerly/internal/advisor"
 	"github.com/npmulder/ledgerly/internal/dla"
+	"github.com/npmulder/ledgerly/internal/identity"
 	"github.com/npmulder/ledgerly/internal/invoicing"
 	it "github.com/npmulder/ledgerly/internal/it"
 	"github.com/npmulder/ledgerly/internal/it/fixtures"
@@ -25,6 +26,47 @@ import (
 )
 
 func TestAdvisorRunEvaluationRulesEndToEnd(t *testing.T) {
+	t.Run("company act minimum directors creates and resolves from profile updates", func(t *testing.T) {
+		h := harness.New(t, harness.Options{ClockStart: time.Date(2026, 7, 1, 9, 0, 0, 0, time.UTC)})
+		fixtures.Rates(t, h, fixtures.RatesStep(map[time.Time]string{h.Clock.Now(): "0.8500"}))
+		if err := h.WaitAdvisorIdle(); err != nil {
+			t.Fatalf("WaitAdvisorIdle(rates seed) error = %v", err)
+		}
+
+		baseline := advisorRunCount(t, h)
+		company := fixtures.Company(t, h,
+			fixtures.CompanyActType("companies-act-1931"),
+			fixtures.CompanyDirectors(identity.Director{Name: "N. Meyer", IsChair: true}),
+		)
+		waitForAdvisorRunCount(t, h, baseline+1)
+		if err := h.WaitAdvisorIdle(); err != nil {
+			t.Fatalf("WaitAdvisorIdle(one director profile update) error = %v", err)
+		}
+
+		insight := requireAdvisorInsight(t, h, "company_minimum_directors")
+		assertAdvisorInsight(t, insight, advisor.SeverityAmber, []advisor.Surface{advisor.SurfaceDashboard, advisor.SurfaceSettings})
+		if insight.CTA.Action != "navigate:/settings/company" {
+			t.Fatalf("company minimum directors CTA action = %q, want settings route", insight.CTA.Action)
+		}
+		for _, want := range []string{"Companies Act 1931", "at least 2 directors", "profile lists 1"} {
+			if !strings.Contains(insight.RenderedText, want) {
+				t.Fatalf("company minimum directors text = %q, want substring %q", insight.RenderedText, want)
+			}
+		}
+
+		baseline = advisorRunCount(t, h)
+		company.With(fixtures.CompanyDirectors(
+			identity.Director{Name: "N. Meyer", IsChair: true},
+			identity.Director{Name: "A. Patel"},
+		))
+		waitForAdvisorRunCount(t, h, baseline+1)
+		if err := h.WaitAdvisorIdle(); err != nil {
+			t.Fatalf("WaitAdvisorIdle(two director profile update) error = %v", err)
+		}
+		assertNoActiveAdvisorInsight(t, h, "company_minimum_directors")
+		it.AssertLedgerBalanced(t, h)
+	})
+
 	t.Run("overdue invoice creates and resolves", func(t *testing.T) {
 		h := harness.New(t, harness.Options{ClockStart: time.Date(2025, 5, 1, 9, 0, 0, 0, time.UTC)})
 		fixtures.Company(t, h)

@@ -27,3 +27,9 @@ severity: amber
 surfaces: banking,dashboard,invoices
 text: ECB rates are stale. Refresh rates before issuing or settling foreign-currency transactions.
 cta: Refresh rates | moneyfx.refreshRates | {}
+
+rule: company_minimum_directors
+severity: amber
+surfaces: dashboard,settings
+text: Your company is registered under the Companies Act 1931 and must have at least 2 directors - profile lists 1.
+cta: Open company settings | navigate:/settings/company | {}

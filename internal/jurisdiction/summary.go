@@ -21,7 +21,17 @@ const (
 // PackOverview is the UI-safe read model for the active jurisdiction pack.
 type PackOverview struct {
 	Meta          PackMeta
+	CompanyActs   []CompanyActOverview
 	RuleSummaries []RuleSummary
+}
+
+// CompanyActOverview is the UI-safe company act metadata from the active pack.
+type CompanyActOverview struct {
+	ActType               string
+	Label                 string
+	MinimumDirectors      int
+	CorporateDirectors    *bool
+	CompanyNumberSuffixes []string
 }
 
 // RuleSummary is one human-readable summary generated from rules-pack data.
@@ -72,7 +82,8 @@ func packOverview(pack *Pack) (PackOverview, error) {
 	}
 
 	return PackOverview{
-		Meta: pack.Meta,
+		Meta:        pack.Meta,
+		CompanyActs: companyActOverviews(pack.CompanyActs),
 		RuleSummaries: []RuleSummary{
 			{
 				ID:      ruleSummaryCorporateTax,
@@ -105,6 +116,31 @@ func packOverview(pack *Pack) (PackOverview, error) {
 			},
 		},
 	}, nil
+}
+
+func companyActOverviews(acts map[string]CompanyAct) []CompanyActOverview {
+	keys := make([]string, 0, len(acts))
+	for key := range acts {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	out := make([]CompanyActOverview, 0, len(keys))
+	for _, key := range keys {
+		act := acts[key]
+		overview := CompanyActOverview{
+			ActType:               key,
+			Label:                 act.Label,
+			MinimumDirectors:      act.MinimumDirectors,
+			CompanyNumberSuffixes: append([]string(nil), act.CompanyNumberSuffixes...),
+		}
+		if act.CorporateDirectors != nil {
+			corporateDirectors := *act.CorporateDirectors
+			overview.CorporateDirectors = &corporateDirectors
+		}
+		out = append(out, overview)
+	}
+	return out
 }
 
 func requiredFiling(filings map[string]Filing, key string) (Filing, error) {

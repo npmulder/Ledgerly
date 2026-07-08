@@ -147,6 +147,7 @@ func clonePack(in *Pack) *Pack {
 	}
 
 	out := *in
+	out.CompanyActs = cloneCompanyActs(in.CompanyActs)
 	out.Tax.CorporateIncome = cloneMap(in.Tax.CorporateIncome)
 	out.Tax.PersonalIncome = make(map[string]PersonalIncomeYear, len(in.Tax.PersonalIncome))
 	for year, value := range in.Tax.PersonalIncome {
@@ -170,6 +171,23 @@ func clonePersonalIncomeYear(in PersonalIncomeYear) PersonalIncomeYear {
 			upTo := *band.UpToMinorUnits
 			out.Bands[index].UpToMinorUnits = &upTo
 		}
+	}
+	return out
+}
+
+func cloneCompanyActs(in map[string]CompanyAct) map[string]CompanyAct {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]CompanyAct, len(in))
+	for key, value := range in {
+		cloned := value
+		if value.CorporateDirectors != nil {
+			corporateDirectors := *value.CorporateDirectors
+			cloned.CorporateDirectors = &corporateDirectors
+		}
+		cloned.CompanyNumberSuffixes = append([]string(nil), value.CompanyNumberSuffixes...)
+		out[key] = cloned
 	}
 	return out
 }

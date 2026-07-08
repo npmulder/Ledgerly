@@ -32,8 +32,12 @@ import {
   type InvoicingClientRequest,
   type InvoicingMoneyAmount,
 } from "@/api/invoicing";
-import { getJurisdictionPack } from "@/api/jurisdiction";
+import {
+  getJurisdictionPack,
+  type JurisdictionCompanyAct,
+} from "@/api/jurisdiction";
 import { queryKeys } from "@/api/queryKeys";
+import { AdvisorStrip } from "@/components/Advisor";
 import {
   AmountText,
   AuditHistoryPanel,
@@ -89,7 +93,10 @@ const monthOptions = [
   { label: "December", value: 12 },
 ] as const;
 
+const emptyCompanyActs: readonly JurisdictionCompanyAct[] = [];
+
 type CompanyFormState = {
+  actType: string;
   companyNumber: string;
   country: string;
   directors: DirectorFormState[];
@@ -286,7 +293,12 @@ function CompanySettings() {
     queryFn: getIdentityProfile,
     queryKey: queryKeys.identity.profile(),
   });
+  const packQuery = useQuery({
+    queryFn: getJurisdictionPack,
+    queryKey: queryKeys.jurisdiction.pack(),
+  });
   const profile = profileQuery.data;
+  const companyActs = packQuery.data?.company_acts ?? emptyCompanyActs;
   const profileNotFound =
     isApiError(profileQuery.error) && profileQuery.error.status === 404;
   const isCreatingProfile = profileNotFound;
@@ -374,6 +386,14 @@ function CompanySettings() {
     : null;
   const logoSrc = logoPreviewUrl ?? profile?.logo_asset_url ?? undefined;
   const companyInitial = initialFor(profile?.trading_name ?? form.tradingName);
+  const actSuggestion = useMemo(
+    () => companyActSuggestion(form.companyNumber, companyActs),
+    [companyActs, form.companyNumber],
+  );
+  const actHelperText =
+    actSuggestion && actSuggestion.act_type !== form.actType
+      ? `Suggested from company number: ${actSuggestion.label}.`
+      : "Used by pack-backed advisor checks.";
   const yearEndSummary = useMemo(() => formatYearEnd(profile), [profile]);
   const vatNumberWithoutRegistration =
     !form.isVATRegistered && form.vatNumber.trim() !== "";
@@ -516,6 +536,7 @@ function CompanySettings() {
   return (
     <form className="settings-detail" onSubmit={handleSubmit}>
       <PageTitle id="settings-page-title">Company</PageTitle>
+      {!isCreatingProfile ? <AdvisorStrip surface="settings" /> : null}
       <Card
         actions={
           <Button disabled={saveMutation.isPending} size="small" type="submit">
@@ -602,6 +623,21 @@ function CompanySettings() {
                 required
                 value={form.companyNumber}
               />
+            </Field>
+            <Field helperText={actHelperText} label="Company Act">
+              <Select
+                aria-label="Company Act"
+                name="act_type"
+                onChange={handleFieldChange("actType")}
+                value={form.actType}
+              >
+                <option value="">Select company act</option>
+                {companyActs.map((act) => (
+                  <option key={act.act_type} value={act.act_type}>
+                    {act.label}
+                  </option>
+                ))}
+              </Select>
             </Field>
             {isCreatingProfile ? null : (
               <div className="vat-registration-group company-field-grid__wide">
@@ -1393,6 +1429,7 @@ function ProblemPanel({
 
 function profileToForm(profile: IdentityProfile | undefined): CompanyFormState {
   return {
+    actType: profile?.act_type ?? "",
     companyNumber: profile?.company_number ?? "",
     country: profile?.registered_office.country ?? "",
     directors: (profile?.directors ?? []).map((director) => ({
@@ -1417,6 +1454,7 @@ function profileToForm(profile: IdentityProfile | undefined): CompanyFormState {
 
 function formToPatch(form: CompanyFormState): IdentityProfilePatch {
   return {
+    act_type: form.actType.trim() || null,
     company_number: form.companyNumber.trim(),
     directors: form.directors.map((director) => ({
       appointed_date: director.appointedDate || undefined,
@@ -1470,6 +1508,7 @@ function applyProfilePatch(
   return {
     ...profile,
     bank_details: patch.bank_details ?? profile.bank_details,
+    act_type: patch.act_type === undefined ? profile.act_type : patch.act_type,
     company_number: patch.company_number ?? profile.company_number,
     incorporation_date: patch.incorporation_date ?? profile.incorporation_date,
     is_vat_registered: patch.is_vat_registered ?? profile.is_vat_registered,
@@ -1486,6 +1525,23 @@ function applyProfilePatch(
       patch.vat_number === undefined ? profile.vat_number : patch.vat_number,
     year_end: patch.year_end ?? profile.year_end,
   };
+}
+
+function companyActSuggestion(
+  companyNumber: string,
+  acts: readonly JurisdictionCompanyAct[],
+) {
+  const normalized = companyNumber.trim().toUpperCase();
+  if (!normalized) {
+    return null;
+  }
+  return (
+    acts.find((act) =>
+      act.company_number_suffixes.some((suffix) =>
+        normalized.endsWith(suffix.trim().toUpperCase()),
+      ),
+    ) ?? null
+  );
 }
 
 function emptyDirectorForm(): DirectorFormState {

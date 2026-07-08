@@ -397,6 +397,7 @@ INSERT INTO identity.company_profile (
 	trading_name,
 	legal_name,
 	company_number,
+	act_type,
 	registered_office,
 	incorporation_date,
 	year_end_month,
@@ -412,20 +413,22 @@ INSERT INTO identity.company_profile (
 	$1,
 	$2,
 	$3,
-	$4::jsonb,
-	$5,
+	$4,
+	$5::jsonb,
 	$6,
 	$7,
 	$8,
 	$9,
-	$10::jsonb,
+	$10,
 	$11::jsonb,
 	$12::jsonb,
-	$13
+	$13::jsonb,
+	$14
 )`,
 		profile.TradingName,
 		profile.LegalName,
 		profile.CompanyNumber,
+		values.actType,
 		string(values.office),
 		profile.IncorporationDate,
 		int(profile.YearEnd.Month),
@@ -454,21 +457,23 @@ UPDATE identity.company_profile
 SET trading_name = $1,
 	legal_name = $2,
 	company_number = $3,
-	registered_office = $4::jsonb,
-	incorporation_date = $5,
-	year_end_month = $6,
-	year_end_day = $7,
-	is_vat_registered = $8,
-	vat_number = $9,
-	bank_details = $10::jsonb,
-	shareholders = $11::jsonb,
-	directors = $12::jsonb,
-	logo_asset_id = $13,
+	act_type = $4,
+	registered_office = $5::jsonb,
+	incorporation_date = $6,
+	year_end_month = $7,
+	year_end_day = $8,
+	is_vat_registered = $9,
+	vat_number = $10,
+	bank_details = $11::jsonb,
+	shareholders = $12::jsonb,
+	directors = $13::jsonb,
+	logo_asset_id = $14,
 	updated_at = now()
 WHERE id = 1`,
 		profile.TradingName,
 		profile.LegalName,
 		profile.CompanyNumber,
+		values.actType,
 		string(values.office),
 		profile.IncorporationDate,
 		int(profile.YearEnd.Month),
@@ -602,6 +607,7 @@ type profileStorageValues struct {
 	bankDetails  []byte
 	shareholders []byte
 	directors    []byte
+	actType      sql.NullString
 	vatNumber    sql.NullString
 	logoAssetID  pgtype.UUID
 }
@@ -640,6 +646,7 @@ func profileStorageValuesFrom(profile CompanyProfile) (profileStorageValues, err
 		bankDetails:  bankDetails,
 		shareholders: shareholders,
 		directors:    directors,
+		actType:      nullableText(nullableProfileText(profile.ActType)),
 		vatNumber:    nullableText(profile.VATNumber),
 		logoAssetID:  logoAssetID,
 	}, nil
@@ -653,6 +660,7 @@ func scanProfile(ctx context.Context, tx db.Tx, lockClause string) (CompanyProfi
 		shareholders     []byte
 		directors        []byte
 		yearEndMonth     int
+		actType          sql.NullString
 		vatNumber        sql.NullString
 		logoAssetID      pgtype.UUID
 		incorporationDay pgtype.Date
@@ -662,6 +670,7 @@ func scanProfile(ctx context.Context, tx db.Tx, lockClause string) (CompanyProfi
 SELECT trading_name,
 	legal_name,
 	company_number,
+	act_type,
 	registered_office,
 	incorporation_date,
 	year_end_month,
@@ -678,6 +687,7 @@ WHERE id = 1`+lockClause).
 			&profile.TradingName,
 			&profile.LegalName,
 			&profile.CompanyNumber,
+			&actType,
 			&office,
 			&incorporationDay,
 			&yearEndMonth,
@@ -701,6 +711,9 @@ WHERE id = 1`+lockClause).
 	}
 	profile.IncorporationDate = incorporationDay.Time
 	profile.YearEnd.Month = time.Month(yearEndMonth)
+	if actType.Valid {
+		profile.ActType = actType.String
+	}
 	if vatNumber.Valid {
 		profile.VATNumber = &vatNumber.String
 	}

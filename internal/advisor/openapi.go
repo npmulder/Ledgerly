@@ -217,6 +217,7 @@ func advisorSurfaceSchema() map[string]any {
 		"type": "string",
 		"enum": []string{
 			string(SurfaceDashboard),
+			string(SurfaceSettings),
 			string(SurfaceInvoices),
 			string(SurfaceBanking),
 			string(SurfaceDLA),

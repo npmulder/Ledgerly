@@ -235,6 +235,7 @@ func TestUpdateProfilePartialRoundTrip(t *testing.T) {
 	service := New(tx, discardBus())
 
 	tradingName := "NPM Trading"
+	actType := " companies-act-1931 "
 	vatNumber := "IM123456"
 	isVATRegistered := true
 	bankDetails := BankDetails{
@@ -254,6 +255,7 @@ func TestUpdateProfilePartialRoundTrip(t *testing.T) {
 
 	if err := service.UpdateProfile(ctx, UpdateProfilePatch{
 		TradingName:     &tradingName,
+		ActType:         &actType,
 		IsVATRegistered: &isVATRegistered,
 		VATNumber:       &vatNumber,
 		BankDetails:     &bankDetails,
@@ -275,6 +277,9 @@ func TestUpdateProfilePartialRoundTrip(t *testing.T) {
 	}
 	if got.CompanyNumber != "137792C" {
 		t.Fatalf("CompanyNumber = %q, want existing company number", got.CompanyNumber)
+	}
+	if got.ActType != "companies-act-1931" {
+		t.Fatalf("ActType = %q, want companies-act-1931", got.ActType)
 	}
 	if got.VATNumber == nil || *got.VATNumber != vatNumber {
 		t.Fatalf("VATNumber = %v, want %q", got.VATNumber, vatNumber)
@@ -748,7 +753,8 @@ func TestCompanyFactsReturnsProfileFacts(t *testing.T) {
 	ctx, tx := migratedIdentityTx(t)
 	service := New(tx, discardBus())
 	isVATRegistered := true
-	if err := service.UpdateProfile(ctx, UpdateProfilePatch{IsVATRegistered: &isVATRegistered}); err != nil {
+	actType := "companies-act-1931"
+	if err := service.UpdateProfile(ctx, UpdateProfilePatch{IsVATRegistered: &isVATRegistered, ActType: &actType}); err != nil {
 		t.Fatalf("UpdateProfile() VAT registered error = %v", err)
 	}
 
@@ -763,6 +769,9 @@ func TestCompanyFactsReturnsProfileFacts(t *testing.T) {
 	}
 	if !facts.IsVATRegistered {
 		t.Fatal("IsVATRegistered = false, want true")
+	}
+	if facts.ActType != "companies-act-1931" {
+		t.Fatalf("ActType = %q, want companies-act-1931", facts.ActType)
 	}
 	if len(facts.Directors) != 2 || facts.Directors[0].Name != "N. Meyer" || facts.Directors[1].Name != "A. Patel" {
 		t.Fatalf("Directors = %#v, want seeded directors", facts.Directors)

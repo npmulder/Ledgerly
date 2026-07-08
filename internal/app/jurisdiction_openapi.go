@@ -71,9 +71,15 @@ func jurisdictionComponents() map[string]any {
 		"schemas": map[string]any{
 			"JurisdictionPack": map[string]any{
 				"type":     "object",
-				"required": []string{"meta", "rule_summaries"},
+				"required": []string{"meta", "company_acts", "rule_summaries"},
 				"properties": map[string]any{
 					"meta": map[string]any{"$ref": "#/components/schemas/JurisdictionPackMeta"},
+					"company_acts": map[string]any{
+						"type": "array",
+						"items": map[string]any{
+							"$ref": "#/components/schemas/JurisdictionCompanyAct",
+						},
+					},
 					"rule_summaries": map[string]any{
 						"type": "array",
 						"items": map[string]any{
@@ -89,6 +95,23 @@ func jurisdictionComponents() map[string]any {
 					"id":      map[string]any{"type": "string"},
 					"version": map[string]any{"type": "string"},
 					"name":    map[string]any{"type": "string"},
+				},
+			},
+			"JurisdictionCompanyAct": map[string]any{
+				"type": "object",
+				"required": []string{
+					"act_type",
+					"label",
+					"minimum_directors",
+					"corporate_directors",
+					"company_number_suffixes",
+				},
+				"properties": map[string]any{
+					"act_type":                map[string]any{"type": "string"},
+					"label":                   map[string]any{"type": "string"},
+					"minimum_directors":       map[string]any{"type": "integer"},
+					"corporate_directors":     map[string]any{"type": "boolean", "nullable": true},
+					"company_number_suffixes": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 				},
 			},
 			"JurisdictionRuleSummary": map[string]any{

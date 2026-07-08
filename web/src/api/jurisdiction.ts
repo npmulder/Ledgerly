@@ -3,6 +3,8 @@ import type { components } from "@/api/generated/schema";
 
 export type JurisdictionFilingDeadlines =
   components["schemas"]["JurisdictionFilingDeadlines"];
+export type JurisdictionCompanyAct =
+  components["schemas"]["JurisdictionCompanyAct"];
 export type JurisdictionPack = components["schemas"]["JurisdictionPack"];
 export type JurisdictionRuleSummary =
   components["schemas"]["JurisdictionRuleSummary"];

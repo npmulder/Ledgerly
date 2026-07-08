@@ -40,6 +40,7 @@ type Surface string
 
 const (
 	SurfaceDashboard Surface = "dashboard"
+	SurfaceSettings  Surface = "settings"
 	SurfaceInvoices  Surface = "invoices"
 	SurfaceBanking   Surface = "banking"
 	SurfaceDLA       Surface = "dla"
@@ -254,6 +255,8 @@ func normalizeSurface(value string) (Surface, error) {
 	switch Surface(strings.TrimSpace(value)) {
 	case SurfaceDashboard:
 		return SurfaceDashboard, nil
+	case SurfaceSettings:
+		return SurfaceSettings, nil
 	case SurfaceInvoices:
 		return SurfaceInvoices, nil
 	case SurfaceBanking:

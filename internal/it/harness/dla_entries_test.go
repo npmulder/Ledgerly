@@ -668,6 +668,11 @@ func loadDirectorLoanPolicyPack(t *testing.T, warn string, remedy string, s455 b
   version: "0.1"
   name: Testland
   currency: GBP
+company_acts:
+  test-companies-act:
+    label: Test Companies Act
+    minimum_directors: 1
+    company_number_suffixes: [T]
 tax:
   year_end:
     month: 6

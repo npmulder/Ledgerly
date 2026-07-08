@@ -247,6 +247,11 @@ const malformedJurisdictionPack = `meta:
   version: "0.1"
   name: Testland
   currency: TST
+company_acts:
+  test-companies-act:
+    label: Test Companies Act
+    minimum_directors: 1
+    company_number_suffixes: [T]
 tax:
   year_end:
     month: 6

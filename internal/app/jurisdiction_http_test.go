@@ -33,6 +33,9 @@ func TestJurisdictionPackEndpointReturnsSummariesDerivedFromPackData(t *testing.
 	if body.Meta.ID != "testland" || body.Meta.Version != "0.1" || body.Meta.Name != "Testland" {
 		t.Fatalf("meta = %+v, want testland@0.1 Testland", body.Meta)
 	}
+	if len(body.CompanyActs) != 1 || body.CompanyActs[0].ActType != "test-companies-act" || body.CompanyActs[0].MinimumDirectors != 1 {
+		t.Fatalf("company_acts = %+v, want test-companies-act minimum 1", body.CompanyActs)
+	}
 	if len(body.RuleSummaries) != 6 {
 		t.Fatalf("rule_summaries length = %d, want 6", len(body.RuleSummaries))
 	}

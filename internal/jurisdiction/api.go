@@ -39,6 +39,16 @@ func (e UnknownVATTreatmentError) Error() string {
 	return fmt.Sprintf("jurisdiction: VAT treatment %q not found", e.Treatment)
 }
 
+// UnknownCompanyActError reports a profile act type not configured by the
+// active jurisdiction pack.
+type UnknownCompanyActError struct {
+	ActType string
+}
+
+func (e UnknownCompanyActError) Error() string {
+	return fmt.Sprintf("jurisdiction: company act %q not found", e.ActType)
+}
+
 func (r Rate) String() string {
 	return string(r)
 }
@@ -189,6 +199,31 @@ func VATSemanticsForTreatment(treatment string) (VATTreatmentSemantics, error) {
 	return semantics, nil
 }
 
+// CompanyActDefinition returns one active-pack company act definition by act
+// type.
+func CompanyActDefinition(actType string) (CompanyAct, error) {
+	pack, err := activePackSnapshot()
+	if err != nil {
+		return CompanyAct{}, err
+	}
+	actType = strings.TrimSpace(actType)
+	act, ok := pack.CompanyActs[actType]
+	if !ok {
+		return CompanyAct{}, UnknownCompanyActError{ActType: actType}
+	}
+	return cloneCompanyAct(act), nil
+}
+
+// CompanyActs returns all active-pack company act definitions keyed by act
+// type.
+func CompanyActs() map[string]CompanyAct {
+	pack := activePackSnapshotOrNil()
+	if pack == nil {
+		return nil
+	}
+	return cloneCompanyActs(pack.CompanyActs)
+}
+
 func taxYearForDate(date time.Time, yearEnd YearEnd) (string, error) {
 	if date.IsZero() {
 		return "", fmt.Errorf("jurisdiction: date is required")
@@ -278,4 +313,14 @@ func activePackSnapshotOrNil() *Pack {
 		return nil
 	}
 	return pack
+}
+
+func cloneCompanyAct(in CompanyAct) CompanyAct {
+	out := in
+	if in.CorporateDirectors != nil {
+		corporateDirectors := *in.CorporateDirectors
+		out.CorporateDirectors = &corporateDirectors
+	}
+	out.CompanyNumberSuffixes = append([]string(nil), in.CompanyNumberSuffixes...)
+	return out
 }

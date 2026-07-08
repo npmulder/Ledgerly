@@ -29,6 +29,9 @@ func TestLoadFromFSEmbeddedFixture(t *testing.T) {
 	if pack.Tax.CorporateIncome["2025-26"].StandardRate != "0.19" {
 		t.Fatalf("corporate standard rate not loaded: %#v", pack.Tax.CorporateIncome)
 	}
+	if pack.CompanyActs["test-companies-act"].MinimumDirectors != 1 {
+		t.Fatalf("company act definitions not loaded: %#v", pack.CompanyActs)
+	}
 	if pack.Tax.YearEnd.Month != 6 || pack.Tax.YearEnd.Day != 30 {
 		t.Fatalf("tax year end = %#v, want 30 June", pack.Tax.YearEnd)
 	}
@@ -212,6 +215,25 @@ func TestValidationFailuresNameFilePathAndField(t *testing.T) {
 		wantField string
 		wantText  string
 	}{
+		{
+			name: "missing company acts",
+			pack: strings.Replace(
+				valid,
+				"company_acts:\n  test-companies-act:\n    label: Test Companies Act\n    minimum_directors: 1\n    company_number_suffixes: [T]\n",
+				"",
+				1,
+			),
+			wantPath:  "company_acts",
+			wantField: "company_acts",
+			wantText:  "at least one company act",
+		},
+		{
+			name:      "invalid minimum directors",
+			pack:      strings.Replace(valid, "minimum_directors: 1", "minimum_directors: 0", 1),
+			wantPath:  "company_acts.test-companies-act.minimum_directors",
+			wantField: "minimum_directors",
+			wantText:  "greater than or equal to 1",
+		},
 		{
 			name: "missing year",
 			pack: strings.Replace(

@@ -46,6 +46,7 @@ type CompanyProfile struct {
 	TradingName       string
 	LegalName         string
 	CompanyNumber     string
+	ActType           string
 	RegisteredOffice  RegisteredOffice
 	IncorporationDate time.Time
 	YearEnd           YearEnd
@@ -124,6 +125,7 @@ type CompanyFacts struct {
 	IncorporationDate time.Time
 	YearEnd           YearEnd
 	IsVATRegistered   bool
+	ActType           string
 	Directors         []Director
 }
 
@@ -132,6 +134,7 @@ type UpdateProfilePatch struct {
 	TradingName       *string
 	LegalName         *string
 	CompanyNumber     *string
+	ActType           *string
 	RegisteredOffice  *RegisteredOffice
 	IncorporationDate *string
 	YearEnd           *YearEnd
