@@ -863,7 +863,7 @@ func (d identityDirectorNames) DirectorNames(ctx context.Context) ([]string, err
 }
 
 func (d identityDirectorNames) Directors(ctx context.Context) ([]dla.Director, error) {
-	return (identityDirectors{profile: d.profile}).Directors(ctx)
+	return identityDirectors(d).Directors(ctx)
 }
 
 type identityDirectors struct {
