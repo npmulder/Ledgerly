@@ -833,11 +833,7 @@ func (r *recordingBankingLedger) Post(_ context.Context, _ db.Tx, entry ledger.N
 	}
 	postings := make([]ledger.Posting, len(entry.Postings))
 	for i, posting := range entry.Postings {
-		postings[i] = ledger.Posting{
-			AccountCode: posting.AccountCode,
-			Amount:      posting.Amount,
-			AmountGBP:   posting.AmountGBP,
-		}
+		postings[i] = ledger.Posting(posting)
 	}
 	r.entries[ledgerSourceKey(entry.SourceModule, entry.SourceRef)] = ledger.JournalEntry{
 		ID:           r.next,

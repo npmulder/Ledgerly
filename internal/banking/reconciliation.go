@@ -364,6 +364,10 @@ func (s *Service) Unreconcile(ctx context.Context, txnID TransactionID) (_ Unrec
 		if s.moneyFX == nil {
 			return UnreconcileResult{}, fmt.Errorf("banking: unreconcile invoice match requires moneyfx")
 		}
+		moneyFXClearer, ok := s.moneyFX.(realisedFXClearer)
+		if !ok || moneyFXClearer == nil {
+			return UnreconcileResult{}, fmt.Errorf("banking: unreconcile invoice match requires moneyfx clear support")
+		}
 		cleared, err := withTransactionSearchPathResult(ctx, tx, invoicing.ModuleName, func() (invoicing.Invoice, error) {
 			return s.invoices.ClearSettlementByTxnRef(ctx, tx, bankingTxnRef(txn.ID))
 		})
@@ -371,7 +375,7 @@ func (s *Service) Unreconcile(ctx context.Context, txnID TransactionID) (_ Unrec
 			return UnreconcileResult{}, fmt.Errorf("banking: unreconcile clear invoice settlement: %w", err)
 		}
 		result.ClearedInvoiceID = cleared.ID
-		clearedFX, err := s.moneyFX.ClearRealisedFX(ctx, tx, cleared.ID, reason)
+		clearedFX, err := moneyFXClearer.ClearRealisedFX(ctx, tx, cleared.ID, reason)
 		if err != nil {
 			return UnreconcileResult{}, fmt.Errorf("banking: unreconcile clear realised FX: %w", err)
 		}

@@ -119,6 +119,9 @@ type LedgerJournal interface {
 type MoneyFX interface {
 	ToGBP(context.Context, money.Money, time.Time) (money.Money, error)
 	RealisedFXAmount(context.Context, db.Tx, string) (money.Money, error)
+}
+
+type realisedFXClearer interface {
 	ClearRealisedFX(context.Context, db.Tx, string, string) (money.Money, error)
 }
 
