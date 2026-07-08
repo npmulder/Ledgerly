@@ -85,6 +85,7 @@ var (
 	ErrPayeeRuleNotFound        = errors.New("banking: payee rule not found")
 	ErrInvalidReconciliation    = errors.New("banking: invalid reconciliation")
 	ErrAlreadyReconciled        = errors.New("banking: already reconciled")
+	ErrDLADirectorRequired      = errors.New("banking: DLA director is required")
 	ErrReceiptNotFound          = errors.New("banking: receipt not found")
 	ErrInvalidReceipt           = errors.New("banking: invalid receipt")
 	ErrReceiptTooLarge          = errors.New("banking: receipt exceeds maximum size")
@@ -310,6 +311,7 @@ type FileToDLAResult struct {
 	Transaction Transaction
 	Kind        SuggestionKind
 	AmountGBP   money.Money
+	DirectorID  dla.DirectorID
 }
 
 type RecodeResult struct {
@@ -393,6 +395,12 @@ type InvoiceCandidateSource interface {
 
 type DirectorNameSource interface {
 	DirectorNames(ctx context.Context) ([]string, error)
+}
+
+// DirectorSource optionally augments DirectorNameSource with stable director
+// identifiers. Sources that do not implement it are mapped by profile order.
+type DirectorSource interface {
+	Directors(ctx context.Context) ([]dla.Director, error)
 }
 
 // RawTxn is a parsed provider transaction before account-specific validation

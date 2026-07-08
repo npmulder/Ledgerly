@@ -33,6 +33,7 @@ import (
 	"github.com/npmulder/ledgerly/internal/jurisdiction"
 	"github.com/npmulder/ledgerly/internal/ledger"
 	"github.com/npmulder/ledgerly/internal/moneyfx"
+	"github.com/npmulder/ledgerly/internal/moneyfx/money"
 	"github.com/npmulder/ledgerly/internal/platform/bus"
 	"github.com/npmulder/ledgerly/internal/platform/clock"
 	"github.com/npmulder/ledgerly/internal/platform/config"
@@ -275,7 +276,6 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 
 	ledgerService := ledger.New(ledgerPool, eventBus)
 	trialBalanceStatus := ledger.NewTrialBalanceStatus()
-	dlaService := dla.NewWithBusAndClock(dlaPool, eventBus, clk, ledgerService)
 	dlaConsistencyStatus := dla.NewConsistencyStatus()
 	moneyFXFetcher, err := moneyfx.NewECBFetcher(moneyfx.ECBFetcherConfig{
 		Pool:         moneyFXPool,
@@ -297,12 +297,6 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 	}); err != nil {
 		return nil, err
 	}
-	if err := cronRunner.Register(dla.ConsistencyCheckJobName, "10 2 * * *", func(ctx context.Context) error {
-		_, err := dlaService.RunConsistencyCheck(ctx, clk.Now(), logger, dlaConsistencyStatus)
-		return err
-	}); err != nil {
-		return nil, err
-	}
 	if err := cronRunner.Register(moneyfx.ECBFetchJobName, moneyfx.ECBFetchSchedule, moneyFXFetcher.Run); err != nil {
 		return nil, err
 	}
@@ -320,6 +314,13 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 	profileOptions = append(profileOptions, identity.WithAuditRecorder(auditRecorder))
 	profileOptions = append(profileOptions, deps.IdentityProfileOptions...)
 	identityProfile := identity.NewTransactionalProfileService(identityPool, eventBus, profileOptions...)
+	dlaService := dla.NewWithBusClockAndDirectors(dlaPool, eventBus, clk, identityDirectors{profile: identityProfile}, ledgerService)
+	if err := cronRunner.Register(dla.ConsistencyCheckJobName, "10 2 * * *", func(ctx context.Context) error {
+		_, err := dlaService.RunConsistencyCheck(ctx, clk.Now(), logger, dlaConsistencyStatus)
+		return err
+	}); err != nil {
+		return nil, err
+	}
 	identityHTTPOptions := []identity.HTTPOption{identity.WithProfileAPI(identityProfile)}
 	identityHTTPOptions = append(identityHTTPOptions, deps.IdentityHTTPOptions...)
 	identityHandler := identity.NewHTTPHandler(identityService, identityHTTPOptions...)
@@ -466,6 +467,7 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		Bus:        eventBus,
 		DLAPool:    dlaPool,
 		LedgerPool: ledgerPool,
+		Identity:   identityProfile,
 	})
 	if err != nil {
 		return nil, err
@@ -612,7 +614,7 @@ func Build(ctx context.Context, cfg Config, deps Dependencies) (_ *App, err erro
 		ledger:    ledgerService,
 		moneyFX:   moneyFXModule,
 		invoicing: dashboardInvoicingService,
-		dla:       dlaService,
+		dla:       dashboardDLAReader{service: dlaService},
 		dividends: dividendsService,
 		banking:   bankingService,
 		identity:  identityProfile,
@@ -726,10 +728,11 @@ func buildLedgerModule(_ context.Context, deps ModuleDeps) (Module, error) {
 
 func buildDLAModule(_ context.Context, deps ModuleDeps) (Module, error) {
 	dlaModule, err := dla.NewModule(dla.Config{
-		Pool:   deps.DLAPool,
-		Bus:    deps.Bus,
-		Clock:  deps.Clock,
-		Ledger: ledger.New(deps.LedgerPool, deps.Bus),
+		Pool:      deps.DLAPool,
+		Bus:       deps.Bus,
+		Clock:     deps.Clock,
+		Ledger:    ledger.New(deps.LedgerPool, deps.Bus),
+		Directors: identityDirectors{profile: deps.Identity},
 	})
 	if err != nil {
 		return Module{}, err
@@ -833,6 +836,34 @@ type identityDirectorNames struct {
 	}
 }
 
+type dashboardDLAReader struct {
+	service interface {
+		Statuses(context.Context) ([]dla.StatusPayload, error)
+	}
+}
+
+func (r dashboardDLAReader) CurrentBalance(ctx context.Context) (money.Money, dla.Status, error) {
+	if r.service == nil {
+		return money.Money{}, "", fmt.Errorf("app: DLA service is required")
+	}
+	statuses, err := r.service.Statuses(ctx)
+	if err != nil {
+		return money.Money{}, "", err
+	}
+	balance := money.Zero("GBP")
+	status := dla.StatusCredit
+	for _, directorStatus := range statuses {
+		balance, err = balance.Add(directorStatus.Balance)
+		if err != nil {
+			return money.Money{}, "", err
+		}
+		if directorStatus.Status == dla.StatusOverdrawn {
+			status = dla.StatusOverdrawn
+		}
+	}
+	return balance, status, nil
+}
+
 func (d identityDirectorNames) DirectorNames(ctx context.Context) ([]string, error) {
 	if d.profile == nil {
 		return nil, nil
@@ -845,6 +876,41 @@ func (d identityDirectorNames) DirectorNames(ctx context.Context) ([]string, err
 		return nil, err
 	}
 	return profile.DirectorNames(), nil
+}
+
+func (d identityDirectorNames) Directors(ctx context.Context) ([]dla.Director, error) {
+	return identityDirectors(d).Directors(ctx)
+}
+
+type identityDirectors struct {
+	profile interface {
+		Profile(context.Context) (identity.CompanyProfile, error)
+	}
+}
+
+func (d identityDirectors) Directors(ctx context.Context) ([]dla.Director, error) {
+	if d.profile == nil {
+		return nil, nil
+	}
+	profile, err := d.profile.Profile(ctx)
+	if err != nil {
+		if errors.Is(err, identity.ErrProfileNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	directors := make([]dla.Director, 0, len(profile.Directors))
+	for index, director := range profile.Directors {
+		id := dla.DirectorID(strings.TrimSpace(director.ID))
+		if id == "" {
+			id = dla.DirectorIDForIndex(index)
+		}
+		directors = append(directors, dla.Director{
+			ID:   id,
+			Name: strings.TrimSpace(director.Name),
+		})
+	}
+	return directors, nil
 }
 
 func subscribeBankingIdentityProfileRefresh(eventBus *bus.Bus, profile identity.Identity, opts []identity.ProfileOption, bankingService *banking.Service) {
@@ -864,7 +930,18 @@ func subscribeBankingIdentityProfileRefresh(eventBus *bus.Bus, profile identity.
 			}
 			return err
 		}
-		_, err = bankingService.RefreshDirectorNameSuggestionsTx(ctx, tx, updated.DirectorNames())
+		directors := make([]dla.Director, 0, len(updated.Directors))
+		for index, director := range updated.Directors {
+			id := dla.DirectorID(strings.TrimSpace(director.ID))
+			if id == "" {
+				id = dla.DirectorIDForIndex(index)
+			}
+			directors = append(directors, dla.Director{
+				ID:   id,
+				Name: strings.TrimSpace(director.Name),
+			})
+		}
+		_, err = bankingService.RefreshDirectorSuggestionsTx(ctx, tx, directors)
 		return err
 	})
 }

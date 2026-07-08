@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/npmulder/ledgerly/internal/dla"
 	"github.com/npmulder/ledgerly/internal/platform/db"
 )
 
@@ -337,18 +338,18 @@ func (s *Service) dlaDecisionWithDirectorNames(ctx context.Context, txn Transact
 		directorNames = s.directorNames
 	}
 	if directorNames != nil {
-		names, err := directorNames.DirectorNames(ctx)
+		directors, err := directorTargets(ctx, directorNames)
 		if err != nil {
 			return nil, fmt.Errorf("banking: director names: %w", err)
 		}
-		for _, name := range names {
-			if normalizedSimilarity(txn.Payee, name) >= 0.70 {
+		for _, director := range directors {
+			if normalizedSimilarity(txn.Payee, director.Name) >= 0.70 {
 				return &suggestionDecision{input: SuggestionInput{
 					TransactionID: txn.ID,
 					Kind:          SuggestionKindDLA,
 					Confidence:    DLADirectorNameConfidence,
-					Target:        dlaSuggestionTarget,
-					Explanation:   fmt.Sprintf("DLA suggestion: payee resembles director %q; File to DLA with Recode alternative", strings.TrimSpace(name)),
+					Target:        string(director.ID),
+					Explanation:   fmt.Sprintf("DLA suggestion: payee resembles director %q; File to DLA with Recode alternative", strings.TrimSpace(director.Name)),
 				}}, nil
 			}
 		}
@@ -370,6 +371,46 @@ func (s *Service) dlaDecisionWithDirectorNames(ctx context.Context, txn Transact
 		}
 	}
 	return nil, nil
+}
+
+func directorTargets(ctx context.Context, source DirectorNameSource) ([]dla.Director, error) {
+	if source == nil {
+		return nil, nil
+	}
+	if directorSource, ok := source.(DirectorSource); ok {
+		directors, err := directorSource.Directors(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return normalizeDirectorTargets(directors), nil
+	}
+	names, err := source.DirectorNames(ctx)
+	if err != nil {
+		return nil, err
+	}
+	directors := make([]dla.Director, 0, len(names))
+	for index, name := range names {
+		if name = strings.TrimSpace(name); name != "" {
+			directors = append(directors, dla.Director{ID: dla.DirectorIDForIndex(index), Name: name})
+		}
+	}
+	return directors, nil
+}
+
+func normalizeDirectorTargets(directors []dla.Director) []dla.Director {
+	out := make([]dla.Director, 0, len(directors))
+	for index, director := range directors {
+		name := strings.TrimSpace(director.Name)
+		if name == "" {
+			continue
+		}
+		id := dla.DirectorID(strings.TrimSpace(string(director.ID)))
+		if id == "" {
+			id = dla.DirectorIDForIndex(index)
+		}
+		out = append(out, dla.Director{ID: id, Name: name})
+	}
+	return out
 }
 
 func defaultDLAPersonalPatterns() []string {

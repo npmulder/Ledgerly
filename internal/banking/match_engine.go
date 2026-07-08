@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/npmulder/ledgerly/internal/dla"
 	"github.com/npmulder/ledgerly/internal/invoicing"
 	"github.com/npmulder/ledgerly/internal/platform/bus"
 	"github.com/npmulder/ledgerly/internal/platform/db"
@@ -55,6 +56,10 @@ func (s *Service) RefreshDirectorNameSuggestions(ctx context.Context, names []st
 	return s.runMatchEngineWithDirectorNames(ctx, MatchEngineTriggerIdentityProfile, nil, directorNameSnapshot(names))
 }
 
+func (s *Service) RefreshDirectorSuggestions(ctx context.Context, directors []dla.Director) (MatchEngineRun, error) {
+	return s.runMatchEngineWithDirectorNames(ctx, MatchEngineTriggerIdentityProfile, nil, directorSnapshot(directors))
+}
+
 func (s *Service) RefreshDirectorNameSuggestionsTx(ctx context.Context, tx db.Tx, names []string) (_ MatchEngineRun, err error) {
 	if tx == nil {
 		return s.RefreshDirectorNameSuggestions(ctx, names)
@@ -69,6 +74,38 @@ func (s *Service) RefreshDirectorNameSuggestionsTx(ctx context.Context, tx db.Tx
 		}
 	}()
 	return s.runMatchEngineTxWithDirectorNames(ctx, tx, MatchEngineTriggerIdentityProfile, nil, directorNameSnapshot(names))
+}
+
+func (s *Service) RefreshDirectorSuggestionsTx(ctx context.Context, tx db.Tx, directors []dla.Director) (_ MatchEngineRun, err error) {
+	if tx == nil {
+		return s.RefreshDirectorSuggestions(ctx, directors)
+	}
+	restoreScope, err := db.ScopeTransactionToModule(ctx, tx, ModuleName)
+	if err != nil {
+		return MatchEngineRun{}, err
+	}
+	defer func() {
+		if restoreErr := restoreScope(ctx); err == nil && restoreErr != nil {
+			err = restoreErr
+		}
+	}()
+	return s.runMatchEngineTxWithDirectorNames(ctx, tx, MatchEngineTriggerIdentityProfile, nil, directorSnapshot(directors))
+}
+
+type directorSnapshot []dla.Director
+
+func (d directorSnapshot) DirectorNames(context.Context) ([]string, error) {
+	names := make([]string, 0, len(d))
+	for _, director := range d {
+		if name := strings.TrimSpace(director.Name); name != "" {
+			names = append(names, name)
+		}
+	}
+	return names, nil
+}
+
+func (d directorSnapshot) Directors(context.Context) ([]dla.Director, error) {
+	return normalizeDirectorTargets([]dla.Director(d)), nil
 }
 
 func (s *Service) RunMatchEngine(ctx context.Context, trigger MatchEngineTrigger, txnIDs []TransactionID) (_ MatchEngineRun, err error) {
@@ -195,6 +232,19 @@ func (d directorNameSnapshot) DirectorNames(context.Context) ([]string, error) {
 		}
 	}
 	return names, nil
+}
+
+func (d directorNameSnapshot) Directors(context.Context) ([]dla.Director, error) {
+	directors := make([]dla.Director, 0, len(d))
+	for index, name := range d {
+		if name = strings.TrimSpace(name); name != "" {
+			directors = append(directors, dla.Director{
+				ID:   dla.DirectorIDForIndex(index),
+				Name: name,
+			})
+		}
+	}
+	return directors, nil
 }
 
 func (s *Service) payeeRuleSuggestionInputAfterLock(ctx context.Context, tx db.Tx, txnID TransactionID, rule PayeeRule) (SuggestionInput, error) {

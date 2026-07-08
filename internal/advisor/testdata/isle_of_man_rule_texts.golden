@@ -13,8 +13,8 @@ cta: Open draft | navigate:/invoices/draft-456 | {}
 rule: dla_overdrawn_bik
 severity: amber
 surfaces: dashboard,dla
-text: Your loan account is -£1,500.00 overdrawn. The Isle of Man has no UK-style s455 charge, but an interest-free loan can create a taxable benefit in kind - charge interest at the official rate or clear it with a dividend.
-cta: Clear with dividend | navigate:/dividends?amount=150000 | {}
+text: N. Meyer loan account is -£1,500.00 overdrawn. The Isle of Man has no UK-style s455 charge, but an interest-free loan can create a taxable benefit in kind - charge interest at the official rate or clear the director-specific balance.
+cta: Review DLA | navigate:/dla?director=director-1 | {}
 
 rule: filing_deadline_window
 severity: amber

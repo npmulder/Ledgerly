@@ -625,6 +625,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/dla/statuses": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Return DLA balance status for each director
+         * @description Returns one current DLA balance/status payload per current identity-profile director.
+         */
+        get: operations["dlaListStatuses"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/identity/assets/{id}": {
         parameters: {
             query?: never;
@@ -1540,6 +1560,7 @@ export interface components {
         };
         BankingCommandResponse: {
             amount_gbp?: components["schemas"]["BankingMoney"];
+            director_id?: string;
             /** @enum {string} */
             kind?: "match" | "suggestion" | "rule";
             realised_fx_amount?: components["schemas"]["BankingMoney"];
@@ -1560,6 +1581,9 @@ export interface components {
         BankingFeedResponse: {
             next_cursor: string | null;
             transactions: components["schemas"]["BankingTransaction"][];
+        };
+        BankingFileDLARequest: {
+            director_id?: string;
         };
         BankingInvoiceCandidate: {
             amount: components["schemas"]["BankingMoney"];
@@ -1700,6 +1724,8 @@ export interface components {
         };
         DLABalanceResponse: {
             balance: components["schemas"]["DLAMoney"];
+            director_id: string;
+            director_name?: string;
             policy: components["schemas"]["DLAPolicy"];
             /** @enum {string} */
             status: "credit" | "overdrawn";
@@ -1716,6 +1742,8 @@ export interface components {
             /** Format: date */
             date: string;
             description: string;
+            /** @description Stable director identifier. Defaults to director-1 when omitted. */
+            director_id?: string;
             /** @description Required for expense-owed entries; use the target ledger expense account code with matching currency. */
             expense_category?: string;
             /** @enum {string} */
@@ -1736,6 +1764,7 @@ export interface components {
             /** Format: date */
             date: string;
             description: string;
+            director_id: string;
             drawn: components["schemas"]["DLAMoney"];
             /** Format: int64 */
             id: number;
@@ -1761,6 +1790,9 @@ export interface components {
             overdrawn_warning_template: string;
             remedy: string;
             s455_charge: boolean;
+        };
+        DLAStatusesResponse: {
+            statuses: components["schemas"]["DLABalanceResponse"][];
         };
         DLAValidationProblem: {
             detail?: string;
@@ -1867,6 +1899,7 @@ export interface components {
         Director: {
             /** Format: date */
             appointed_date?: string;
+            id?: string;
             is_chair?: boolean;
             name: string;
         };
@@ -3509,7 +3542,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["BankingFileDLARequest"];
+            };
+        };
         responses: {
             /** @description Command accepted */
             200: {
@@ -4435,7 +4472,10 @@ export interface operations {
     };
     dlaGetBalance: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Stable director identifier. Defaults to director-1 for legacy single-director installs. */
+                director?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -4534,6 +4574,8 @@ export interface operations {
     dlaListLedger: {
         parameters: {
             query?: {
+                /** @description Stable director identifier. Defaults to director-1 for legacy single-director installs. */
+                director?: string;
                 /** @description Inclusive entry date lower bound. */
                 from?: string;
                 /** @description Inclusive entry date upper bound. */
@@ -4563,6 +4605,35 @@ export interface operations {
                 };
                 content: {
                     "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    dlaListStatuses: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Per-director DLA statuses listed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DLAStatusesResponse"];
                 };
             };
             /** @description Authentication required */

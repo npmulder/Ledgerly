@@ -122,6 +122,67 @@ func (s *Service) confirmMatch(ctx context.Context, txnID TransactionID, explici
 	}, nil
 }
 
+func (s *Service) FileToDLA(ctx context.Context, txnID TransactionID, selectedDirector ...dla.DirectorID) (_ FileToDLAResult, err error) {
+	if err := s.requireReconciliationDeps(false, true, true); err != nil {
+		return FileToDLAResult{}, err
+	}
+
+	tx, err := s.beginReconciliationTx(ctx, "file to DLA")
+	if err != nil {
+		return FileToDLAResult{}, err
+	}
+	defer rollbackOnError(ctx, tx, &err)
+
+	txn, account, suggestion, err := s.lockSuggestedCommandTransaction(ctx, tx, txnID, SuggestionKindDLA)
+	if err != nil {
+		return FileToDLAResult{}, err
+	}
+	if txn.Amount.Amount >= 0 {
+		return FileToDLAResult{}, fmt.Errorf("banking: DLA transaction %d amount must be outbound: %w", txn.ID, ErrInvalidReconciliation)
+	}
+
+	drawingNative, err := txn.Amount.Negate()
+	if err != nil {
+		return FileToDLAResult{}, fmt.Errorf("banking: DLA drawing native amount: %w", err)
+	}
+	drawingGBP, err := s.moneyFX.ToGBP(ctx, drawingNative, txn.Date)
+	if err != nil {
+		return FileToDLAResult{}, fmt.Errorf("banking: DLA GBP conversion: %w", err)
+	}
+	directorID, err := s.resolveDLADirector(ctx, suggestion, selectedDirector)
+	if err != nil {
+		return FileToDLAResult{}, err
+	}
+	if err = s.dla.FileDrawing(ctx, tx, dla.TxnRef{
+		Director:        directorID,
+		Ref:             bankingTxnRef(txn.ID),
+		Date:            txn.Date,
+		Amount:          drawingGBP,
+		CashAmount:      drawingNative,
+		CashAccountCode: account.LedgerAccountCode,
+		Description:     fmt.Sprintf("Banking DLA drawing %s", transactionDisplayRef(txn)),
+	}); err != nil {
+		return FileToDLAResult{}, fmt.Errorf("banking: file DLA drawing: %w", err)
+	}
+	if err = callReconciliationHook(ctx, s.reconciliationHooks.AfterFileDLADrawing); err != nil {
+		return FileToDLAResult{}, err
+	}
+	if err = s.store.SupersedeActiveSuggestion(ctx, tx, txn.ID); err != nil {
+		return FileToDLAResult{}, err
+	}
+	if _, err = s.store.transitionTransactionStateLocked(ctx, tx, txn, TransactionStateReconciled, reconciliationActor); err != nil {
+		return FileToDLAResult{}, err
+	}
+	if err = s.publishTransactionReconciled(ctx, tx, txn.ID, SuggestionKindDLA); err != nil {
+		return FileToDLAResult{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return FileToDLAResult{}, fmt.Errorf("banking: commit file to DLA transaction: %w", err)
+	}
+	txn.State = TransactionStateReconciled
+	return FileToDLAResult{Transaction: txn, Kind: SuggestionKindDLA, AmountGBP: drawingGBP, DirectorID: directorID}, nil
+}
+
 func settleInvoiceMatch(ctx context.Context, settler InvoiceSettler, tx db.Tx, invoiceID string, txn Transaction) (invoicing.MatchSettlement, error) {
 	amount := invoicing.Money{
 		Amount:   txn.Amount.Amount,
@@ -199,60 +260,70 @@ func (s *Service) invoiceCandidateByID(ctx context.Context, tx db.Tx, txn Transa
 	return InvoiceMatchCandidate{}, false, nil
 }
 
-func (s *Service) FileToDLA(ctx context.Context, txnID TransactionID) (_ FileToDLAResult, err error) {
-	if err := s.requireReconciliationDeps(false, true, true); err != nil {
-		return FileToDLAResult{}, err
+func (s *Service) resolveDLADirector(ctx context.Context, suggestion Suggestion, selected []dla.DirectorID) (dla.DirectorID, error) {
+	if len(selected) > 0 && strings.TrimSpace(string(selected[0])) != "" {
+		director, err := normalizeDLADirectorID(selected[0])
+		if err != nil {
+			return "", err
+		}
+		if err := s.validateDLADirector(ctx, director); err != nil {
+			return "", err
+		}
+		return director, nil
 	}
+	target := strings.TrimSpace(suggestion.Target)
+	if target != "" && target != dlaSuggestionTarget {
+		director, err := normalizeDLADirectorID(dla.DirectorID(target))
+		if err != nil {
+			return "", err
+		}
+		if err := s.validateDLADirector(ctx, director); err != nil {
+			return "", err
+		}
+		return director, nil
+	}
+	directors, err := directorTargets(ctx, s.directorNames)
+	if err != nil {
+		return "", fmt.Errorf("banking: DLA directors: %w", err)
+	}
+	switch len(directors) {
+	case 0:
+		return dla.DefaultDirectorID, nil
+	case 1:
+		return directors[0].ID, nil
+	default:
+		return "", fmt.Errorf("banking: choose a director before filing generic DLA suggestion: %w", ErrDLADirectorRequired)
+	}
+}
 
-	tx, err := s.beginReconciliationTx(ctx, "file to DLA")
+func (s *Service) validateDLADirector(ctx context.Context, director dla.DirectorID) error {
+	directors, err := directorTargets(ctx, s.directorNames)
 	if err != nil {
-		return FileToDLAResult{}, err
+		return fmt.Errorf("banking: DLA directors: %w", err)
 	}
-	defer rollbackOnError(ctx, tx, &err)
+	if len(directors) == 0 {
+		if director == dla.DefaultDirectorID {
+			return nil
+		}
+		return fmt.Errorf("banking: DLA director %q is not available: %w", director, ErrDLADirectorRequired)
+	}
+	for _, candidate := range directors {
+		if candidate.ID == director {
+			return nil
+		}
+	}
+	return fmt.Errorf("banking: DLA director %q is not in the current profile: %w", director, ErrDLADirectorRequired)
+}
 
-	txn, account, _, err := s.lockSuggestedCommandTransaction(ctx, tx, txnID, SuggestionKindDLA)
-	if err != nil {
-		return FileToDLAResult{}, err
+func normalizeDLADirectorID(director dla.DirectorID) (dla.DirectorID, error) {
+	normalized := dla.DirectorID(strings.TrimSpace(string(director)))
+	if normalized == "" {
+		return "", fmt.Errorf("banking: DLA director is required: %w", ErrDLADirectorRequired)
 	}
-	if txn.Amount.Amount >= 0 {
-		return FileToDLAResult{}, fmt.Errorf("banking: DLA transaction %d amount must be outbound: %w", txn.ID, ErrInvalidReconciliation)
+	if _, err := dla.AccountCodeForDirector(normalized); err != nil {
+		return "", fmt.Errorf("banking: invalid DLA director %q: %w", director, ErrDLADirectorRequired)
 	}
-
-	drawingNative, err := txn.Amount.Negate()
-	if err != nil {
-		return FileToDLAResult{}, fmt.Errorf("banking: DLA drawing native amount: %w", err)
-	}
-	drawingGBP, err := s.moneyFX.ToGBP(ctx, drawingNative, txn.Date)
-	if err != nil {
-		return FileToDLAResult{}, fmt.Errorf("banking: DLA GBP conversion: %w", err)
-	}
-	if err = s.dla.FileDrawing(ctx, tx, dla.TxnRef{
-		Ref:             bankingTxnRef(txn.ID),
-		Date:            txn.Date,
-		Amount:          drawingGBP,
-		CashAmount:      drawingNative,
-		CashAccountCode: account.LedgerAccountCode,
-		Description:     fmt.Sprintf("Banking DLA drawing %s", transactionDisplayRef(txn)),
-	}); err != nil {
-		return FileToDLAResult{}, fmt.Errorf("banking: file DLA drawing: %w", err)
-	}
-	if err = callReconciliationHook(ctx, s.reconciliationHooks.AfterFileDLADrawing); err != nil {
-		return FileToDLAResult{}, err
-	}
-	if err = s.store.SupersedeActiveSuggestion(ctx, tx, txn.ID); err != nil {
-		return FileToDLAResult{}, err
-	}
-	if _, err = s.store.transitionTransactionStateLocked(ctx, tx, txn, TransactionStateReconciled, reconciliationActor); err != nil {
-		return FileToDLAResult{}, err
-	}
-	if err = s.publishTransactionReconciled(ctx, tx, txn.ID, SuggestionKindDLA); err != nil {
-		return FileToDLAResult{}, err
-	}
-	if err = tx.Commit(ctx); err != nil {
-		return FileToDLAResult{}, fmt.Errorf("banking: commit file to DLA transaction: %w", err)
-	}
-	txn.State = TransactionStateReconciled
-	return FileToDLAResult{Transaction: txn, Kind: SuggestionKindDLA, AmountGBP: drawingGBP}, nil
+	return normalized, nil
 }
 
 func (s *Service) Recode(ctx context.Context, txnID TransactionID, accountCode ledger.AccountCode) (_ RecodeResult, err error) {

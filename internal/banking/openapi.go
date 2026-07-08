@@ -181,7 +181,7 @@ func OpenAPIFragment() httpserver.OpenAPIFragment {
 			},
 			"/api/banking/transactions/{id}/invoice-candidates": bankingInvoiceCandidatesPath(),
 			"/api/banking/transactions/{id}/confirm":            bankingCommandPath("bankingConfirmTransaction", "Confirm an invoice match", bankingOptionalJSONRequestBodyRef("BankingConfirmMatchRequest"), "BankingCommandResponse"),
-			"/api/banking/transactions/{id}/file-dla":           bankingCommandPath("bankingFileTransactionToDLA", "File a transaction to the DLA", nil, "BankingCommandResponse"),
+			"/api/banking/transactions/{id}/file-dla":           bankingCommandPath("bankingFileTransactionToDLA", "File a transaction to the DLA", bankingOptionalJSONRequestBodyRef("BankingFileDLARequest"), "BankingCommandResponse"),
 			"/api/banking/transactions/{id}/recode":             bankingCommandPath("bankingRecodeTransaction", "Recode a transaction to an expense account", bankingJSONRequestBodyRef("BankingRecodeRequest"), "BankingCommandResponse"),
 			"/api/banking/transactions/{id}/exclude":            bankingCommandPath("bankingExcludeTransaction", "Exclude a transaction", bankingJSONRequestBodyRef("BankingReasonRequest"), "BankingCommandResponse"),
 			"/api/banking/transactions/{id}/unexclude":          bankingCommandPath("bankingUnexcludeTransaction", "Unexclude a transaction", bankingOptionalJSONRequestBodyRef("BankingReasonRequest"), "BankingCommandResponse"),
@@ -416,7 +416,14 @@ func bankingComponents() map[string]any {
 				"additionalProperties": false,
 			},
 			"BankingCommandResponse": bankingCommandResponseSchema(),
-			"BankingPayeeRule":       bankingPayeeRuleSchema(),
+			"BankingFileDLARequest": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"director_id": map[string]any{"type": "string", "pattern": "^director-[1-9][0-9]*$"},
+				},
+				"additionalProperties": false,
+			},
+			"BankingPayeeRule": bankingPayeeRuleSchema(),
 			"BankingPayeeRulesResponse": map[string]any{
 				"type":     "object",
 				"required": []string{"rules"},
@@ -722,6 +729,7 @@ func bankingCommandResponseSchema() map[string]any {
 			"kind":               map[string]any{"type": "string", "enum": []string{"match", "suggestion", "rule"}},
 			"realised_fx_amount": map[string]any{"$ref": "#/components/schemas/BankingMoney"},
 			"amount_gbp":         map[string]any{"$ref": "#/components/schemas/BankingMoney"},
+			"director_id":        map[string]any{"type": "string", "pattern": "^director-[1-9][0-9]*$"},
 			"rule":               map[string]any{"$ref": "#/components/schemas/BankingPayeeRule"},
 			"state_change":       map[string]any{"$ref": "#/components/schemas/BankingStateChange"},
 		},

@@ -101,12 +101,12 @@ advisor_rules:
   - id: dla_overdrawn_bik
     severity: amber
     surfaces: [dashboard, dla]
-    fact_query: [balance, clearance_amount_minor_units, status]
+    fact_query: [balance, clearance_amount_minor_units, director_id, director_name, status]
     condition: status = "overdrawn"
-    text_template: 'Your loan account is {{ balance }} overdrawn. The Isle of Man has no UK-style s455 charge, but an interest-free loan can create a taxable benefit in kind - charge interest at the official rate or clear it with a dividend.'
+    text_template: '{{ director_name }} loan account is {{ balance }} overdrawn. The Isle of Man has no UK-style s455 charge, but an interest-free loan can create a taxable benefit in kind - charge interest at the official rate or clear the director-specific balance.'
     cta:
-      label: Clear with dividend
-      action: 'navigate:/dividends?amount={{ clearance_amount_minor_units }}'
+      label: Review DLA
+      action: 'navigate:/dla?director={{ director_id }}'
   - id: filing_deadline_window
     severity: amber
     surfaces: [dashboard, reports]

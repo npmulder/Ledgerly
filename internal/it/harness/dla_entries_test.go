@@ -121,6 +121,101 @@ func TestDLAEntriesPostLedgerShapesAndRunningBalance(t *testing.T) {
 	it.AssertLedgerBalanced(t, fixture.harness)
 }
 
+func TestDLAEntriesAreIsolatedPerDirector(t *testing.T) {
+	fixture := newDLAFixture(t)
+	entryDate := time.Date(2026, 7, 3, 10, 0, 0, 0, time.UTC)
+	secondDirector := dla.DirectorID("director-2")
+
+	fixture.fileDrawingFromBanking(t, dla.TxnRef{
+		Director:        dla.DefaultDirectorID,
+		Ref:             "banking:director-1-drawing",
+		Date:            entryDate,
+		Amount:          gbp(10_000),
+		CashAccountCode: dlaCashAccount,
+	})
+	fixture.fileDrawingFromBanking(t, dla.TxnRef{
+		Director:        secondDirector,
+		Ref:             "banking:director-2-drawing",
+		Date:            entryDate,
+		Amount:          gbp(7_000),
+		CashAccountCode: dlaCashAccount,
+	})
+
+	balanceOne, statusOne, err := fixture.dla.CurrentBalance(fixture.ctx, dla.DefaultDirectorID)
+	if err != nil {
+		t.Fatalf("CurrentBalance(director-1) error = %v", err)
+	}
+	if balanceOne != gbp(-10_000) || statusOne != dla.StatusOverdrawn {
+		t.Fatalf("CurrentBalance(director-1) = %#v/%s, want -100 GBP overdrawn", balanceOne, statusOne)
+	}
+	balanceTwo, statusTwo, err := fixture.dla.CurrentBalance(fixture.ctx, secondDirector)
+	if err != nil {
+		t.Fatalf("CurrentBalance(director-2) error = %v", err)
+	}
+	if balanceTwo != gbp(-7_000) || statusTwo != dla.StatusOverdrawn {
+		t.Fatalf("CurrentBalance(director-2) = %#v/%s, want -70 GBP overdrawn", balanceTwo, statusTwo)
+	}
+
+	directorOneEntries, err := fixture.dla.Ledger(fixture.ctx, dla.LedgerFilter{Director: dla.DefaultDirectorID, Limit: 10})
+	if err != nil {
+		t.Fatalf("Ledger(director-1) error = %v", err)
+	}
+	assertDLAEntries(t, directorOneEntries, []wantDLAEntry{
+		{
+			kind:           dla.EntryKindDrawing,
+			source:         "banking:director-1-drawing",
+			amount:         10_000,
+			drawn:          10_000,
+			runningBalance: -10_000,
+			side:           dla.BalanceSideDebit,
+		},
+	})
+	if directorOneEntries[0].Director != dla.DefaultDirectorID {
+		t.Fatalf("director-1 ledger director = %q, want %q", directorOneEntries[0].Director, dla.DefaultDirectorID)
+	}
+
+	directorTwoEntries, err := fixture.dla.Ledger(fixture.ctx, dla.LedgerFilter{Director: secondDirector, Limit: 10})
+	if err != nil {
+		t.Fatalf("Ledger(director-2) error = %v", err)
+	}
+	assertDLAEntries(t, directorTwoEntries, []wantDLAEntry{
+		{
+			kind:           dla.EntryKindDrawing,
+			source:         "banking:director-2-drawing",
+			amount:         7_000,
+			drawn:          7_000,
+			runningBalance: -7_000,
+			side:           dla.BalanceSideDebit,
+		},
+	})
+	if directorTwoEntries[0].Director != secondDirector {
+		t.Fatalf("director-2 ledger director = %q, want %q", directorTwoEntries[0].Director, secondDirector)
+	}
+	allEntries, err := fixture.dla.Ledger(fixture.ctx, dla.LedgerFilter{Limit: 10})
+	if err != nil {
+		t.Fatalf("Ledger(all directors) error = %v", err)
+	}
+	if len(allEntries) != 2 ||
+		allEntries[0].Director != dla.DefaultDirectorID ||
+		allEntries[1].Director != secondDirector {
+		t.Fatalf("Ledger(all directors) directors = %+v, want director-1 and director-2 entries", allEntries)
+	}
+
+	fixture.assertLedgerPostings(t, "banking:director-1-drawing", []wantPosting{
+		{account: dla.DLAAccountCode, amount: 10_000},
+		{account: dlaCashAccount, amount: -10_000},
+	})
+	fixture.assertLedgerPostings(t, "banking:director-2-drawing", []wantPosting{
+		{account: "2300-directors-loan-2", amount: 7_000},
+		{account: dlaCashAccount, amount: -7_000},
+	})
+	report, err := fixture.dla.CheckConsistency(fixture.ctx, fixture.harness.Clock.Now())
+	if err != nil {
+		t.Fatalf("CheckConsistency() report=%+v error=%v, want consistent", report, err)
+	}
+	it.AssertLedgerBalanced(t, fixture.harness)
+}
+
 func TestDLAStatusPolicyAndTransitionEvents(t *testing.T) {
 	t.Cleanup(func() {
 		if err := jurisdiction.LoadActive(jurisdiction.DefaultSelector); err != nil {
@@ -133,7 +228,7 @@ func TestDLAStatusPolicyAndTransitionEvents(t *testing.T) {
 	var wentOverdrawn []dla.WentOverdrawn
 	fixture.harness.Bus.Subscribe(dla.WentOverdrawnName, func(ctx context.Context, tx db.Tx, evt bus.Event) error {
 		event := evt.(dla.WentOverdrawn)
-		balance, err := (dla.Store{}).CurrentBalance(ctx, tx)
+		balance, err := (dla.Store{}).CurrentBalance(ctx, tx, dla.DefaultDirectorID)
 		if err != nil {
 			return err
 		}
@@ -147,7 +242,7 @@ func TestDLAStatusPolicyAndTransitionEvents(t *testing.T) {
 	var backInCredit []dla.BackInCredit
 	fixture.harness.Bus.Subscribe(dla.BackInCreditName, func(ctx context.Context, tx db.Tx, evt bus.Event) error {
 		event := evt.(dla.BackInCredit)
-		balance, err := (dla.Store{}).CurrentBalance(ctx, tx)
+		balance, err := (dla.Store{}).CurrentBalance(ctx, tx, dla.DefaultDirectorID)
 		if err != nil {
 			return err
 		}
@@ -193,7 +288,7 @@ func TestDLAStatusPolicyAndTransitionEvents(t *testing.T) {
 	})
 	assertCurrentBalance(t, fixture.dla, gbp(-1_500), dla.StatusOverdrawn)
 	assertDLAEventCounts(t, wentOverdrawn, backInCredit, 1, 0)
-	clearance, err := fixture.dla.SuggestedClearanceAmount(fixture.ctx)
+	clearance, err := fixture.dla.SuggestedClearanceAmount(fixture.ctx, dla.DefaultDirectorID)
 	if err != nil {
 		t.Fatalf("SuggestedClearanceAmount() error = %v", err)
 	}
@@ -216,7 +311,7 @@ func TestDLAStatusPolicyAndTransitionEvents(t *testing.T) {
 	if backInCredit[0].Balance != gbp(0) {
 		t.Fatalf("BackInCredit balance = %#v, want %#v", backInCredit[0].Balance, gbp(0))
 	}
-	clearance, err = fixture.dla.SuggestedClearanceAmount(fixture.ctx)
+	clearance, err = fixture.dla.SuggestedClearanceAmount(fixture.ctx, dla.DefaultDirectorID)
 	if err != nil {
 		t.Fatalf("SuggestedClearanceAmount() after zero error = %v", err)
 	}
@@ -224,7 +319,7 @@ func TestDLAStatusPolicyAndTransitionEvents(t *testing.T) {
 		t.Fatalf("SuggestedClearanceAmount() after zero = %#v, want %#v", clearance, gbp(0))
 	}
 
-	status, err := fixture.dla.CurrentStatus(fixture.ctx)
+	status, err := fixture.dla.CurrentStatus(fixture.ctx, dla.DefaultDirectorID)
 	if err != nil {
 		t.Fatalf("CurrentStatus() error = %v", err)
 	}
@@ -234,7 +329,7 @@ func TestDLAStatusPolicyAndTransitionEvents(t *testing.T) {
 		t.Fatalf("CurrentStatus() policy = %#v, want Isle of Man DLA policy", status.Policy)
 	}
 	loadDirectorLoanPolicyPack(t, "fixture_changed_warning", "fixture_changed_remedy", true)
-	status, err = fixture.dla.CurrentStatus(fixture.ctx)
+	status, err = fixture.dla.CurrentStatus(fixture.ctx, dla.DefaultDirectorID)
 	if err != nil {
 		t.Fatalf("CurrentStatus() changed pack error = %v", err)
 	}
@@ -297,6 +392,50 @@ WHERE source = $1`, source); err != nil {
 	it.AssertLedgerBalanced(t, fixture.harness)
 }
 
+func TestDLAConsistencyIncludesDirectorsWithRetainedEntries(t *testing.T) {
+	fixture := newDLAFixtureFromHarness(t, harness.New(t, harness.Options{
+		ClockStart: time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC),
+	}))
+	source := "banking:retained-director-2"
+	fixture.fileDrawingFromBanking(t, dla.TxnRef{
+		Director:        "director-2",
+		Ref:             source,
+		Date:            fixture.harness.Clock.Now(),
+		Amount:          gbp(10_000),
+		CashAccountCode: dlaCashAccount,
+	})
+
+	raw := testdb.Raw(t)
+	if _, err := raw.Exec(fixture.ctx, `
+UPDATE dla.dla_entries
+SET amount = amount + 1
+WHERE source = $1`, source); err != nil {
+		t.Fatalf("corrupt director-2 DLA entry via testdb.Raw: %v", err)
+	}
+
+	report, err := fixture.dla.CheckConsistency(fixture.ctx, fixture.harness.Clock.Now())
+	if !errors.Is(err, dla.ErrConsistencyViolation) {
+		t.Fatalf("CheckConsistency() report=%+v error=%v, want ErrConsistencyViolation", report, err)
+	}
+	var violation *dla.ConsistencyViolationError
+	if !errors.As(err, &violation) {
+		t.Fatalf("CheckConsistency() error = %T, want ConsistencyViolationError", err)
+	}
+	found := false
+	for _, directorReport := range violation.Report.Directors {
+		if directorReport.DirectorID == "director-2" {
+			found = true
+			if directorReport.Consistent {
+				t.Fatalf("director-2 report = %+v, want inconsistent", directorReport)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("consistency report directors = %+v, want retained director-2 included", violation.Report.Directors)
+	}
+	it.AssertLedgerBalanced(t, fixture.harness)
+}
+
 func TestDLAFutureDatedEntriesDoNotAffectCurrentFacts(t *testing.T) {
 	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
 	fixture := newDLAFixtureFromHarness(t, harness.New(t, harness.Options{ClockStart: now}))
@@ -349,7 +488,7 @@ func TestDLAFutureDatedEntriesDoNotAffectCurrentFacts(t *testing.T) {
 	}
 	assertCurrentBalance(t, fixture.dla, gbp(-500), dla.StatusOverdrawn)
 	assertDLAEventCounts(t, wentOverdrawn, backInCredit, 1, 0)
-	clearance, err := fixture.dla.SuggestedClearanceAmount(fixture.ctx)
+	clearance, err := fixture.dla.SuggestedClearanceAmount(fixture.ctx, dla.DefaultDirectorID)
 	if err != nil {
 		t.Fatalf("SuggestedClearanceAmount() before future date error = %v", err)
 	}
@@ -624,14 +763,14 @@ func (f dlaFixture) tryFileDrawingFromBanking(src dla.TxnRef) (err error) {
 func assertCurrentBalance(t *testing.T, service *dla.Service, wantBalance money.Money, wantStatus dla.Status) {
 	t.Helper()
 
-	gotBalance, gotStatus, err := service.CurrentBalance(context.Background())
+	gotBalance, gotStatus, err := service.CurrentBalance(context.Background(), dla.DefaultDirectorID)
 	if err != nil {
 		t.Fatalf("CurrentBalance() error = %v", err)
 	}
 	if gotBalance != wantBalance || gotStatus != wantStatus {
 		t.Fatalf("CurrentBalance() = %#v/%s, want %#v/%s", gotBalance, gotStatus, wantBalance, wantStatus)
 	}
-	status, err := service.CurrentStatus(context.Background())
+	status, err := service.CurrentStatus(context.Background(), dla.DefaultDirectorID)
 	if err != nil {
 		t.Fatalf("CurrentStatus() error = %v", err)
 	}

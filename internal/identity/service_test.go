@@ -77,6 +77,32 @@ func TestUpdateProfilePatchValidation(t *testing.T) {
 	}
 }
 
+func TestUpdateProfilePatchPreservesDirectorIDsByName(t *testing.T) {
+	profile := npmProfile()
+	profile.Directors = []Director{
+		{ID: "director-1", Name: "Alice"},
+		{ID: "director-2", Name: "Bob"},
+	}
+
+	directors := []Director{
+		{Name: " Bob "},
+		{Name: "Carol"},
+	}
+	updated, err := (UpdateProfilePatch{Directors: &directors}).apply(profile)
+	if err != nil {
+		t.Fatalf("UpdateProfilePatch.apply() error = %v", err)
+	}
+	if len(updated.Directors) != 2 {
+		t.Fatalf("Directors = %#v, want Bob and Carol", updated.Directors)
+	}
+	if updated.Directors[0].ID != "director-2" || updated.Directors[0].Name != "Bob" {
+		t.Fatalf("Director[0] = %#v, want Bob preserving director-2", updated.Directors[0])
+	}
+	if updated.Directors[1].ID != "director-3" || updated.Directors[1].Name != "Carol" {
+		t.Fatalf("Director[1] = %#v, want new director-3 without recycling director-1", updated.Directors[1])
+	}
+}
+
 func TestSeedMigrationCreatesNPMFixture(t *testing.T) {
 	ctx, pool := temporaryMigratedDatabase(t)
 

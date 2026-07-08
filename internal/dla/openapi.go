@@ -20,6 +20,7 @@ func OpenAPIFragment() httpserver.OpenAPIFragment {
 					"operationId": "dlaListLedger",
 					"security":    dlaSessionSecurity(),
 					"parameters": []map[string]any{
+						dlaDirectorQueryParameter(),
 						dlaDateQueryParameter("from", "Inclusive entry date lower bound."),
 						dlaDateQueryParameter("to", "Inclusive entry date upper bound."),
 						{
@@ -44,8 +45,22 @@ func OpenAPIFragment() httpserver.OpenAPIFragment {
 					"description": "Returns the current DLA balance, credit/overdrawn status, jurisdiction policy keys, and suggested clearance amount when overdrawn.",
 					"operationId": "dlaGetBalance",
 					"security":    dlaSessionSecurity(),
+					"parameters":  []map[string]any{dlaDirectorQueryParameter()},
 					"responses": map[string]any{
 						"200": dlaJSONResponseRef("Current DLA balance", "DLABalanceResponse"),
+						"401": dlaProblemResponse("Authentication required"),
+					},
+				},
+			},
+			"/api/dla/statuses": map[string]any{
+				"get": map[string]any{
+					"tags":        []string{"dla"},
+					"summary":     "Return DLA balance status for each director",
+					"description": "Returns one current DLA balance/status payload per current identity-profile director.",
+					"operationId": "dlaListStatuses",
+					"security":    dlaSessionSecurity(),
+					"responses": map[string]any{
+						"200": dlaJSONResponseRef("Per-director DLA statuses listed", "DLAStatusesResponse"),
 						"401": dlaProblemResponse("Authentication required"),
 					},
 				},
@@ -80,6 +95,16 @@ func dlaDateQueryParameter(name string, description string) map[string]any {
 		"required":    false,
 		"description": description,
 		"schema":      map[string]any{"type": "string", "format": "date"},
+	}
+}
+
+func dlaDirectorQueryParameter() map[string]any {
+	return map[string]any{
+		"name":        "director",
+		"in":          "query",
+		"required":    false,
+		"description": "Stable director identifier. Defaults to director-1 for legacy single-director installs.",
+		"schema":      map[string]any{"type": "string", "pattern": "^director-[1-9][0-9]*$"},
 	}
 }
 
@@ -149,6 +174,7 @@ func dlaComponents() map[string]any {
 				"type": "object",
 				"required": []string{
 					"id",
+					"director_id",
 					"date",
 					"kind",
 					"description",
@@ -162,6 +188,7 @@ func dlaComponents() map[string]any {
 				},
 				"properties": map[string]any{
 					"id":          map[string]any{"type": "integer", "format": "int64"},
+					"director_id": map[string]any{"type": "string", "pattern": "^director-[1-9][0-9]*$"},
 					"date":        map[string]any{"type": "string", "format": "date"},
 					"kind":        map[string]any{"type": "string", "enum": []string{string(EntryKindDrawing), string(EntryKindRepayment), string(EntryKindExpenseOwed)}},
 					"description": map[string]any{"type": "string"},
@@ -204,14 +231,27 @@ func dlaComponents() map[string]any {
 			},
 			"DLABalanceResponse": map[string]any{
 				"type":     "object",
-				"required": []string{"balance", "status", "policy"},
+				"required": []string{"director_id", "balance", "status", "policy"},
 				"properties": map[string]any{
-					"balance": map[string]any{"$ref": "#/components/schemas/DLAMoney"},
-					"status":  map[string]any{"type": "string", "enum": []string{string(StatusCredit), string(StatusOverdrawn)}},
-					"policy":  map[string]any{"$ref": "#/components/schemas/DLAPolicy"},
+					"director_id":   map[string]any{"type": "string", "pattern": "^director-[1-9][0-9]*$"},
+					"director_name": map[string]any{"type": "string"},
+					"balance":       map[string]any{"$ref": "#/components/schemas/DLAMoney"},
+					"status":        map[string]any{"type": "string", "enum": []string{string(StatusCredit), string(StatusOverdrawn)}},
+					"policy":        map[string]any{"$ref": "#/components/schemas/DLAPolicy"},
 					"suggested_clearance": map[string]any{
 						"allOf":    []map[string]any{{"$ref": "#/components/schemas/DLAMoney"}},
 						"nullable": true,
+					},
+				},
+				"additionalProperties": false,
+			},
+			"DLAStatusesResponse": map[string]any{
+				"type":     "object",
+				"required": []string{"statuses"},
+				"properties": map[string]any{
+					"statuses": map[string]any{
+						"type":  "array",
+						"items": map[string]any{"$ref": "#/components/schemas/DLABalanceResponse"},
 					},
 				},
 				"additionalProperties": false,
@@ -221,6 +261,7 @@ func dlaComponents() map[string]any {
 				"description": "Manual DLA entry request. kind=drawing is included so clients can receive a typed rejection; accepted manual kinds are repayment and expense-owed.",
 				"required":    []string{"date", "kind", "description", "amount"},
 				"properties": map[string]any{
+					"director_id":       map[string]any{"type": "string", "pattern": "^director-[1-9][0-9]*$", "description": "Stable director identifier. Defaults to director-1 when omitted."},
 					"date":              map[string]any{"type": "string", "format": "date"},
 					"kind":              map[string]any{"type": "string", "enum": []string{string(EntryKindRepayment), string(EntryKindExpenseOwed), string(EntryKindDrawing)}},
 					"description":       map[string]any{"type": "string", "minLength": 1},

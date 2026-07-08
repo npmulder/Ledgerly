@@ -83,6 +83,7 @@ type Shareholder struct {
 
 // Director describes a company director recorded on the identity profile.
 type Director struct {
+	ID            string  `json:"id,omitempty"`
 	Name          string  `json:"name"`
 	AppointedDate *string `json:"appointed_date,omitempty"`
 	IsChair       bool    `json:"is_chair,omitempty"`

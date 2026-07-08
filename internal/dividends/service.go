@@ -342,6 +342,10 @@ func (s *Service) Declare(ctx context.Context, amount money.Money) (declaration 
 	if err != nil {
 		return Declaration{}, err
 	}
+	director, err := declarationDirector(profile, shareholder)
+	if err != nil {
+		return Declaration{}, err
+	}
 	companySnapshot, err := s.declarationCompanySnapshot(ctx, profile, shareholder)
 	if err != nil {
 		return Declaration{}, err
@@ -376,12 +380,17 @@ func (s *Service) Declare(ctx context.Context, amount money.Money) (declaration 
 	if err != nil {
 		return Declaration{}, err
 	}
-	if _, err := s.ledger.Post(ctx, tx, declarationJournalEntry(stored)); err != nil {
+	dlaAccountCode, err := s.dla.EnsureDirectorAccount(ctx, tx, director)
+	if err != nil {
+		return Declaration{}, err
+	}
+	if _, err := s.ledger.Post(ctx, tx, declarationJournalEntry(stored, dlaAccountCode)); err != nil {
 		return Declaration{}, err
 	}
 	if err := s.dla.RecordExternalCredit(
 		ctx,
 		tx,
+		director.ID,
 		dividendSourceRef(stored.ID),
 		stored.DeclaredDate,
 		stored.Amount,
@@ -715,6 +724,30 @@ func declarationShareholder(profile identity.CompanyProfile) (identity.Sharehold
 	return shareholder, nil
 }
 
+func declarationDirector(profile identity.CompanyProfile, shareholder identity.Shareholder) (dla.Director, error) {
+	shareholderName := strings.TrimSpace(shareholder.Name)
+	for index, director := range profile.Directors {
+		directorName := strings.TrimSpace(director.Name)
+		if directorName == "" || !strings.EqualFold(directorName, shareholderName) {
+			continue
+		}
+		id := dla.DirectorID(strings.TrimSpace(director.ID))
+		if id == "" {
+			id = dla.DirectorIDForIndex(index)
+		}
+		return dla.Director{ID: id, Name: directorName}, nil
+	}
+	if len(profile.Directors) == 1 {
+		director := profile.Directors[0]
+		id := dla.DirectorID(strings.TrimSpace(director.ID))
+		if id == "" {
+			id = dla.DefaultDirectorID
+		}
+		return dla.Director{ID: id, Name: strings.TrimSpace(director.Name)}, nil
+	}
+	return dla.Director{}, fmt.Errorf("dividends: shareholder %q does not match a director: %w", shareholderName, ErrInvalidDeclaration)
+}
+
 func (s *Service) declarationCompanySnapshot(ctx context.Context, profile identity.CompanyProfile, shareholder identity.Shareholder) (CompanySnapshot, error) {
 	snapshot := CompanySnapshot{
 		TradingName:      strings.TrimSpace(profile.TradingName),
@@ -801,7 +834,7 @@ func perShareAmount(amount money.Money, shares int64) (money.Money, error) {
 	return perShare, nil
 }
 
-func declarationJournalEntry(declaration Declaration) ledgerapi.NewJournalEntry {
+func declarationJournalEntry(declaration Declaration, dlaAccountCode ledgerapi.AccountCode) ledgerapi.NewJournalEntry {
 	creditDLA := money.Money{Amount: -declaration.Amount.Amount, Currency: declaration.Amount.Currency}
 	return ledgerapi.NewJournalEntry{
 		Date:         declaration.DeclaredDate,
@@ -810,7 +843,7 @@ func declarationJournalEntry(declaration Declaration) ledgerapi.NewJournalEntry 
 		SourceRef:    dividendSourceRef(declaration.ID),
 		Postings: []ledgerapi.NewPosting{
 			{AccountCode: RetainedEarningsAccountCode, Amount: declaration.Amount, AmountGBP: declaration.Amount},
-			{AccountCode: dla.DLAAccountCode, Amount: creditDLA, AmountGBP: creditDLA},
+			{AccountCode: dlaAccountCode, Amount: creditDLA, AmountGBP: creditDLA},
 		},
 	}
 }

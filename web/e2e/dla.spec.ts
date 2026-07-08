@@ -25,7 +25,7 @@ test("seeded DLA entries render running balances and repayment refreshes banner"
   await expect(ledger.getByText("Director repayment")).toBeVisible();
 });
 
-test("overdrawn DLA CTA opens dividends with clearance amount", async ({
+test("overdrawn DLA advisor CTA opens director review", async ({
   page,
 }) => {
   const state = dlaState({
@@ -66,10 +66,9 @@ test("overdrawn DLA CTA opens dividends with clearance amount", async ({
     fullPage: true,
     path: "test-results/dla-advisor-strip.png",
   });
-  await advisor.getByRole("button", { name: "Clear with dividend" }).click();
+  await advisor.getByRole("button", { name: "Review DLA" }).click();
 
-  await expect(page).toHaveURL(/\/dividends\?amount=3000\.00$/);
-  await expect(page.getByLabel("Dividend amount")).toHaveValue("3000.00");
+  await expect(page).toHaveURL(/\/dla\?director=director-1$/);
 });
 
 async function mockDLAApi(
@@ -192,15 +191,15 @@ function advisorInsightsForDLA(state: DLAState) {
     Math.abs(state.balance.balance.amount_minor);
   return [
     {
-      bindings: { clearance_amount_minor_units: amount },
+      bindings: { clearance_amount_minor_units: amount, director_id: "director-1" },
       created_at: "2026-07-06T09:00:00Z",
       cta: {
-        action: `navigate:/dividends?amount=${amount}`,
-        label: "Clear with dividend",
+        action: "navigate:/dla?director=director-1",
+        label: "Review DLA",
       },
       key: "dla-overdrawn",
       rendered_text:
-        "Your loan account is £3,000.00 overdrawn. The Isle of Man has no UK-style s455 charge, but an interest-free loan can create a taxable benefit in kind - charge interest at the official rate or clear it with a dividend.",
+        "N. Meyer loan account is £3,000.00 overdrawn. The Isle of Man has no UK-style s455 charge, but an interest-free loan can create a taxable benefit in kind - charge interest at the official rate or clear the director-specific balance.",
       rule_id: "dla_overdrawn_bik",
       severity: "amber",
       surfaces: ["dashboard", "dla"],

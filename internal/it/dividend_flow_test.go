@@ -189,7 +189,7 @@ func testDividendFlowClearWithDividend(t *testing.T) {
 	backInCredit := subscribeBackInCredit(t, f.h)
 
 	f.fileDLADrawing(t, "banking:clear-with-dividend-drawing", gbp(150_000))
-	status, err := f.dla.CurrentStatus(f.ctx)
+	status, err := f.dla.CurrentStatus(f.ctx, dla.DefaultDirectorID)
 	if err != nil {
 		t.Fatalf("CurrentStatus() overdrawn error = %v", err)
 	}
@@ -203,7 +203,7 @@ func testDividendFlowClearWithDividend(t *testing.T) {
 	}
 	assertDividendFlowDLAEntry(t, f, dividendSourceRef(declaration.ID), 150_000, gbp(0), dla.BalanceSideZero)
 
-	balance, currentStatus, err := f.dla.CurrentBalance(f.ctx)
+	balance, currentStatus, err := f.dla.CurrentBalance(f.ctx, dla.DefaultDirectorID)
 	if err != nil {
 		t.Fatalf("CurrentBalance() after clearance error = %v", err)
 	}
@@ -385,7 +385,7 @@ func newDividendFlowFixture(t *testing.T) dividendFlowFixture {
 	h := harness.New(t, harness.Options{
 		ClockStart: dividendFlowDate(t, dividendFlowCurrentDate).Add(9 * time.Hour),
 	})
-	fixtures.Company(t, h, fixtures.CompanyYearEnd(time.March, 31))
+	company := fixtures.Company(t, h, fixtures.CompanyYearEnd(time.March, 31))
 	fixtures.Rates(t, h)
 	client := fixtures.Fabrikam(t, h)
 
@@ -394,7 +394,7 @@ func newDividendFlowFixture(t *testing.T) dividendFlowFixture {
 
 	ledgerService := ledger.New(h.LedgerPool, h.Bus)
 	identityService := identity.NewTransactionalProfileService(testdb.AsModule(t, "identity"), h.Bus, identity.WithDataDir(h.IdentityDataDir))
-	dlaService := dla.NewWithBusAndClock(h.DLAPool, h.Bus, h.Clock, ledgerService)
+	dlaService := dla.NewWithBusClockAndDirectors(h.DLAPool, h.Bus, h.Clock, dividendFlowDirectors(company), ledgerService)
 	invoiceService := newDividendFlowInvoiceService(t, h)
 	reportsService := reports.New(ledgerService, identityService, invoiceService, reports.WithClock(h.Clock))
 
@@ -409,6 +409,27 @@ func newDividendFlowFixture(t *testing.T) dividendFlowFixture {
 		invoice:  invoiceService,
 		reports:  reportsService,
 	}
+}
+
+type staticDLADirectors []dla.Director
+
+func (s staticDLADirectors) Directors(context.Context) ([]dla.Director, error) {
+	return append([]dla.Director(nil), s...), nil
+}
+
+func dividendFlowDirectors(company fixtures.CompanyFixture) staticDLADirectors {
+	directors := make([]dla.Director, 0, len(company.Directors))
+	for index, director := range company.Directors {
+		id := dla.DirectorID(strings.TrimSpace(director.ID))
+		if id == "" {
+			id = dla.DirectorIDForIndex(index)
+		}
+		directors = append(directors, dla.Director{
+			ID:   id,
+			Name: strings.TrimSpace(director.Name),
+		})
+	}
+	return staticDLADirectors(directors)
 }
 
 func (f dividendFlowFixture) dividends(opts ...dividends.Option) *dividends.Service {

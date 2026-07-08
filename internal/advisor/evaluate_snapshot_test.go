@@ -32,6 +32,8 @@ func TestIsleOfManRenderedInsightTextSnapshots(t *testing.T) {
 		FactRecurringDraftRunDate:    time.Date(2026, time.August, 1, 0, 0, 0, 0, time.UTC),
 		FactRuleDLABalance:           money.Money{Amount: -150000, Currency: "GBP"},
 		FactRuleDLAClearanceMinor:    int64(150000),
+		FactRuleDLADirectorID:        "director-1",
+		FactRuleDLADirectorName:      "N. Meyer",
 		FactRuleDLAStatus:            "overdrawn",
 		FactFilingAuthority:          "Isle of Man Customs & Excise",
 		FactFilingDueDate:            time.Date(2026, time.July, 30, 0, 0, 0, 0, time.UTC),

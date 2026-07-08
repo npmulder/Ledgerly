@@ -23,10 +23,6 @@ func Evaluate(rules []RuleDef, facts Facts, now time.Time) (Delta, error) {
 		facts = Facts{}
 	}
 
-	ctx := &conditionContext{
-		facts: facts,
-		today: dateOnly(now),
-	}
 	delta := Delta{GeneratedAt: now.UTC()}
 	evaluated := map[string]struct{}{}
 
@@ -36,77 +32,88 @@ func Evaluate(rules []RuleDef, facts Facts, now time.Time) (Delta, error) {
 			return Delta{}, err
 		}
 
-		result, err := rule.condition.eval(ctx)
-		if err != nil {
-			var unknown unknownFactError
-			if errors.As(err, &unknown) {
+		scopes := factScopesForRule(rule, facts)
+		ruleEvaluated := false
+		for _, scopedFacts := range scopes {
+			ctx := &conditionContext{
+				facts: scopedFacts,
+				today: dateOnly(now),
+			}
+
+			result, err := rule.condition.eval(ctx)
+			if err != nil {
+				var unknown unknownFactError
+				if errors.As(err, &unknown) {
+					delta.Warnings = append(delta.Warnings, Warning{
+						RuleID:  rule.ID,
+						Message: unknown.Error(),
+					})
+					continue
+				}
 				delta.Warnings = append(delta.Warnings, Warning{
 					RuleID:  rule.ID,
-					Message: unknown.Error(),
+					Message: fmt.Sprintf("condition skipped: %v", err),
 				})
 				continue
 			}
-			delta.Warnings = append(delta.Warnings, Warning{
-				RuleID:  rule.ID,
-				Message: fmt.Sprintf("condition skipped: %v", err),
-			})
-			continue
-		}
-		fires, err := result.asBool()
-		if err != nil {
-			delta.Warnings = append(delta.Warnings, Warning{
-				RuleID:  rule.ID,
-				Message: fmt.Sprintf("condition skipped: %v", err),
-			})
-			continue
-		}
+			ruleEvaluated = true
+			fires, err := result.asBool()
+			if err != nil {
+				delta.Warnings = append(delta.Warnings, Warning{
+					RuleID:  rule.ID,
+					Message: fmt.Sprintf("condition skipped: %v", err),
+				})
+				continue
+			}
+			if !fires {
+				continue
+			}
 
-		evaluated[rule.ID] = struct{}{}
-		if !fires {
-			continue
-		}
+			bindings, renderBindings, canonical, err := factBindings(rule, ctx)
+			if err != nil {
+				delta.Warnings = append(delta.Warnings, Warning{
+					RuleID:  rule.ID,
+					Message: fmt.Sprintf("bindings skipped: %v", err),
+				})
+				ruleEvaluated = false
+				continue
+			}
+			rendered, err := renderText(rule, renderBindings)
+			if err != nil {
+				delta.Warnings = append(delta.Warnings, Warning{
+					RuleID:  rule.ID,
+					Message: fmt.Sprintf("template skipped: %v", err),
+				})
+				ruleEvaluated = false
+				continue
+			}
+			cta, err := renderCTA(rule.CTA, renderBindings)
+			if err != nil {
+				delta.Warnings = append(delta.Warnings, Warning{
+					RuleID:  rule.ID,
+					Message: fmt.Sprintf("cta skipped: %v", err),
+				})
+				ruleEvaluated = false
+				continue
+			}
 
-		bindings, renderBindings, canonical, err := factBindings(rule, ctx)
-		if err != nil {
-			delta.Warnings = append(delta.Warnings, Warning{
-				RuleID:  rule.ID,
-				Message: fmt.Sprintf("bindings skipped: %v", err),
+			hashBytes := sha256.Sum256(canonical)
+			factHash := hex.EncodeToString(hashBytes[:])
+			delta.Insights = append(delta.Insights, Insight{
+				Key:          InsightKey(rule.ID + ":" + factHash),
+				RuleID:       rule.ID,
+				FactHash:     factHash,
+				Severity:     rule.Severity,
+				Surfaces:     append([]Surface(nil), rule.Surfaces...),
+				RenderedText: rendered,
+				Bindings:     bindings,
+				CTA:          cta,
+				CreatedAt:    now.UTC(),
 			})
-			delete(evaluated, rule.ID)
-			continue
 		}
-		rendered, err := renderText(rule, renderBindings)
-		if err != nil {
-			delta.Warnings = append(delta.Warnings, Warning{
-				RuleID:  rule.ID,
-				Message: fmt.Sprintf("template skipped: %v", err),
-			})
-			delete(evaluated, rule.ID)
-			continue
+		if ruleEvaluated {
+			evaluated[rule.ID] = struct{}{}
 		}
-		cta, err := renderCTA(rule.CTA, renderBindings)
-		if err != nil {
-			delta.Warnings = append(delta.Warnings, Warning{
-				RuleID:  rule.ID,
-				Message: fmt.Sprintf("cta skipped: %v", err),
-			})
-			delete(evaluated, rule.ID)
-			continue
-		}
-
-		hashBytes := sha256.Sum256(canonical)
-		factHash := hex.EncodeToString(hashBytes[:])
-		delta.Insights = append(delta.Insights, Insight{
-			Key:          InsightKey(rule.ID + ":" + factHash),
-			RuleID:       rule.ID,
-			FactHash:     factHash,
-			Severity:     rule.Severity,
-			Surfaces:     append([]Surface(nil), rule.Surfaces...),
-			RenderedText: rendered,
-			Bindings:     bindings,
-			CTA:          cta,
-			CreatedAt:    now.UTC(),
-		})
 	}
 
 	for ruleID := range evaluated {
@@ -123,6 +130,38 @@ func Evaluate(rules []RuleDef, facts Facts, now time.Time) (Delta, error) {
 		return delta.Warnings[i].RuleID < delta.Warnings[j].RuleID
 	})
 	return delta, nil
+}
+
+func factScopesForRule(rule RuleDef, facts Facts) []Facts {
+	if rule.ID != "dla_overdrawn_bik" {
+		return []Facts{facts}
+	}
+	raw, ok := facts[FactDLADirectorStatuses]
+	if !ok {
+		return []Facts{facts}
+	}
+	statuses, ok := raw.([]DLADirectorStatusFact)
+	if !ok || len(statuses) == 0 {
+		return []Facts{facts}
+	}
+	scopes := make([]Facts, 0, len(statuses))
+	for _, status := range statuses {
+		scoped := make(Facts, len(facts)+6)
+		for key, value := range facts {
+			scoped[key] = value
+		}
+		scoped[FactDLABalance] = status.Balance
+		scoped[FactDLAStatus] = status.Status
+		scoped[FactDLASuggestedClearance] = status.Clearance
+		scoped[FactRuleDLABalance] = status.Balance
+		scoped[FactRuleDLAStatus] = status.Status
+		scoped[FactRuleDLAClearance] = status.Clearance
+		scoped[FactRuleDLAClearanceMinor] = status.ClearanceMinor
+		scoped[FactRuleDLADirectorID] = status.DirectorID
+		scoped[FactRuleDLADirectorName] = status.DirectorName
+		scopes = append(scopes, scoped)
+	}
+	return scopes
 }
 
 func ensureCompiled(rule RuleDef) (RuleDef, error) {

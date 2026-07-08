@@ -10,7 +10,9 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	ledgerapi "github.com/npmulder/ledgerly/internal/ledger"
 	"github.com/npmulder/ledgerly/internal/moneyfx/money"
+	"github.com/npmulder/ledgerly/internal/platform/db"
 )
 
 // ConsistencyCheckJobName is the canonical platform cron job name.
@@ -19,7 +21,20 @@ const ConsistencyCheckJobName = "dla.consistency-check"
 // ConsistencyReport compares DLA's derived presentation balance with the
 // authoritative ledger DLA account balance.
 type ConsistencyReport struct {
-	AsOf                  time.Time   `json:"as_of"`
+	AsOf                  time.Time                   `json:"as_of"`
+	Consistent            bool                        `json:"consistent"`
+	DerivedBalance        money.Money                 `json:"derived_balance"`
+	LedgerBalance         money.Money                 `json:"ledger_balance"`
+	ExpectedLedgerBalance money.Money                 `json:"expected_ledger_balance"`
+	Directors             []DirectorConsistencyReport `json:"directors"`
+}
+
+// DirectorConsistencyReport compares one director's DLA entries with the
+// matching director-specific ledger account.
+type DirectorConsistencyReport struct {
+	DirectorID            DirectorID  `json:"director_id"`
+	DirectorName          string      `json:"director_name"`
+	AccountCode           string      `json:"account_code"`
 	Consistent            bool        `json:"consistent"`
 	DerivedBalance        money.Money `json:"derived_balance"`
 	LedgerBalance         money.Money `json:"ledger_balance"`
@@ -64,25 +79,36 @@ func (s *Service) CheckConsistency(ctx context.Context, asOf time.Time) (Consist
 		_ = tx.Rollback(context.Background())
 	}()
 
-	derivedBalance, err := s.store.CurrentBalanceAsOf(ctx, tx, date)
-	if err != nil {
-		return ConsistencyReport{}, err
-	}
-	ledgerBalance, err := s.ledger.AccountBalanceInTx(ctx, tx, DLAAccountCode, date)
-	if err != nil {
-		return ConsistencyReport{}, err
-	}
-	expectedLedgerBalance, err := derivedBalance.Negate()
-	if err != nil {
-		return ConsistencyReport{}, fmt.Errorf("dla: expected ledger balance: %w", err)
-	}
-
 	report := ConsistencyReport{
 		AsOf:                  date,
-		Consistent:            ledgerBalance.AmountGBP == expectedLedgerBalance,
-		DerivedBalance:        derivedBalance,
-		LedgerBalance:         ledgerBalance.AmountGBP,
-		ExpectedLedgerBalance: expectedLedgerBalance,
+		Consistent:            true,
+		DerivedBalance:        money.Money{Currency: "GBP"},
+		LedgerBalance:         money.Money{Currency: "GBP"},
+		ExpectedLedgerBalance: money.Money{Currency: "GBP"},
+	}
+	directors, err := s.consistencyDirectors(ctx, tx)
+	if err != nil {
+		return ConsistencyReport{}, err
+	}
+	for _, director := range directors {
+		directorReport, err := s.directorConsistency(ctx, tx, director, date)
+		if err != nil {
+			return ConsistencyReport{}, err
+		}
+		report.Directors = append(report.Directors, directorReport)
+		report.Consistent = report.Consistent && directorReport.Consistent
+		report.DerivedBalance, err = report.DerivedBalance.Add(directorReport.DerivedBalance)
+		if err != nil {
+			return ConsistencyReport{}, fmt.Errorf("dla: aggregate derived balance: %w", err)
+		}
+		report.LedgerBalance, err = report.LedgerBalance.Add(directorReport.LedgerBalance)
+		if err != nil {
+			return ConsistencyReport{}, fmt.Errorf("dla: aggregate ledger balance: %w", err)
+		}
+		report.ExpectedLedgerBalance, err = report.ExpectedLedgerBalance.Add(directorReport.ExpectedLedgerBalance)
+		if err != nil {
+			return ConsistencyReport{}, fmt.Errorf("dla: aggregate expected ledger balance: %w", err)
+		}
 	}
 	if !report.Consistent {
 		return report, &ConsistencyViolationError{Report: report}
@@ -91,6 +117,64 @@ func (s *Service) CheckConsistency(ctx context.Context, asOf time.Time) (Consist
 		return ConsistencyReport{}, fmt.Errorf("dla: commit consistency check transaction: %w", err)
 	}
 	return report, nil
+}
+
+func (s *Service) consistencyDirectors(ctx context.Context, tx db.Tx) ([]Director, error) {
+	current, err := s.directors(ctx)
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[DirectorID]Director, len(current))
+	directors := make([]Director, 0, len(current))
+	for _, director := range current {
+		byID[director.ID] = director
+		directors = append(directors, director)
+	}
+	withEntries, err := s.store.DirectorsWithEntries(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	for _, directorID := range withEntries {
+		if _, ok := byID[directorID]; ok {
+			continue
+		}
+		director := Director{ID: directorID, Name: string(directorID)}
+		byID[directorID] = director
+		directors = append(directors, director)
+	}
+	return directors, nil
+}
+
+func (s *Service) directorConsistency(ctx context.Context, tx db.Tx, director Director, asOf time.Time) (DirectorConsistencyReport, error) {
+	derivedBalance, err := s.store.CurrentBalanceAsOf(ctx, tx, director.ID, asOf)
+	if err != nil {
+		return DirectorConsistencyReport{}, err
+	}
+	accountCode, err := AccountCodeForDirector(director.ID)
+	if err != nil {
+		return DirectorConsistencyReport{}, err
+	}
+	ledgerBalance, err := s.ledger.AccountBalanceInTx(ctx, tx, accountCode, asOf)
+	if err != nil {
+		if errors.Is(err, ledgerapi.ErrAccountNotFound) && derivedBalance.Amount == 0 {
+			ledgerBalance.AmountGBP = money.Money{Currency: "GBP"}
+		} else {
+			return DirectorConsistencyReport{}, err
+		}
+	}
+	expectedLedgerBalance, err := derivedBalance.Negate()
+	if err != nil {
+		return DirectorConsistencyReport{}, fmt.Errorf("dla: expected ledger balance: %w", err)
+	}
+	return DirectorConsistencyReport{
+		DirectorID:            director.ID,
+		DirectorName:          director.Name,
+		AccountCode:           string(accountCode),
+		Consistent:            ledgerBalance.AmountGBP == expectedLedgerBalance,
+		DerivedBalance:        derivedBalance,
+		LedgerBalance:         ledgerBalance.AmountGBP,
+		ExpectedLedgerBalance: expectedLedgerBalance,
+	}, nil
 }
 
 // RunConsistencyCheck executes CheckConsistency, logs invariant violations, and
@@ -123,6 +207,24 @@ func (s *Service) RunConsistencyCheck(
 func (r ConsistencyReport) ViolationReason() string {
 	if r.Consistent {
 		return "DLA balance matches ledger account balance"
+	}
+	for _, director := range r.Directors {
+		if director.Consistent {
+			continue
+		}
+		name := director.DirectorName
+		if name == "" {
+			name = string(director.DirectorID)
+		}
+		return fmt.Sprintf(
+			"DLA balance mismatch for %s as of %s; derived=%v ledger=%v expected_ledger=%v account=%s",
+			name,
+			r.AsOf.Format(time.DateOnly),
+			director.DerivedBalance,
+			director.LedgerBalance,
+			director.ExpectedLedgerBalance,
+			director.AccountCode,
+		)
 	}
 	return fmt.Sprintf(
 		"DLA balance mismatch as of %s; derived=%v ledger=%v expected_ledger=%v",

@@ -10,7 +10,7 @@ import (
 
 // DLAReadAPI is the public DLA read surface used by advisor facts.
 type DLAReadAPI interface {
-	CurrentBalance(context.Context) (money.Money, dla.Status, error)
+	Statuses(context.Context) ([]dla.StatusPayload, error)
 }
 
 type dlaFactProvider struct {
@@ -31,6 +31,9 @@ func (p dlaFactProvider) Keys() []FactKey {
 		FactRuleDLAStatus,
 		FactRuleDLAClearance,
 		FactRuleDLAClearanceMinor,
+		FactRuleDLADirectorID,
+		FactRuleDLADirectorName,
+		FactDLADirectorStatuses,
 	}
 }
 
@@ -38,23 +41,45 @@ func (p dlaFactProvider) Gather(ctx context.Context) (map[FactKey]FactValue, err
 	if p.api == nil {
 		return nil, fmt.Errorf("advisor: DLA read API is required")
 	}
-	balance, status, err := p.api.CurrentBalance(ctx)
+	statuses, err := p.api.Statuses(ctx)
 	if err != nil {
 		return nil, err
 	}
-	clearance, err := clearanceAmountForBalance(balance)
-	if err != nil {
-		return nil, err
+	facts := make([]DLADirectorStatusFact, 0, len(statuses))
+	for _, status := range statuses {
+		clearance, err := clearanceAmountForBalance(status.Balance)
+		if err != nil {
+			return nil, err
+		}
+		name := status.DirectorName
+		if name == "" {
+			name = string(status.DirectorID)
+		}
+		facts = append(facts, DLADirectorStatusFact{
+			DirectorID:     string(status.DirectorID),
+			DirectorName:   name,
+			Balance:        status.Balance,
+			Status:         string(status.Status),
+			Clearance:      clearance,
+			ClearanceMinor: clearance.Amount,
+		})
 	}
-	return map[FactKey]FactValue{
-		FactDLABalance:            balance,
-		FactDLAStatus:             string(status),
-		FactDLASuggestedClearance: clearance,
-		FactRuleDLABalance:        balance,
-		FactRuleDLAStatus:         string(status),
-		FactRuleDLAClearance:      clearance,
-		FactRuleDLAClearanceMinor: clearance.Amount,
-	}, nil
+	values := map[FactKey]FactValue{
+		FactDLADirectorStatuses: facts,
+	}
+	if len(facts) > 0 {
+		first := facts[0]
+		values[FactDLABalance] = first.Balance
+		values[FactDLAStatus] = first.Status
+		values[FactDLASuggestedClearance] = first.Clearance
+		values[FactRuleDLABalance] = first.Balance
+		values[FactRuleDLAStatus] = first.Status
+		values[FactRuleDLAClearance] = first.Clearance
+		values[FactRuleDLAClearanceMinor] = first.ClearanceMinor
+		values[FactRuleDLADirectorID] = first.DirectorID
+		values[FactRuleDLADirectorName] = first.DirectorName
+	}
+	return values, nil
 }
 
 func clearanceAmountForBalance(balance money.Money) (money.Money, error) {

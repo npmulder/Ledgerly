@@ -49,13 +49,25 @@ export const queryKeys = {
     summary: (): ApiQueryKey => ["dashboard", "summary", {}],
   },
   dla: {
-    balance: (): ApiQueryKey => ["dla", "balance", {}],
-    ledger: (cursor: string | null = null): ApiQueryKey => [
+    balance: (directorID = "director-1"): ApiQueryKey => [
+      "dla",
+      "balance",
+      { directorID },
+    ],
+    ledger: (
+      directorID = "director-1",
+      cursor: string | null = null,
+    ): ApiQueryKey => [
       "dla",
       "ledger",
-      { cursor },
+      { cursor, directorID },
     ],
-    ledgerPages: (): ApiQueryKey => ["dla", "ledgerPages", {}],
+    ledgerPages: (directorID = "director-1"): ApiQueryKey => [
+      "dla",
+      "ledgerPages",
+      { directorID },
+    ],
+    statuses: (): ApiQueryKey => ["dla", "statuses", {}],
   },
   dividends: {
     documents: (id: string | null = null): ApiQueryKey => [

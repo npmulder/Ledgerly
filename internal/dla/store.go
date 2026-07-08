@@ -21,9 +21,10 @@ type Store struct{}
 func (Store) InsertEntry(ctx context.Context, tx db.Tx, entry NewEntry) (EntryID, error) {
 	var id int64
 	if err := tx.QueryRow(ctx, `
-INSERT INTO dla.dla_entries (date, kind, description, amount, currency, source)
-VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO dla.dla_entries (director, date, kind, description, amount, currency, source)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 RETURNING id`,
+		entry.Director,
 		entry.Date,
 		string(entry.Kind),
 		entry.Description,
@@ -54,6 +55,7 @@ func (Store) Entries(ctx context.Context, tx db.Tx, filter LedgerFilter) ([]Entr
 		var (
 			entry          Entry
 			kind           string
+			director       string
 			amount         int64
 			currency       string
 			owedToYou      int64
@@ -62,6 +64,7 @@ func (Store) Entries(ctx context.Context, tx db.Tx, filter LedgerFilter) ([]Entr
 		)
 		if err := rows.Scan(
 			&entry.ID,
+			&director,
 			&entry.Date,
 			&kind,
 			&entry.Description,
@@ -75,6 +78,7 @@ func (Store) Entries(ctx context.Context, tx db.Tx, filter LedgerFilter) ([]Entr
 		); err != nil {
 			return nil, fmt.Errorf("dla: scan entry: %w", err)
 		}
+		entry.Director = DirectorID(director)
 		entry.Kind = EntryKind(kind)
 		entry.Amount = money.Money{Amount: amount, Currency: currency}
 		entry.OwedToYou = money.Money{Amount: owedToYou, Currency: currency}
@@ -91,14 +95,52 @@ func (Store) Entries(ctx context.Context, tx db.Tx, filter LedgerFilter) ([]Entr
 
 // CurrentBalance returns the signed DLA balance using DLA convention: positive
 // is credit, negative is overdrawn.
-func (Store) CurrentBalance(ctx context.Context, tx db.Tx) (money.Money, error) {
-	return balanceQuery(ctx, tx, "")
+func (Store) CurrentBalance(ctx context.Context, tx db.Tx, director DirectorID) (money.Money, error) {
+	normalized, _, err := normalizeDirectorID(director)
+	if err != nil {
+		return money.Money{}, err
+	}
+	return balanceQuery(ctx, tx, "WHERE director = $1", normalized)
 }
 
 // CurrentBalanceAsOf returns the signed DLA balance for entries dated on or
 // before asOf.
-func (Store) CurrentBalanceAsOf(ctx context.Context, tx db.Tx, asOf time.Time) (money.Money, error) {
-	return balanceQuery(ctx, tx, "WHERE date <= $1", asOf)
+func (Store) CurrentBalanceAsOf(ctx context.Context, tx db.Tx, director DirectorID, asOf time.Time) (money.Money, error) {
+	normalized, _, err := normalizeDirectorID(director)
+	if err != nil {
+		return money.Money{}, err
+	}
+	return balanceQuery(ctx, tx, "WHERE director = $1 AND date <= $2", normalized, asOf)
+}
+
+// DirectorsWithEntries returns every director identifier with at least one DLA
+// entry so consistency checks continue to cover removed profile directors.
+func (Store) DirectorsWithEntries(ctx context.Context, tx db.Tx) ([]DirectorID, error) {
+	rows, err := tx.Query(ctx, `
+SELECT DISTINCT director
+FROM dla.dla_entries
+ORDER BY director`)
+	if err != nil {
+		return nil, fmt.Errorf("dla: list entry directors: %w", err)
+	}
+	defer rows.Close()
+
+	directors := []DirectorID{}
+	for rows.Next() {
+		var director string
+		if err := rows.Scan(&director); err != nil {
+			return nil, fmt.Errorf("dla: scan entry director: %w", err)
+		}
+		normalized, _, err := normalizeDirectorID(DirectorID(director))
+		if err != nil {
+			return nil, err
+		}
+		directors = append(directors, normalized)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("dla: collect entry directors: %w", err)
+	}
+	return directors, nil
 }
 
 func buildEntriesQuery(filter LedgerFilter) (string, []any) {
@@ -109,6 +151,9 @@ func buildEntriesQuery(filter LedgerFilter) (string, []any) {
 	}
 
 	innerWhere := []string{"true"}
+	if filter.Director != "" {
+		innerWhere = append(innerWhere, "director = "+addArg(filter.Director))
+	}
 	if filter.To != nil {
 		innerWhere = append(innerWhere, "date <= "+addArg(*filter.To))
 	}
@@ -127,6 +172,7 @@ func buildEntriesQuery(filter LedgerFilter) (string, []any) {
 	query := `
 WITH ordered AS (
 	SELECT id,
+		director,
 		date,
 		kind::text AS kind,
 		description,
@@ -147,6 +193,7 @@ WITH ordered AS (
 	WHERE ` + strings.Join(innerWhere, "\n\t\tAND ") + `
 )
 SELECT id,
+	director,
 	date,
 	kind,
 	description,

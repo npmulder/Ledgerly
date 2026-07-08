@@ -15,10 +15,11 @@ import (
 
 // Config contains the platform dependencies required by the DLA HTTP module.
 type Config struct {
-	Pool   *pgxpool.Pool
-	Bus    *bus.Bus
-	Clock  clock.Clock
-	Ledger ledger.Ledger
+	Pool      *pgxpool.Pool
+	Bus       *bus.Bus
+	Clock     clock.Clock
+	Ledger    ledger.Ledger
+	Directors DirectorSource
 }
 
 // Module is the DLA HTTP wiring surface used by the app builder.
@@ -42,7 +43,7 @@ func NewModule(cfg Config) (*Module, error) {
 		ledgerServices = append(ledgerServices, cfg.Ledger)
 	}
 	return &Module{
-		service: NewWithBusAndClock(cfg.Pool, cfg.Bus, clk, ledgerServices...),
+		service: NewWithBusClockAndDirectors(cfg.Pool, cfg.Bus, clk, cfg.Directors, ledgerServices...),
 		clock:   clk,
 	}, nil
 }
@@ -62,10 +63,20 @@ func (m *Module) OpenAPIFragment() httpserver.OpenAPIFragment {
 
 // CurrentBalance returns the current DLA balance and advisor-facing status.
 func (m *Module) CurrentBalance(ctx context.Context) (money.Money, Status, error) {
-	return m.service.CurrentBalance(ctx)
+	return m.service.CurrentBalance(ctx, DefaultDirectorID)
+}
+
+// CurrentBalanceForDirector returns the current balance for one director.
+func (m *Module) CurrentBalanceForDirector(ctx context.Context, director DirectorID) (money.Money, Status, error) {
+	return m.service.CurrentBalance(ctx, director)
+}
+
+// Statuses returns one DLA status per current director.
+func (m *Module) Statuses(ctx context.Context) ([]StatusPayload, error) {
+	return m.service.Statuses(ctx)
 }
 
 // SuggestedClearanceAmount returns the amount needed to clear an overdrawn DLA.
 func (m *Module) SuggestedClearanceAmount(ctx context.Context) (money.Money, error) {
-	return m.service.SuggestedClearanceAmount(ctx)
+	return m.service.SuggestedClearanceAmount(ctx, DefaultDirectorID)
 }

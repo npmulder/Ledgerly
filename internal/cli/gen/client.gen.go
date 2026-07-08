@@ -553,6 +553,7 @@ type BankingBatchSummary struct {
 // BankingCommandResponse defines model for BankingCommandResponse.
 type BankingCommandResponse struct {
 	AmountGbp        *BankingMoney               `json:"amount_gbp,omitempty"`
+	DirectorId       *string                     `json:"director_id,omitempty"`
 	Kind             *BankingCommandResponseKind `json:"kind,omitempty"`
 	RealisedFxAmount *BankingMoney               `json:"realised_fx_amount,omitempty"`
 	Rule             *BankingPayeeRule           `json:"rule,omitempty"`
@@ -585,6 +586,11 @@ type BankingCreateAccountRequestProvider string
 type BankingFeedResponse struct {
 	NextCursor   *string              `json:"next_cursor"`
 	Transactions []BankingTransaction `json:"transactions"`
+}
+
+// BankingFileDLARequest defines model for BankingFileDLARequest.
+type BankingFileDLARequest struct {
+	DirectorId *string `json:"director_id,omitempty"`
 }
 
 // BankingInvoiceCandidate defines model for BankingInvoiceCandidate.
@@ -766,6 +772,8 @@ type BankingValidationProblem struct {
 // DLABalanceResponse defines model for DLABalanceResponse.
 type DLABalanceResponse struct {
 	Balance            DLAMoney                 `json:"balance"`
+	DirectorId         string                   `json:"director_id"`
+	DirectorName       *string                  `json:"director_name,omitempty"`
 	Policy             DLAPolicy                `json:"policy"`
 	Status             DLABalanceResponseStatus `json:"status"`
 	SuggestedClearance *DLAMoney                `json:"suggested_clearance"`
@@ -787,6 +795,9 @@ type DLAEntryRequest struct {
 	CashAccountCode *string            `json:"cash_account_code,omitempty"`
 	Date            openapi_types.Date `json:"date"`
 	Description     string             `json:"description"`
+
+	// DirectorId Stable director identifier. Defaults to director-1 when omitted.
+	DirectorId *string `json:"director_id,omitempty"`
 
 	// ExpenseCategory Required for expense-owed entries; use the target ledger expense account code with matching currency.
 	ExpenseCategory *string             `json:"expense_category,omitempty"`
@@ -812,6 +823,7 @@ type DLALedgerEntry struct {
 	CreatedAt      time.Time                 `json:"created_at"`
 	Date           openapi_types.Date        `json:"date"`
 	Description    string                    `json:"description"`
+	DirectorId     string                    `json:"director_id"`
 	Drawn          DLAMoney                  `json:"drawn"`
 	Id             int64                     `json:"id"`
 	Kind           DLALedgerEntryKind        `json:"kind"`
@@ -846,6 +858,11 @@ type DLAPolicy struct {
 	OverdrawnWarningTemplate string `json:"overdrawn_warning_template"`
 	Remedy                   string `json:"remedy"`
 	S455Charge               bool   `json:"s455_charge"`
+}
+
+// DLAStatusesResponse defines model for DLAStatusesResponse.
+type DLAStatusesResponse struct {
+	Statuses []DLABalanceResponse `json:"statuses"`
 }
 
 // DLAValidationProblem defines model for DLAValidationProblem.
@@ -972,6 +989,7 @@ type DashboardToReconcile struct {
 // Director defines model for Director.
 type Director struct {
 	AppointedDate *openapi_types.Date `json:"appointed_date,omitempty"`
+	Id            *string             `json:"id,omitempty"`
 	IsChair       *bool               `json:"is_chair,omitempty"`
 	Name          string              `json:"name"`
 }
@@ -1983,8 +2001,17 @@ type BankingPutReceiptMultipartBody struct {
 	Receipt openapi_types.File `json:"receipt"`
 }
 
+// DlaGetBalanceParams defines parameters for DlaGetBalance.
+type DlaGetBalanceParams struct {
+	// Director Stable director identifier. Defaults to director-1 for legacy single-director installs.
+	Director *string `form:"director,omitempty" json:"director,omitempty"`
+}
+
 // DlaListLedgerParams defines parameters for DlaListLedger.
 type DlaListLedgerParams struct {
+	// Director Stable director identifier. Defaults to director-1 for legacy single-director installs.
+	Director *string `form:"director,omitempty" json:"director,omitempty"`
+
 	// From Inclusive entry date lower bound.
 	From *openapi_types.Date `form:"from,omitempty" json:"from,omitempty"`
 
@@ -2113,6 +2140,9 @@ type BankingConfirmTransactionJSONRequestBody = BankingConfirmMatchRequest
 
 // BankingExcludeTransactionJSONRequestBody defines body for BankingExcludeTransaction for application/json ContentType.
 type BankingExcludeTransactionJSONRequestBody = BankingReasonRequest
+
+// BankingFileTransactionToDLAJSONRequestBody defines body for BankingFileTransactionToDLA for application/json ContentType.
+type BankingFileTransactionToDLAJSONRequestBody = BankingFileDLARequest
 
 // BankingPutReceiptMultipartRequestBody defines body for BankingPutReceipt for multipart/form-data ContentType.
 type BankingPutReceiptMultipartRequestBody BankingPutReceiptMultipartBody
@@ -2999,8 +3029,10 @@ type ClientInterface interface {
 
 	BankingExcludeTransaction(ctx context.Context, id int64, body BankingExcludeTransactionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// BankingFileTransactionToDLA request
-	BankingFileTransactionToDLA(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// BankingFileTransactionToDLAWithBody request with any body
+	BankingFileTransactionToDLAWithBody(ctx context.Context, id int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	BankingFileTransactionToDLA(ctx context.Context, id int64, body BankingFileTransactionToDLAJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// BankingListInvoiceCandidates request
 	BankingListInvoiceCandidates(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -3062,7 +3094,7 @@ type ClientInterface interface {
 	DividendsGetVoucherPDFByID(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DlaGetBalance request
-	DlaGetBalance(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+	DlaGetBalance(ctx context.Context, params *DlaGetBalanceParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DlaCreateEntryWithBody request with any body
 	DlaCreateEntryWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -3071,6 +3103,9 @@ type ClientInterface interface {
 
 	// DlaListLedger request
 	DlaListLedger(ctx context.Context, params *DlaListLedgerParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DlaListStatuses request
+	DlaListStatuses(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// IdentityGetAsset request
 	IdentityGetAsset(ctx context.Context, id openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -3495,8 +3530,20 @@ func (c *Client) BankingExcludeTransaction(ctx context.Context, id int64, body B
 	return c.Client.Do(req)
 }
 
-func (c *Client) BankingFileTransactionToDLA(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewBankingFileTransactionToDLARequest(c.Server, id)
+func (c *Client) BankingFileTransactionToDLAWithBody(ctx context.Context, id int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBankingFileTransactionToDLARequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) BankingFileTransactionToDLA(ctx context.Context, id int64, body BankingFileTransactionToDLAJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBankingFileTransactionToDLARequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3759,8 +3806,8 @@ func (c *Client) DividendsGetVoucherPDFByID(ctx context.Context, id string, reqE
 	return c.Client.Do(req)
 }
 
-func (c *Client) DlaGetBalance(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewDlaGetBalanceRequest(c.Server)
+func (c *Client) DlaGetBalance(ctx context.Context, params *DlaGetBalanceParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDlaGetBalanceRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -3797,6 +3844,18 @@ func (c *Client) DlaCreateEntry(ctx context.Context, body DlaCreateEntryJSONRequ
 
 func (c *Client) DlaListLedger(ctx context.Context, params *DlaListLedgerParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDlaListLedgerRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DlaListStatuses(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDlaListStatusesRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -5237,8 +5296,19 @@ func NewBankingExcludeTransactionRequestWithBody(server string, id int64, conten
 	return req, nil
 }
 
-// NewBankingFileTransactionToDLARequest generates requests for BankingFileTransactionToDLA
-func NewBankingFileTransactionToDLARequest(server string, id int64) (*http.Request, error) {
+// NewBankingFileTransactionToDLARequest calls the generic BankingFileTransactionToDLA builder with application/json body
+func NewBankingFileTransactionToDLARequest(server string, id int64, body BankingFileTransactionToDLAJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewBankingFileTransactionToDLARequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewBankingFileTransactionToDLARequestWithBody generates requests for BankingFileTransactionToDLA with any type of body
+func NewBankingFileTransactionToDLARequestWithBody(server string, id int64, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -5263,10 +5333,12 @@ func NewBankingFileTransactionToDLARequest(server string, id int64) (*http.Reque
 		return nil, err
 	}
 
-	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	req, err := http.NewRequest("POST", queryURL.String(), body)
 	if err != nil {
 		return nil, err
 	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -5869,7 +5941,7 @@ func NewDividendsGetVoucherPDFByIDRequest(server string, id string) (*http.Reque
 }
 
 // NewDlaGetBalanceRequest generates requests for DlaGetBalance
-func NewDlaGetBalanceRequest(server string) (*http.Request, error) {
+func NewDlaGetBalanceRequest(server string, params *DlaGetBalanceParams) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -5885,6 +5957,28 @@ func NewDlaGetBalanceRequest(server string) (*http.Request, error) {
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Director != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "director", runtime.ParamLocationQuery, *params.Director); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
 	}
 
 	req, err := http.NewRequest("GET", queryURL.String(), nil)
@@ -5957,6 +6051,22 @@ func NewDlaListLedgerRequest(server string, params *DlaListLedgerParams) (*http.
 	if params != nil {
 		queryValues := queryURL.Query()
 
+		if params.Director != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "director", runtime.ParamLocationQuery, *params.Director); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
 		if params.From != nil {
 
 			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "from", runtime.ParamLocationQuery, *params.From); err != nil {
@@ -6006,6 +6116,33 @@ func NewDlaListLedgerRequest(server string, params *DlaListLedgerParams) (*http.
 		}
 
 		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewDlaListStatusesRequest generates requests for DlaListStatuses
+func NewDlaListStatusesRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/dla/statuses")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
 	}
 
 	req, err := http.NewRequest("GET", queryURL.String(), nil)
@@ -8086,8 +8223,10 @@ type ClientWithResponsesInterface interface {
 
 	BankingExcludeTransactionWithResponse(ctx context.Context, id int64, body BankingExcludeTransactionJSONRequestBody, reqEditors ...RequestEditorFn) (*BankingExcludeTransactionResponse, error)
 
-	// BankingFileTransactionToDLAWithResponse request
-	BankingFileTransactionToDLAWithResponse(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*BankingFileTransactionToDLAResponse, error)
+	// BankingFileTransactionToDLAWithBodyWithResponse request with any body
+	BankingFileTransactionToDLAWithBodyWithResponse(ctx context.Context, id int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*BankingFileTransactionToDLAResponse, error)
+
+	BankingFileTransactionToDLAWithResponse(ctx context.Context, id int64, body BankingFileTransactionToDLAJSONRequestBody, reqEditors ...RequestEditorFn) (*BankingFileTransactionToDLAResponse, error)
 
 	// BankingListInvoiceCandidatesWithResponse request
 	BankingListInvoiceCandidatesWithResponse(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*BankingListInvoiceCandidatesResponse, error)
@@ -8149,7 +8288,7 @@ type ClientWithResponsesInterface interface {
 	DividendsGetVoucherPDFByIDWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DividendsGetVoucherPDFByIDResponse, error)
 
 	// DlaGetBalanceWithResponse request
-	DlaGetBalanceWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*DlaGetBalanceResponse, error)
+	DlaGetBalanceWithResponse(ctx context.Context, params *DlaGetBalanceParams, reqEditors ...RequestEditorFn) (*DlaGetBalanceResponse, error)
 
 	// DlaCreateEntryWithBodyWithResponse request with any body
 	DlaCreateEntryWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DlaCreateEntryResponse, error)
@@ -8158,6 +8297,9 @@ type ClientWithResponsesInterface interface {
 
 	// DlaListLedgerWithResponse request
 	DlaListLedgerWithResponse(ctx context.Context, params *DlaListLedgerParams, reqEditors ...RequestEditorFn) (*DlaListLedgerResponse, error)
+
+	// DlaListStatusesWithResponse request
+	DlaListStatusesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*DlaListStatusesResponse, error)
 
 	// IdentityGetAssetWithResponse request
 	IdentityGetAssetWithResponse(ctx context.Context, id openapi_types.UUID, reqEditors ...RequestEditorFn) (*IdentityGetAssetResponse, error)
@@ -9245,6 +9387,29 @@ func (r DlaListLedgerResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r DlaListLedgerResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type DlaListStatusesResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON200                   *DLAStatusesResponse
+	ApplicationproblemJSON401 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r DlaListStatusesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DlaListStatusesResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -10618,9 +10783,17 @@ func (c *ClientWithResponses) BankingExcludeTransactionWithResponse(ctx context.
 	return ParseBankingExcludeTransactionResponse(rsp)
 }
 
-// BankingFileTransactionToDLAWithResponse request returning *BankingFileTransactionToDLAResponse
-func (c *ClientWithResponses) BankingFileTransactionToDLAWithResponse(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*BankingFileTransactionToDLAResponse, error) {
-	rsp, err := c.BankingFileTransactionToDLA(ctx, id, reqEditors...)
+// BankingFileTransactionToDLAWithBodyWithResponse request with arbitrary body returning *BankingFileTransactionToDLAResponse
+func (c *ClientWithResponses) BankingFileTransactionToDLAWithBodyWithResponse(ctx context.Context, id int64, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*BankingFileTransactionToDLAResponse, error) {
+	rsp, err := c.BankingFileTransactionToDLAWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseBankingFileTransactionToDLAResponse(rsp)
+}
+
+func (c *ClientWithResponses) BankingFileTransactionToDLAWithResponse(ctx context.Context, id int64, body BankingFileTransactionToDLAJSONRequestBody, reqEditors ...RequestEditorFn) (*BankingFileTransactionToDLAResponse, error) {
+	rsp, err := c.BankingFileTransactionToDLA(ctx, id, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -10813,8 +10986,8 @@ func (c *ClientWithResponses) DividendsGetVoucherPDFByIDWithResponse(ctx context
 }
 
 // DlaGetBalanceWithResponse request returning *DlaGetBalanceResponse
-func (c *ClientWithResponses) DlaGetBalanceWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*DlaGetBalanceResponse, error) {
-	rsp, err := c.DlaGetBalance(ctx, reqEditors...)
+func (c *ClientWithResponses) DlaGetBalanceWithResponse(ctx context.Context, params *DlaGetBalanceParams, reqEditors ...RequestEditorFn) (*DlaGetBalanceResponse, error) {
+	rsp, err := c.DlaGetBalance(ctx, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -10845,6 +11018,15 @@ func (c *ClientWithResponses) DlaListLedgerWithResponse(ctx context.Context, par
 		return nil, err
 	}
 	return ParseDlaListLedgerResponse(rsp)
+}
+
+// DlaListStatusesWithResponse request returning *DlaListStatusesResponse
+func (c *ClientWithResponses) DlaListStatusesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*DlaListStatusesResponse, error) {
+	rsp, err := c.DlaListStatuses(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDlaListStatusesResponse(rsp)
 }
 
 // IdentityGetAssetWithResponse request returning *IdentityGetAssetResponse
@@ -13081,6 +13263,39 @@ func ParseDlaListLedgerResponse(rsp *http.Response) (*DlaListLedgerResponse, err
 			return nil, err
 		}
 		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDlaListStatusesResponse parses an HTTP response from a DlaListStatusesWithResponse call
+func ParseDlaListStatusesResponse(rsp *http.Response) (*DlaListStatusesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DlaListStatusesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DLAStatusesResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Problem

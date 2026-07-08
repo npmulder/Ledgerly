@@ -57,6 +57,11 @@ type EntryFormState = {
   kind: ManualKind;
 };
 
+type DlaDirector = {
+  id: string;
+  name: string;
+};
+
 type CreateDLAEntryResult = Awaited<ReturnType<typeof createDLAEntry>>;
 
 type CreateEntryContext = {
@@ -72,19 +77,42 @@ const initialFormState = (): EntryFormState => ({
   kind: "repayment",
 });
 
+function profileDirectors(
+  directors: readonly { id?: string; name?: string }[] | undefined,
+): DlaDirector[] {
+  const mapped =
+    directors
+      ?.map((director, index) => ({
+        id: director.id?.trim() || `director-${index + 1}`,
+        name: director.name?.trim() || `Director ${index + 1}`,
+      }))
+      .filter((director) => director.name !== "") ?? [];
+  return mapped.length > 0 ? mapped : [{ id: "director-1", name: "Director" }];
+}
+
 export function DlaScreen() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const amountRef = useRef<HTMLInputElement>(null);
   const [form, setForm] = useState<EntryFormState>(() => initialFormState());
+  const [selectedDirectorID, setSelectedDirectorID] = useState("director-1");
 
   const profileQuery = useQuery({
     queryFn: getIdentityProfile,
     queryKey: queryKeys.identity.profile(),
   });
+  const directors = useMemo(
+    () => profileDirectors(profileQuery.data?.directors),
+    [profileQuery.data?.directors],
+  );
+  const selectedDirector =
+    directors.find((director) => director.id === selectedDirectorID) ??
+    directors[0] ??
+    ({ id: "director-1", name: "Director" } satisfies DlaDirector);
+  const hasMultipleDirectors = directors.length > 1;
   const balanceQuery = useQuery({
-    queryFn: getDLABalance,
-    queryKey: queryKeys.dla.balance(),
+    queryFn: () => getDLABalance(selectedDirector.id),
+    queryKey: queryKeys.dla.balance(selectedDirector.id),
   });
   const ledgerQuery = useInfiniteQuery<
     DLALedger,
@@ -95,8 +123,8 @@ export function DlaScreen() {
   >({
     getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
     initialPageParam: null as string | null,
-    queryFn: ({ pageParam }) => getDLALedger(pageParam),
-    queryKey: queryKeys.dla.ledgerPages(),
+    queryFn: ({ pageParam }) => getDLALedger(selectedDirector.id, pageParam),
+    queryKey: queryKeys.dla.ledgerPages(selectedDirector.id),
   });
 
   const createEntryMutation = useMutation<
@@ -109,13 +137,13 @@ export function DlaScreen() {
     onError: (_error, _entry, context) => {
       if (context?.previousBalance) {
         queryClient.setQueryData(
-          queryKeys.dla.balance(),
+          queryKeys.dla.balance(selectedDirector.id),
           context.previousBalance,
         );
       }
       if (context?.previousLedger) {
         queryClient.setQueryData(
-          queryKeys.dla.ledgerPages(),
+          queryKeys.dla.ledgerPages(selectedDirector.id),
           context.previousLedger,
         );
       }
@@ -123,21 +151,21 @@ export function DlaScreen() {
     onMutate: async (entry) => {
       await queryClient.cancelQueries({ queryKey: ["dla"] });
       const previousBalance = queryClient.getQueryData<DLABalance>(
-        queryKeys.dla.balance(),
+        queryKeys.dla.balance(selectedDirector.id),
       );
       const previousLedger = queryClient.getQueryData<InfiniteData<DLALedger>>(
-        queryKeys.dla.ledgerPages(),
+        queryKeys.dla.ledgerPages(selectedDirector.id),
       );
 
       if (previousBalance) {
         queryClient.setQueryData<DLABalance>(
-          queryKeys.dla.balance(),
+          queryKeys.dla.balance(selectedDirector.id),
           optimisticBalance(previousBalance, entry),
         );
       }
       if (previousLedger && previousBalance) {
         queryClient.setQueryData<InfiniteData<DLALedger>>(
-          queryKeys.dla.ledgerPages(),
+          queryKeys.dla.ledgerPages(selectedDirector.id),
           optimisticLedger(previousLedger, previousBalance, entry),
         );
       }
@@ -146,9 +174,11 @@ export function DlaScreen() {
     },
     onSettled: async () => {
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys.dla.balance() }),
         queryClient.invalidateQueries({
-          queryKey: queryKeys.dla.ledgerPages(),
+          queryKey: queryKeys.dla.balance(selectedDirector.id),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.dla.ledgerPages(selectedDirector.id),
         }),
       ]);
     },
@@ -162,8 +192,6 @@ export function DlaScreen() {
     () => ledgerQuery.data?.pages.flatMap((page) => page.entries) ?? [],
     [ledgerQuery.data],
   );
-  const directorName =
-    profileQuery.data?.directors?.[0]?.name?.trim() || "Director";
   const currentBalanceText = balance
     ? formatBalance(
         balance.balance,
@@ -195,6 +223,7 @@ export function DlaScreen() {
       amount: { amount_minor: amountMinor, currency: "GBP" },
       date: form.date,
       description: form.description.trim(),
+      director_id: selectedDirector.id,
       kind: form.kind,
       ...(form.kind === "repayment"
         ? { cash_account_code: repaymentCashAccount }
@@ -219,7 +248,7 @@ export function DlaScreen() {
     <div className="dla-screen">
       <div className="dla-screen__header">
         <div>
-          <PageTitle>Director&apos;s loan · {directorName}</PageTitle>
+          <PageTitle>Director&apos;s loan · {selectedDirector.name}</PageTitle>
           <p className="type-secondary">
             Running ledger — positive means the company owes you
           </p>
@@ -233,6 +262,31 @@ export function DlaScreen() {
           Record entry
         </Button>
       </div>
+
+      {hasMultipleDirectors ? (
+        <div
+          aria-label="DLA director"
+          className="dla-director-tabs"
+          role="tablist"
+        >
+          {directors.map((director) => (
+            <button
+              aria-selected={director.id === selectedDirector.id}
+              className={
+                director.id === selectedDirector.id
+                  ? "dla-director-tabs__tab dla-director-tabs__tab--active"
+                  : "dla-director-tabs__tab"
+              }
+              key={director.id}
+              onClick={() => setSelectedDirectorID(director.id)}
+              role="tab"
+              type="button"
+            >
+              {director.name}
+            </button>
+          ))}
+        </div>
+      ) : null}
 
       <SplitMain>
         <div className="dla-main">
@@ -540,6 +594,7 @@ function optimisticLedger(
     created_at: new Date().toISOString(),
     date: entry.date,
     description: entry.description,
+    director_id: entry.director_id ?? "director-1",
     drawn: { amount_minor: 0, currency: entry.amount.currency },
     id: -Date.now(),
     kind: entry.kind,

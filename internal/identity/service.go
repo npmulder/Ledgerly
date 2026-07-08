@@ -830,7 +830,7 @@ func (patch UpdateProfilePatch) apply(profile CompanyProfile) (CompanyProfile, e
 		profile.Shareholders = append([]Shareholder{}, (*patch.Shareholders)...)
 	}
 	if patch.Directors != nil {
-		directors, err := normalizeDirectors(*patch.Directors)
+		directors, err := normalizeDirectorsWithExisting(*patch.Directors, profile.Directors)
 		if err != nil {
 			return CompanyProfile{}, err
 		}
@@ -921,15 +921,62 @@ func normalizeInitialCompanyProfile(profile CompanyProfile) (CompanyProfile, err
 }
 
 func normalizeDirectors(directors []Director) ([]Director, error) {
+	return normalizeDirectorsWithExisting(directors, nil)
+}
+
+func normalizeDirectorsWithExisting(directors []Director, existing []Director) ([]Director, error) {
 	if directors == nil {
 		return []Director{}, nil
 	}
 	normalized := make([]Director, 0, len(directors))
+	usedIDs := make(map[string]bool, len(directors))
+	reservedIDs := make(map[string]bool, len(existing))
+	existingByName := make(map[string][]Director, len(existing))
+	for _, director := range existing {
+		id := strings.TrimSpace(director.ID)
+		if id == "" || validateDirectorID(id) != nil {
+			continue
+		}
+		reservedIDs[id] = true
+		key := directorIdentityKey(director.Name)
+		if key != "" {
+			existingByName[key] = append(existingByName[key], Director{ID: id, Name: strings.TrimSpace(director.Name)})
+		}
+	}
+	nextID := 1
 	for _, director := range directors {
 		name := strings.TrimSpace(director.Name)
 		if name == "" {
 			return nil, fmt.Errorf("identity: director name is required")
 		}
+		id := strings.TrimSpace(director.ID)
+		if id == "" {
+			for _, candidate := range existingByName[directorIdentityKey(name)] {
+				if !usedIDs[candidate.ID] {
+					id = candidate.ID
+					break
+				}
+			}
+		}
+		if id == "" {
+			for {
+				candidate := fmt.Sprintf("director-%d", nextID)
+				nextID++
+				if !usedIDs[candidate] && !reservedIDs[candidate] {
+					id = candidate
+					break
+				}
+			}
+		}
+		if err := validateDirectorID(id); err != nil {
+			return nil, err
+		}
+		if usedIDs[id] {
+			return nil, fmt.Errorf("identity: director id %q is duplicated", id)
+		}
+		usedIDs[id] = true
+
+		director.ID = id
 		director.Name = name
 		if director.AppointedDate != nil {
 			appointedDate := strings.TrimSpace(*director.AppointedDate)
@@ -945,6 +992,29 @@ func normalizeDirectors(directors []Director) ([]Director, error) {
 		normalized = append(normalized, director)
 	}
 	return normalized, nil
+}
+
+func directorIdentityKey(name string) string {
+	return strings.ToLower(strings.Join(strings.Fields(name), " "))
+}
+
+func validateDirectorID(id string) error {
+	if id == "" {
+		return fmt.Errorf("identity: director id is required")
+	}
+	if !strings.HasPrefix(id, "director-") {
+		return fmt.Errorf("identity: director id %q is invalid", id)
+	}
+	suffix := strings.TrimPrefix(id, "director-")
+	if suffix == "" || suffix[0] == '0' {
+		return fmt.Errorf("identity: director id %q is invalid", id)
+	}
+	for _, r := range suffix {
+		if r < '0' || r > '9' {
+			return fmt.Errorf("identity: director id %q is invalid", id)
+		}
+	}
+	return nil
 }
 
 // DirectorNames returns non-empty director names in profile order.

@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/npmulder/ledgerly/internal/dla"
 	"github.com/npmulder/ledgerly/internal/identity"
 	"github.com/npmulder/ledgerly/internal/jurisdiction"
 	"github.com/npmulder/ledgerly/internal/ledger"
@@ -175,7 +176,8 @@ type Identity interface {
 // DLA is the presentation-ledger append surface dividends needs after posting
 // the authoritative ledger entry.
 type DLA interface {
-	RecordExternalCredit(context.Context, db.Tx, string, time.Time, money.Money, string) error
+	EnsureDirectorAccount(context.Context, db.Tx, dla.Director) (ledger.AccountCode, error)
+	RecordExternalCredit(context.Context, db.Tx, dla.DirectorID, string, time.Time, money.Money, string) error
 }
 
 // Config contains the platform dependencies required by the dividends module.

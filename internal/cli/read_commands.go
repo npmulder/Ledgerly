@@ -635,7 +635,7 @@ func runDLABalance(ctx context.Context, runtime *Runtime) error {
 	if err != nil {
 		return err
 	}
-	response, err := client.client.DlaGetBalanceWithResponse(ctx)
+	response, err := client.client.DlaGetBalanceWithResponse(ctx, nil)
 	if err != nil {
 		return newDomainError(fmt.Sprintf("unable to reach Ledgerly API: %v", err))
 	}

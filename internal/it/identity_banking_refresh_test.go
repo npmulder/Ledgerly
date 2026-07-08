@@ -44,7 +44,7 @@ func TestBankingDLASuggestionsRefreshAfterIdentityProfileCreated(t *testing.T) {
 		t.Fatalf("review queue after profile suggestions = %d, want 1; queue=%+v", len(queue.Suggestions), queue)
 	}
 	card := queue.Suggestions[0]
-	if card.Target.Type != "dla" || card.Target.ID != "director-loan" || !strings.Contains(card.Explanation, "N. Meyer") {
+	if card.Target.Type != "dla" || card.Target.ID != "director-1" || !strings.Contains(card.Explanation, "N. Meyer") {
 		t.Fatalf("DLA suggestion = %+v, want director-name DLA suggestion for N. Meyer", card)
 	}
 	txnID := banking.TransactionID(card.Transaction.ID)
@@ -83,7 +83,7 @@ func TestBankingDLASuggestionsRefreshAfterIdentityProfileCreated(t *testing.T) {
 	for _, suggestion := range queue.Suggestions {
 		if suggestion.Transaction.Reference == "shareholder transfer update" {
 			updateTxnID = banking.TransactionID(suggestion.Transaction.ID)
-			if suggestion.Target.Type != "dla" || suggestion.Target.ID != "director-loan" || !strings.Contains(suggestion.Explanation, "Jane Roberts") {
+			if suggestion.Target.Type != "dla" || suggestion.Target.ID != "director-3" || !strings.Contains(suggestion.Explanation, "Jane Roberts") {
 				t.Fatalf("updated director DLA suggestion = %+v, want Jane Roberts director-name DLA suggestion", suggestion)
 			}
 		}

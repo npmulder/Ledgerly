@@ -297,7 +297,7 @@ func runBankFileDLA(ctx context.Context, runtime *Runtime, txnID int64) error {
 	if err != nil {
 		return err
 	}
-	response, err := client.client.BankingFileTransactionToDLAWithResponse(ctx, txnID)
+	response, err := client.client.BankingFileTransactionToDLAWithResponse(ctx, txnID, gen.BankingFileTransactionToDLAJSONRequestBody{})
 	if err != nil {
 		return newDomainError(fmt.Sprintf("unable to reach Ledgerly API: %v", err))
 	}

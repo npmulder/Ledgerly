@@ -94,7 +94,7 @@ func testReconciliationFileToDLA(t *testing.T) {
 	card := queue.Suggestions[0]
 	if card.Kind != "suggestion" ||
 		card.Target.Type != "dla" ||
-		card.Target.ID != "director-loan" ||
+		card.Target.ID != "director-1" ||
 		!strings.Contains(card.Explanation, "N. Meyer") {
 		t.Fatalf("DLA review card = %+v, want director-name DLA suggestion", card)
 	}

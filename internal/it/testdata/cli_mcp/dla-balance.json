@@ -3,6 +3,7 @@
     "amount_minor": "number",
     "currency": "string"
   },
+  "director_id": "string",
   "policy": {
     "bik_warning_key": "string",
     "credit_explainer_template": "string",
