@@ -27,8 +27,12 @@ func (s invoicingInvoiceCandidateSource) InvoiceCandidates(ctx context.Context, 
 	if s.provider == nil {
 		return nil, nil
 	}
-	candidates, err := s.provider.InvoiceMatchCandidates(ctx, tx, currency)
-	if err != nil {
+	var candidates []invoicing.MatchCandidate
+	if err := withTransactionSearchPath(ctx, tx, invoicing.ModuleName, func() error {
+		var err error
+		candidates, err = s.provider.InvoiceMatchCandidates(ctx, tx, currency)
+		return err
+	}); err != nil {
 		return nil, err
 	}
 	mapped := make([]InvoiceMatchCandidate, len(candidates))

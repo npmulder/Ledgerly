@@ -14,6 +14,12 @@ const (
 	FactInvoiceID          FactKey = "invoice_id"
 	FactInvoiceNumber      FactKey = "invoice_number"
 
+	FactRecurringDrafts          FactKey = "invoices.recurringDrafts"
+	FactRecurringDraftCount      FactKey = "recurring_draft_count"
+	FactRecurringDraftClientName FactKey = "recurring_draft_client_name"
+	FactRecurringDraftInvoiceID  FactKey = "recurring_draft_invoice_id"
+	FactRecurringDraftRunDate    FactKey = "recurring_draft_run_date"
+
 	FactDLABalance            FactKey = "dla.balance"
 	FactDLAStatus             FactKey = "dla.status"
 	FactDLASuggestedClearance FactKey = "dla.suggestedClearance"
@@ -58,6 +64,15 @@ type OverdueInvoiceFact struct {
 	Client      string      `json:"client"`
 	Amount      money.Money `json:"amount"`
 	DaysOverdue int         `json:"daysOverdue"`
+}
+
+// RecurringDraftFact is the advisor contract shape for generated recurring
+// drafts awaiting review/send.
+type RecurringDraftFact struct {
+	ID      string      `json:"id"`
+	Client  string      `json:"client"`
+	RunDate time.Time   `json:"runDate"`
+	Amount  money.Money `json:"amount"`
 }
 
 // FilingFact is the advisor contract shape for filings[].

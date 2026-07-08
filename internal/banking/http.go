@@ -145,6 +145,20 @@ type recentResponse struct {
 	Transactions []recentTransactionResponse `json:"transactions"`
 }
 
+type invoiceCandidatesResponse struct {
+	Candidates []invoiceCandidateResponse `json:"candidates"`
+}
+
+type invoiceCandidateResponse struct {
+	InvoiceID     string        `json:"invoice_id"`
+	InvoiceNumber string        `json:"invoice_number"`
+	Client        string        `json:"client"`
+	IssueDate     string        `json:"issue_date"`
+	DueDate       string        `json:"due_date"`
+	Amount        moneyResponse `json:"amount"`
+	Status        string        `json:"status"`
+}
+
 type recentTransactionResponse struct {
 	Transaction  transactionResponse `json:"transaction"`
 	ReconciledAt string              `json:"reconciled_at"`
@@ -185,6 +199,11 @@ type recodeRequest struct {
 	AccountCodeCamel string `json:"accountCode"`
 }
 
+type confirmMatchRequest struct {
+	InvoiceID      string `json:"invoice_id"`
+	InvoiceIDCamel string `json:"invoiceId"`
+}
+
 type payeeRuleRequest struct {
 	Matcher     string `json:"matcher"`
 	MatchMode   string `json:"match_mode"`
@@ -214,6 +233,7 @@ func (m *Module) RegisterRoutes(r chi.Router) {
 	r.Post("/payee-rules", h.createPayeeRule)
 	r.Put("/payee-rules/{id}", h.updatePayeeRule)
 	r.Delete("/payee-rules/{id}", h.deletePayeeRule)
+	r.Get("/transactions/{id}/invoice-candidates", h.listInvoiceCandidates)
 	r.Post("/transactions/{id}/confirm", h.confirmTransaction)
 	r.Post("/transactions/{id}/file-dla", h.fileTransactionToDLA)
 	r.Post("/transactions/{id}/recode", h.recodeTransaction)
@@ -486,12 +506,41 @@ func (h bankingHandler) deletePayeeRule(w nethttp.ResponseWriter, r *nethttp.Req
 	w.WriteHeader(nethttp.StatusNoContent)
 }
 
+func (h bankingHandler) listInvoiceCandidates(w nethttp.ResponseWriter, r *nethttp.Request) {
+	txnID, ok := transactionIDParam(w, r)
+	if !ok {
+		return
+	}
+	candidates, err := h.service.InvoiceCandidatesForTransaction(r.Context(), txnID)
+	if err != nil {
+		writeBankingError(w, r, err)
+		return
+	}
+	writeBankingJSON(w, nethttp.StatusOK, invoiceCandidatesToResponse(candidates))
+}
+
 func (h bankingHandler) confirmTransaction(w nethttp.ResponseWriter, r *nethttp.Request) {
 	txnID, ok := transactionIDParam(w, r)
 	if !ok {
 		return
 	}
-	result, err := h.service.ConfirmMatch(r.Context(), txnID)
+	var invoiceID string
+	if requestHasBody(r) {
+		var request confirmMatchRequest
+		if err := decodeBankingJSON(w, r, &request); err != nil {
+			writeBankingDecodeError(w, r, err)
+			return
+		}
+		invoiceID = strings.TrimSpace(request.InvoiceID)
+		if invoiceID == "" {
+			invoiceID = strings.TrimSpace(request.InvoiceIDCamel)
+		}
+		if invoiceID == "" {
+			writeBankingValidation(w, r, "invoice_id is required", []bankingFieldError{{Pointer: "/invoice_id", Detail: "is required"}})
+			return
+		}
+	}
+	result, err := h.service.ConfirmMatchToInvoice(r.Context(), txnID, invoiceID)
 	if err != nil {
 		writeBankingError(w, r, err)
 		return
@@ -884,7 +933,7 @@ func (h bankingHandler) invoiceMatchCandidate(ctx context.Context, item ReviewQu
 	candidates, ok := cache[currency]
 	if !ok {
 		var err error
-		candidates, err = h.service.invoiceCandidates.InvoiceCandidates(ctx, h.service.pool, currency)
+		candidates, err = h.service.invoiceCandidatesForCurrency(ctx, currency)
 		if err != nil {
 			return InvoiceMatchCandidate{}, false, err
 		}
@@ -1064,6 +1113,22 @@ func recentToResponse(recent []ReconciledTransaction) recentResponse {
 			Transaction:  transactionToResponse(item.Transaction),
 			ReconciledAt: item.ReconciledAt.UTC().Format(time.RFC3339Nano),
 			Actor:        item.Actor,
+		})
+	}
+	return response
+}
+
+func invoiceCandidatesToResponse(candidates []InvoiceMatchCandidate) invoiceCandidatesResponse {
+	response := invoiceCandidatesResponse{Candidates: make([]invoiceCandidateResponse, 0, len(candidates))}
+	for _, candidate := range candidates {
+		response.Candidates = append(response.Candidates, invoiceCandidateResponse{
+			InvoiceID:     candidate.InvoiceID,
+			InvoiceNumber: candidate.Number,
+			Client:        candidate.ClientName,
+			IssueDate:     candidate.IssueDate.UTC().Format(time.DateOnly),
+			DueDate:       candidate.DueDate.UTC().Format(time.DateOnly),
+			Amount:        moneyToResponse(candidate.Amount),
+			Status:        candidate.Status,
 		})
 	}
 	return response

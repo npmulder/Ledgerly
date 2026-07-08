@@ -28,11 +28,15 @@ export const queryKeys = {
   },
   banking: {
     accounts: (): ApiQueryKey => ["banking", "accounts", {}],
-    feed: (accountId: number | null = null): ApiQueryKey => [
+    candidates: (transactionId: number): ApiQueryKey => [
       "banking",
-      "feed",
-      { accountId },
+      "invoiceCandidates",
+      { transactionId },
     ],
+    feed: (
+      accountId: number | null = null,
+      state: string | null = null,
+    ): ApiQueryKey => ["banking", "feed", { accountId, state }],
     recent: (limit = 10, accountId: number | null = null): ApiQueryKey => [
       "banking",
       "recent",
@@ -88,6 +92,11 @@ export const queryKeys = {
       "invoicing",
       "invoices",
       { limit, offset, search, status },
+    ],
+    recurringTemplates: (): ApiQueryKey => [
+      "invoicing",
+      "recurringTemplates",
+      {},
     ],
   },
   jurisdiction: {

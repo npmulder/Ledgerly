@@ -4,6 +4,12 @@ surfaces: dashboard,invoices
 text: Invoice INV-2026-01 is 9 days overdue. Send a reminder to Contoso GmbH.
 cta: Send reminder | invoicing.sendReminder | {invoice_id=inv-123}
 
+rule: recurring_invoice_draft_waiting
+severity: teal
+surfaces: dashboard,invoices
+text: Recurring invoice draft for Fabrikam Ltd is ready for 2026-08-01.
+cta: Open draft | navigate:/invoices/draft-456 | {}
+
 rule: dla_overdrawn_bik
 severity: amber
 surfaces: dashboard,dla
