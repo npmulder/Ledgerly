@@ -168,6 +168,53 @@ test("imports CSV and reconciles match, DLA, and recode cards", async ({
   expect(state.recodeRequests).toEqual([{ account_code: "5020-travel" }]);
 });
 
+test("shows draft invoice matches as send-and-allocate cards", async ({
+  page,
+}) => {
+  const state = bankingState();
+  state.queue = {
+    matches: [
+      reviewCard({
+        confidence: 0.85,
+        explanation:
+          "85% draft invoice match for draft invoice inv_draft: confirming will send the invoice before allocating payment; exact native amount, payee resembles client",
+        kind: "match",
+        suggestion_id: 9011,
+        target: {
+          client: "Contoso GmbH",
+          id: "inv_draft",
+          invoice_status: "draft",
+          type: "invoice",
+        },
+        transaction: transactionFixture({
+          payee: "CONTOSO GMBH SEPA",
+          reference: "bank transfer",
+        }),
+      }),
+    ],
+    rules: [],
+    suggestions: [],
+  };
+  await mockBankingApi(page, state);
+
+  await page.goto("/banking");
+
+  await expect(
+    page.getByText("Draft invoice match", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText("Draft invoice", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText(/confirming will send the invoice before allocating/),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Send + allocate" }),
+  ).toBeVisible();
+  await page.screenshot({
+    fullPage: true,
+    path: "test-results/banking-draft-invoice-match.png",
+  });
+});
+
 async function mockBankingApi(page: Page, state: BankingState) {
   await page.route("**/*", async (route) => {
     const request = route.request();
@@ -195,7 +242,17 @@ async function mockBankingApi(page: Page, state: BankingState) {
       return;
     }
     if (path === "/api/ledger/accounts" && request.method() === "GET") {
-      await fulfillJson(route, { accounts: expenseAccountsFixture() });
+      await fulfillJson(route, { accounts: state.expenseAccounts });
+      return;
+    }
+    if (path === "/api/ledger/accounts" && request.method() === "POST") {
+      const body = JSON.parse(request.postData() ?? "{}") as {
+        code: string;
+        name: string;
+      };
+      const account = ledgerAccount({ code: body.code, name: body.name });
+      state.expenseAccounts = [...state.expenseAccounts, account];
+      await fulfillJson(route, account, 201);
       return;
     }
     if (path === "/api/banking/accounts" && request.method() === "GET") {
@@ -373,6 +430,7 @@ async function mockBankingApi(page: Page, state: BankingState) {
 type BankingState = {
   accounts: BankingAccount[];
   candidates: Record<number, BankingInvoiceCandidate[]>;
+  expenseAccounts: LedgerAccount[];
   feed: BankingTransaction[];
   imports: number;
   queue: BankingReviewQueue;
@@ -386,6 +444,7 @@ function bankingState(
   return {
     accounts,
     candidates: {},
+    expenseAccounts: expenseAccountsFixture(),
     feed: [],
     imports: 0,
     queue: { matches: [], rules: [], suggestions: [] },
@@ -424,25 +483,6 @@ function bankingAccount(overrides: Partial<BankingAccount>): BankingAccount {
   };
 }
 
-function expenseAccountsFixture(): LedgerAccount[] {
-  return [
-    ledgerAccount({ code: "5010-software", name: "Software" }),
-    ledgerAccount({ code: "5020-travel", name: "Travel" }),
-  ];
-}
-
-function ledgerAccount(overrides: Partial<LedgerAccount>): LedgerAccount {
-  return {
-    code: "5010-software",
-    created_at: "2026-07-06T10:00:00Z",
-    currency: null,
-    id: 5010,
-    name: "Software",
-    type: "expense",
-    ...overrides,
-  };
-}
-
 function reviewQueueFixture(): BankingReviewQueue {
   return {
     matches: [
@@ -455,6 +495,7 @@ function reviewQueueFixture(): BankingReviewQueue {
           client: "Contoso GmbH",
           id: "inv_2026_07",
           invoice_number: "INV-2026-07",
+          invoice_status: "sent",
           type: "invoice",
         },
         transaction: transactionFixture({
@@ -504,6 +545,27 @@ function reviewQueueFixture(): BankingReviewQueue {
 
 function reviewCard(card: BankingReviewCard): BankingReviewCard {
   return card;
+}
+
+function expenseAccountsFixture(): LedgerAccount[] {
+  return [
+    ledgerAccount({ code: "5000-fees", name: "Fees" }),
+    ledgerAccount({ code: "5010-software", name: "Software" }),
+    ledgerAccount({ code: "5020-travel", name: "Travel" }),
+    ledgerAccount({ code: "5030-office", name: "Office" }),
+  ];
+}
+
+function ledgerAccount(overrides: Partial<LedgerAccount>): LedgerAccount {
+  return {
+    code: "5010-software",
+    created_at: "2026-07-06T10:00:00Z",
+    currency: null,
+    id: 5010,
+    name: "Software",
+    type: "expense",
+    ...overrides,
+  };
 }
 
 function transactionFixture(

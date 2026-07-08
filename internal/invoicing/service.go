@@ -443,11 +443,8 @@ func (s *Service) Send(ctx context.Context, id string) (_ Invoice, err error) {
 	if s.pool == nil {
 		return Invoice{}, fmt.Errorf("invoicing: send requires pool")
 	}
-	if s.rateLocker == nil {
-		return Invoice{}, fmt.Errorf("invoicing: send requires rate locker")
-	}
-	if s.ledger == nil {
-		return Invoice{}, fmt.Errorf("invoicing: send requires ledger")
+	if err := s.requireSendDependencies(); err != nil {
+		return Invoice{}, err
 	}
 
 	tx, err := s.pool.Begin(ctx)
@@ -460,10 +457,40 @@ func (s *Service) Send(ctx context.Context, id string) (_ Invoice, err error) {
 		}
 	}()
 
+	sent, err := s.sendTx(ctx, tx, id)
+	if err != nil {
+		return Invoice{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return Invoice{}, fmt.Errorf("invoicing: commit send transaction: %w", err)
+	}
+	s.scheduleInvoicePDFRender(sent.ID)
+	return sent, nil
+}
+
+func (s *Service) requireSendDependencies() error {
+	if s.rateLocker == nil {
+		return fmt.Errorf("invoicing: send requires rate locker")
+	}
+	if s.ledger == nil {
+		return fmt.Errorf("invoicing: send requires ledger")
+	}
+	return nil
+}
+
+func (s *Service) sendTx(ctx context.Context, tx db.Tx, id string) (Invoice, error) {
+	if tx == nil {
+		return Invoice{}, fmt.Errorf("invoicing: send requires transaction")
+	}
+
 	draft, err := s.store.InvoiceForUpdate(ctx, tx, strings.TrimSpace(id))
 	if err != nil {
 		return Invoice{}, err
 	}
+	return s.sendLockedDraft(ctx, tx, draft)
+}
+
+func (s *Service) sendLockedDraft(ctx context.Context, tx db.Tx, draft Invoice) (Invoice, error) {
 	if err := validateSendableDraft(draft); err != nil {
 		return Invoice{}, err
 	}
@@ -526,11 +553,13 @@ func (s *Service) Send(ctx context.Context, id string) (_ Invoice, err error) {
 		return Invoice{}, fmt.Errorf("invoicing: publish invoice sent: %w", err)
 	}
 
-	if err = tx.Commit(ctx); err != nil {
-		return Invoice{}, fmt.Errorf("invoicing: commit send transaction: %w", err)
-	}
-	s.scheduleInvoicePDFRender(sent.ID)
 	return sent, nil
+}
+
+// ScheduleInvoicePDFRender queues post-commit PDF rendering for callers that
+// send invoices inside their own transaction.
+func (s *Service) ScheduleInvoicePDFRender(id string) {
+	s.scheduleInvoicePDFRender(id)
 }
 
 // RenderInvoicePDFNow renders and stores a sent invoice PDF unless the invoice
@@ -740,6 +769,42 @@ func (s *Service) invoicePrintLockedRate(ctx context.Context, invoice Invoice) (
 	return &InvoicePrintLockedRate{ID: lock.ID, Rate: lock.Rate}, nil
 }
 
+// SettleMatchedInvoice records a banking invoice-match settlement. Draft
+// invoices are sent first inside the same caller transaction so numbering, FX
+// locking, send postings, and settlement commit or roll back together.
+func (s *Service) SettleMatchedInvoice(ctx context.Context, tx db.Tx, id string, txnRef string, date time.Time, amount Money) (MatchSettlement, error) {
+	if tx == nil {
+		return MatchSettlement{}, fmt.Errorf("invoicing: match settlement requires transaction")
+	}
+
+	invoice, err := s.store.InvoiceForUpdate(ctx, tx, strings.TrimSpace(id))
+	if err != nil {
+		return MatchSettlement{}, err
+	}
+
+	sentFromDraft := false
+	switch invoice.Status {
+	case InvoiceStatusDraft:
+		if err := s.requireSendDependencies(); err != nil {
+			return MatchSettlement{}, err
+		}
+		invoice, err = s.sendLockedDraft(ctx, tx, invoice)
+		if err != nil {
+			return MatchSettlement{}, err
+		}
+		sentFromDraft = true
+	case InvoiceStatusSent:
+	default:
+		return MatchSettlement{}, ErrInvoiceImmutable
+	}
+
+	settled, err := s.markSettledLocked(ctx, tx, invoice, txnRef, date, amount)
+	if err != nil {
+		return MatchSettlement{}, err
+	}
+	return MatchSettlement{Invoice: settled, SentFromDraft: sentFromDraft}, nil
+}
+
 // MarkSettled records a full invoice settlement inside the caller's
 // transaction and publishes InvoiceSettled for realised-FX handling.
 func (s *Service) MarkSettled(ctx context.Context, tx db.Tx, id string, txnRef string, date time.Time, amount Money) (Invoice, error) {
@@ -751,10 +816,14 @@ func (s *Service) MarkSettled(ctx context.Context, tx db.Tx, id string, txnRef s
 	if err != nil {
 		return Invoice{}, err
 	}
+	return s.markSettledLocked(ctx, tx, invoice, txnRef, date, amount)
+}
+
+func (s *Service) markSettledLocked(ctx context.Context, tx db.Tx, invoice Invoice, txnRef string, date time.Time, amount Money) (Invoice, error) {
 	if invoice.Status != InvoiceStatusSent {
 		return Invoice{}, ErrInvoiceImmutable
 	}
-	invoice, err = s.computeTotals(ctx, invoice, false)
+	invoice, err := s.computeTotals(ctx, invoice, false)
 	if err != nil {
 		return Invoice{}, err
 	}

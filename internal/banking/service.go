@@ -95,6 +95,9 @@ func WithMoneyFX(fx MoneyFX) ServiceOption {
 func WithInvoicingSettler(settler InvoiceSettler) ServiceOption {
 	return func(s *Service) {
 		s.invoices = settler
+		if provider, ok := settler.(invoicingMatchCandidateProvider); ok {
+			s.invoiceCandidates = invoicingInvoiceCandidateSource{provider: provider}
+		}
 	}
 }
 

@@ -9,21 +9,28 @@ import (
 )
 
 type invoicingInvoiceCandidateSource struct {
-	store invoicing.Store
+	provider invoicingMatchCandidateProvider
+}
+
+type invoicingMatchCandidateProvider interface {
+	InvoiceMatchCandidates(ctx context.Context, tx db.Tx, currency string) ([]invoicing.MatchCandidate, error)
 }
 
 func defaultInvoiceCandidateSource() InvoiceCandidateSource {
-	return invoicingInvoiceCandidateSource{store: invoicing.Store{}}
+	return invoicingInvoiceCandidateSource{provider: invoicing.Store{}}
 }
 
 func (s invoicingInvoiceCandidateSource) InvoiceCandidates(ctx context.Context, tx db.Tx, currency string) ([]InvoiceMatchCandidate, error) {
 	if tx == nil {
 		return nil, fmt.Errorf("banking: invoice candidates require transaction")
 	}
+	if s.provider == nil {
+		return nil, nil
+	}
 	var candidates []invoicing.MatchCandidate
 	if err := withTransactionSearchPath(ctx, tx, invoicing.ModuleName, func() error {
 		var err error
-		candidates, err = s.store.InvoiceMatchCandidates(ctx, tx, currency)
+		candidates, err = s.provider.InvoiceMatchCandidates(ctx, tx, currency)
 		return err
 	}); err != nil {
 		return nil, err

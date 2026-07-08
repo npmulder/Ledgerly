@@ -1650,6 +1650,8 @@ export interface components {
             client?: string;
             id?: string;
             invoice_number?: string;
+            /** @enum {string} */
+            invoice_status?: "draft" | "sent";
             times_applied?: number | null;
             /** @enum {string} */
             type: "invoice" | "dla" | "account";

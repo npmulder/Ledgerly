@@ -77,11 +77,10 @@ func (s *Service) confirmMatch(ctx context.Context, txnID TransactionID, explici
 		return ConfirmMatchResult{}, err
 	}
 
+	var matchSettlement invoicing.MatchSettlement
 	if err = withTransactionSearchPath(ctx, tx, invoicing.ModuleName, func() error {
-		_, settleErr := s.invoices.MarkSettled(ctx, tx, invoiceID, bankingTxnRef(txn.ID), txn.Date, invoicing.Money{
-			Amount:   txn.Amount.Amount,
-			Currency: txn.Amount.Currency,
-		})
+		var settleErr error
+		matchSettlement, settleErr = settleInvoiceMatch(ctx, s.invoices, tx, invoiceID, txn)
 		return settleErr
 	}); err != nil {
 		return ConfirmMatchResult{}, fmt.Errorf("banking: confirm match settle invoice %s: %w", invoiceID, err)
@@ -109,6 +108,11 @@ func (s *Service) confirmMatch(ctx context.Context, txnID TransactionID, explici
 	if err = tx.Commit(ctx); err != nil {
 		return ConfirmMatchResult{}, fmt.Errorf("banking: commit confirm match transaction: %w", err)
 	}
+	if matchSettlement.SentFromDraft {
+		if scheduler, ok := s.invoices.(invoicePDFScheduler); ok {
+			scheduler.ScheduleInvoicePDFRender(matchSettlement.Invoice.ID)
+		}
+	}
 	txn.State = TransactionStateReconciled
 	return ConfirmMatchResult{
 		Transaction:   txn,
@@ -116,6 +120,21 @@ func (s *Service) confirmMatch(ctx context.Context, txnID TransactionID, explici
 		InvoiceID:     invoiceID,
 		RealisedFXGBP: realisedFX,
 	}, nil
+}
+
+func settleInvoiceMatch(ctx context.Context, settler InvoiceSettler, tx db.Tx, invoiceID string, txn Transaction) (invoicing.MatchSettlement, error) {
+	amount := invoicing.Money{
+		Amount:   txn.Amount.Amount,
+		Currency: txn.Amount.Currency,
+	}
+	if matchSettler, ok := settler.(invoiceMatchSettler); ok {
+		return matchSettler.SettleMatchedInvoice(ctx, tx, invoiceID, bankingTxnRef(txn.ID), txn.Date, amount)
+	}
+	settled, err := settler.MarkSettled(ctx, tx, invoiceID, bankingTxnRef(txn.ID), txn.Date, amount)
+	if err != nil {
+		return invoicing.MatchSettlement{}, err
+	}
+	return invoicing.MatchSettlement{Invoice: settled}, nil
 }
 
 func (s *Service) transitionConfirmMatchStateLocked(ctx context.Context, tx db.Tx, txn Transaction) error {

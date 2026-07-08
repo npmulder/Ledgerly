@@ -125,6 +125,7 @@ type reviewTargetResponse struct {
 	Type          string `json:"type"`
 	ID            string `json:"id,omitempty"`
 	InvoiceNumber string `json:"invoice_number,omitempty"`
+	InvoiceStatus string `json:"invoice_status,omitempty"`
 	Client        string `json:"client,omitempty"`
 	AccountCode   string `json:"account_code,omitempty"`
 	TimesApplied  *int   `json:"times_applied,omitempty"`
@@ -897,6 +898,7 @@ func (h bankingHandler) reviewTargetToResponse(ctx context.Context, item ReviewQ
 		}
 		if found {
 			target.InvoiceNumber = candidate.Number
+			target.InvoiceStatus = candidate.Status
 			target.Client = candidate.ClientName
 		}
 		return target, nil

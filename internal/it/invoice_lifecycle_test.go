@@ -195,6 +195,119 @@ func TestInvoiceLifecycleE2E(t *testing.T) {
 		it.AssertLedgerBalanced(t, h)
 	})
 
+	t.Run("draft invoice import confirms by sending and settling", func(t *testing.T) {
+		ctx := context.Background()
+		issueDate := day(2025, time.May, 1)
+		settleDate := day(2025, time.May, 2)
+		h := harness.New(t, harness.Options{ClockStart: issueDate.Add(9 * time.Hour)})
+		fixtures.Company(t, h)
+		fixtures.Rates(t, h, fixtures.RatesStep(map[time.Time]string{
+			issueDate:  "0.8500",
+			settleDate: "0.8600",
+		}))
+		contoso := fixtures.Contoso(t, h)
+		invoices := newLifecycleInvoiceService(t, h, lifecycleIdentity(t, h))
+
+		var sentEvents []invoicing.InvoiceSent
+		h.Bus.Subscribe(invoicing.InvoiceSentName, func(_ context.Context, _ db.Tx, evt bus.Event) error {
+			sent, ok := evt.(invoicing.InvoiceSent)
+			if !ok {
+				t.Fatalf("InvoiceSent event = %T, want invoicing.InvoiceSent", evt)
+			}
+			sentEvents = append(sentEvents, sent)
+			return nil
+		})
+
+		draft := patchLifecycleDraftLinesViaHTTP(
+			t,
+			h,
+			createLifecycleDraftViaHTTP(t, h, contoso.ID).ID,
+			"retainer-draft-match",
+			"Draft retainer",
+			450_000,
+			"2025-05-15",
+		)
+		if draft.Status != invoicing.InvoiceStatusDraft || draft.Number != nil {
+			t.Fatalf("draft invoice before import = status %q number %v, want unnumbered draft", draft.Status, draft.Number)
+		}
+
+		bankingService := newLifecycleBankingService(t, h, invoices)
+		account := createLifecycleBankAccount(t, ctx, bankingService, "Revolut EUR", "EUR")
+		if _, err := bankingService.ImportCSV(ctx, account.ID, banking.ImportFile{
+			Filename: "revolut-draft-contoso.csv",
+			Reader: bytes.NewReader(fixtures.RevolutCSV(fixtures.RevolutTxn{
+				ID:        "contoso-draft-paid-4500",
+				Date:      settleDate.Add(12 * time.Hour),
+				Payee:     "Contoso GmbH",
+				Reference: "bank transfer",
+				Amount:    money.Money{Amount: 450_000, Currency: "EUR"},
+			})),
+		}); err != nil {
+			t.Fatalf("ImportCSV(draft) error = %v", err)
+		}
+
+		match := lifecycleInvoiceMatch(t, ctx, bankingService, draft.ID)
+		if match.Suggestion.Confidence < 0.80 {
+			t.Fatalf("draft match confidence = %.2f, want >= 0.80", match.Suggestion.Confidence)
+		}
+		if !strings.Contains(match.Suggestion.Explanation, "draft invoice match") ||
+			!strings.Contains(match.Suggestion.Explanation, "will send the invoice before allocating payment") {
+			t.Fatalf("draft match explanation = %q, want draft send-and-allocate copy", match.Suggestion.Explanation)
+		}
+
+		result, err := bankingService.ConfirmMatch(ctx, match.Transaction.ID)
+		if err != nil {
+			t.Fatalf("ConfirmMatch(draft) error = %v", err)
+		}
+		if result.InvoiceID != draft.ID || result.Transaction.State != banking.TransactionStateReconciled {
+			t.Fatalf("ConfirmMatch(draft) = %+v, want reconciled invoice %s", result, draft.ID)
+		}
+		assertLifecycleMoney(t, result.RealisedFXGBP, 4_500, "GBP")
+
+		settled, err := invoices.Invoice(ctx, draft.ID)
+		if err != nil {
+			t.Fatalf("Invoice(%s) after draft confirm: %v", draft.ID, err)
+		}
+		if settled.Status != invoicing.InvoiceStatusPaid {
+			t.Fatalf("draft-confirmed invoice status = %q, want paid", settled.Status)
+		}
+		if settled.Number == nil || *settled.Number != "INV-2025-01" {
+			t.Fatalf("draft-confirmed invoice number = %v, want INV-2025-01", settled.Number)
+		}
+		lockID := mustLifecycleLockID(t, settled)
+		assertLifecycleRateLock(t, h, *settled.LockID, "invoicing:INV-2025-01", "EUR", "GBP", "0.850000000000000000", "2025-05-01")
+		assertLifecyclePostings(t, h, invoicing.ModuleName, invoiceLifecycleSendSourceRef("INV-2025-01"), []wantLifecyclePosting{
+			{account: "1100-debtors-eur", amount: 450_000, currency: "EUR", amountGBP: 382_500},
+			{account: "4000-sales", amount: -450_000, currency: "EUR", amountGBP: -382_500},
+		})
+		assertLifecyclePostings(t, h, banking.ModuleName, invoiceLifecycleBankingSourceRef(match.Transaction.ID), []wantLifecyclePosting{
+			{account: string(account.LedgerAccountCode), amount: 450_000, currency: "EUR", amountGBP: 387_000},
+			{account: "1100-debtors-eur", amount: -450_000, currency: "EUR", amountGBP: -387_000},
+		})
+		assertRealisedFXRows(t, ctx, h.DB, draft.ID, moneyfx.LockID(lockID), 1, 4_500)
+		assertLifecyclePostings(t, h, moneyfx.ModuleName, invoiceLifecycleSettlementSourceRef(draft.ID), []wantLifecyclePosting{
+			{account: "1101-debtors-gbp", amount: 4_500, currency: "GBP", amountGBP: 4_500},
+			{account: "4900-fx-gain-loss", amount: -4_500, currency: "GBP", amountGBP: -4_500},
+		})
+		assertLifecycleActiveSuggestionCount(t, h, match.Transaction.ID, 0)
+		wantSentEvents := []invoicing.InvoiceSent{{
+			InvoiceID: draft.ID,
+			Number:    "INV-2025-01",
+			ClientID:  contoso.ID,
+			Amount:    invoicing.Money{Amount: 450_000, Currency: "EUR"},
+			DueDate:   settled.DueDate,
+		}}
+		if !reflect.DeepEqual(sentEvents, wantSentEvents) {
+			t.Fatalf("draft confirm InvoiceSent events = %#v, want %#v", sentEvents, wantSentEvents)
+		}
+		assertLifecycleInvoiceDebtorsNetZero(t, h, []string{
+			invoiceLifecycleSendSourceRef("INV-2025-01"),
+			invoiceLifecycleBankingSourceRef(match.Transaction.ID),
+			invoiceLifecycleSettlementSourceRef(draft.ID),
+		})
+		it.AssertLedgerBalanced(t, h)
+	})
+
 	t.Run("settlement rollback retry leaves no postings or numbering gap", func(t *testing.T) {
 		ctx := context.Background()
 		issueDate := day(2025, time.May, 1)
