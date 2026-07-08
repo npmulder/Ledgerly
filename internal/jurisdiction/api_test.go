@@ -16,6 +16,29 @@ func TestIsleOfManAccessorsReturnHandoffValues2025_26(t *testing.T) {
 		check func(*testing.T)
 	}{
 		{
+			name: "company act definitions",
+			check: func(t *testing.T) {
+				got, err := CompanyActDefinition("companies-act-1931")
+				if err != nil {
+					t.Fatalf("CompanyActDefinition() error = %v", err)
+				}
+				if got.Label != "Companies Act 1931" || got.MinimumDirectors != 2 {
+					t.Fatalf("CompanyActDefinition(1931) = %#v, want label and minimum directors", got)
+				}
+				if got.CorporateDirectors == nil || *got.CorporateDirectors {
+					t.Fatalf("CorporateDirectors = %v, want false pointer", got.CorporateDirectors)
+				}
+				if !slices.Equal(got.CompanyNumberSuffixes, []string{"C"}) {
+					t.Fatalf("CompanyNumberSuffixes = %#v, want C", got.CompanyNumberSuffixes)
+				}
+
+				acts := CompanyActs()
+				if len(acts) != 2 || acts["companies-act-2006"].MinimumDirectors != 1 {
+					t.Fatalf("CompanyActs() = %#v, want 1931 and 2006 definitions", acts)
+				}
+			},
+		},
+		{
 			name: "corporate income tax standard rate",
 			check: func(t *testing.T) {
 				got, err := CorporateRate("2025-26")
@@ -202,8 +225,8 @@ func TestIsleOfManAccessorsReturnHandoffValues2025_26(t *testing.T) {
 			name: "advisor rules",
 			check: func(t *testing.T) {
 				got := AdvisorRules()
-				if len(got) != 6 {
-					t.Fatalf("AdvisorRules length = %d, want 6", len(got))
+				if len(got) != 7 {
+					t.Fatalf("AdvisorRules length = %d, want 7", len(got))
 				}
 				want := map[string]struct {
 					severity     string
@@ -260,6 +283,14 @@ func TestIsleOfManAccessorsReturnHandoffValues2025_26(t *testing.T) {
 						textTemplate: "ECB rates are stale. Refresh rates before issuing or settling foreign-currency transactions.",
 						ctaLabel:     "Refresh rates",
 						ctaAction:    "moneyfx.refreshRates",
+					},
+					"company_minimum_directors": {
+						severity:     "amber",
+						surfaces:     []string{"dashboard", "settings"},
+						factQuery:    []string{"act_name", "director_count", "minimum_directors"},
+						textTemplate: "Your company is registered under the {{ act_name }} and must have at least {{ minimum_directors }} directors - profile lists {{ director_count }}.",
+						ctaLabel:     "Open company settings",
+						ctaAction:    "navigate:/settings/company",
 					},
 				}
 				for _, rule := range got {
@@ -420,6 +451,12 @@ func TestActivePackOverviewReturnsIsleOfManSummaries(t *testing.T) {
 	if overview.Meta.ID != "isle-of-man" || overview.Meta.Version != "1.0" || overview.Meta.Name != "Isle of Man" {
 		t.Fatalf("Meta = %+v, want isle-of-man@1.0 Isle of Man", overview.Meta)
 	}
+	if len(overview.CompanyActs) != 2 {
+		t.Fatalf("CompanyActs length = %d, want 2", len(overview.CompanyActs))
+	}
+	if overview.CompanyActs[0].ActType != "companies-act-1931" || overview.CompanyActs[0].MinimumDirectors != 2 {
+		t.Fatalf("CompanyActs[0] = %+v, want 1931 act first", overview.CompanyActs[0])
+	}
 	if len(overview.RuleSummaries) != 6 {
 		t.Fatalf("RuleSummaries length = %d, want 6", len(overview.RuleSummaries))
 	}
@@ -496,6 +533,22 @@ func TestVATSemanticsForTreatmentReturnsTypedErrorForUnknownTreatment(t *testing
 	}
 	if unknownTreatment.Treatment != "unknown" {
 		t.Fatalf("UnknownVATTreatmentError.Treatment = %q, want unknown", unknownTreatment.Treatment)
+	}
+}
+
+func TestCompanyActDefinitionReturnsTypedErrorForUnknownAct(t *testing.T) {
+	loadIsleOfManForAccessors(t)
+
+	_, err := CompanyActDefinition("unknown")
+	if err == nil {
+		t.Fatal("CompanyActDefinition() error = nil, want UnknownCompanyActError")
+	}
+	var unknownAct UnknownCompanyActError
+	if !errors.As(err, &unknownAct) {
+		t.Fatalf("CompanyActDefinition() error type = %T, want UnknownCompanyActError", err)
+	}
+	if unknownAct.ActType != "unknown" {
+		t.Fatalf("UnknownCompanyActError.ActType = %q, want unknown", unknownAct.ActType)
 	}
 }
 

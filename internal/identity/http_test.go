@@ -555,6 +555,7 @@ func TestProfileGetPatchRoundTrip(t *testing.T) {
 
 	patch := performJSON(router, nethttp.MethodPatch, "/api/identity/profile", map[string]any{
 		"trading_name":      "NPM Trading",
+		"act_type":          "companies-act-1931",
 		"is_vat_registered": true,
 		"vat_number":        "IM1234567",
 		"directors": []map[string]any{
@@ -579,6 +580,9 @@ func TestProfileGetPatchRoundTrip(t *testing.T) {
 	if patchedProfile.TradingName != "NPM Trading" {
 		t.Fatalf("patched trading_name = %q, want NPM Trading", patchedProfile.TradingName)
 	}
+	if patchedProfile.ActType == nil || *patchedProfile.ActType != "companies-act-1931" {
+		t.Fatalf("patched act_type = %v, want companies-act-1931", patchedProfile.ActType)
+	}
 	if patchedProfile.VATNumber == nil || *patchedProfile.VATNumber != "IM1234567" {
 		t.Fatalf("patched vat_number = %v, want IM1234567", patchedProfile.VATNumber)
 	}
@@ -602,6 +606,9 @@ func TestProfileGetPatchRoundTrip(t *testing.T) {
 	}
 	if !roundTripProfile.IsVATRegistered {
 		t.Fatal("round-trip is_vat_registered = false, want true")
+	}
+	if roundTripProfile.ActType == nil || *roundTripProfile.ActType != "companies-act-1931" {
+		t.Fatalf("round-trip act_type = %v, want companies-act-1931", roundTripProfile.ActType)
 	}
 	if len(roundTripProfile.Directors) != 2 || roundTripProfile.Directors[1].Name != "A. Patel" {
 		t.Fatalf("round-trip directors = %+v, want two directors", roundTripProfile.Directors)
@@ -899,6 +906,15 @@ func TestOpenAPIIncludesIdentityRequestBodies(t *testing.T) {
 	for _, schema := range []string{"Director", "IdentityRegisterWithProfileRequest", "IdentityRegisterWithProfileResult", "IdentityProfile", "IdentityProfilePatch", "IdentityLogoUploadResponse", "ValidationProblem"} {
 		if schemas[schema] == nil {
 			t.Fatalf("%s schema missing from OpenAPI fragment", schema)
+		}
+	}
+
+	profilePatch := schemas["IdentityProfilePatch"].(map[string]any)
+	profilePatchProperties := profilePatch["properties"].(map[string]any)
+	for _, field := range []string{"act_type", "vat_number", "logo_asset_id"} {
+		property := profilePatchProperties[field].(map[string]any)
+		if property["x-omitempty"] != true {
+			t.Fatalf("IdentityProfilePatch.%s x-omitempty = %v, want true", field, property["x-omitempty"])
 		}
 	}
 }

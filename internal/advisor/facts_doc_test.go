@@ -57,6 +57,14 @@ func TestFactsDocCoversProviderAndActiveRuleKeys(t *testing.T) {
 		FactCompanyYearEnd,
 		FactCompanyYearEndMonth,
 		FactCompanyYearEndDay,
+		FactCompanyVATRegistered,
+		FactCompanyActType,
+		FactCompanyActLabel,
+		FactCompanyActMinimumDirectors,
+		FactCompanyDirectorCount,
+		FactRuleCompanyActName,
+		FactRuleDirectorCount,
+		FactRuleMinimumDirectors,
 	} {
 		if !documented[string(key)] {
 			t.Fatalf("facts.md missing provider fact key %q", key)

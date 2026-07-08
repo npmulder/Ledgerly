@@ -23,6 +23,11 @@ of Man pack fact queries that pre-date collection expansion.
 | `company.yearEnd` | `advisor.CompanyYearEndFact` | identity | Filing deadline and company templates |
 | `company.yearEnd.month` | `int` | identity | Filing deadline and company templates |
 | `company.yearEnd.day` | `int` | identity | Filing deadline and company templates |
+| `company.isVATRegistered` | `bool` | identity | VAT filing deadline rules |
+| `company.actType` | `string` | identity | Source fact for company act rules |
+| `company.act.label` | `string` | identity + jurisdiction pack | Company act templates |
+| `company.act.minimumDirectors` | `int` | identity + jurisdiction pack | Source fact for `company_minimum_directors` |
+| `company.directors.count` | `int` | identity | Source fact for `company_minimum_directors` |
 | `client_name` | `string` | invoicing compatibility binding from `invoices.overdue[].client` | `overdue_invoice` |
 | `count` | `int` | invoicing compatibility binding from `invoices.overdue` length | `overdue_invoice` |
 | `days_overdue` | `int` | invoicing compatibility binding from `invoices.overdue[].daysOverdue` | `overdue_invoice` |
@@ -48,3 +53,6 @@ of Man pack fact queries that pre-date collection expansion.
 | `estimate` | `money.Money` | dividends compatibility binding from personal-tax estimate | `dividend_set_aside` |
 | `estimate_minor_units` | `int64` | dividends compatibility binding from personal-tax estimate | `dividend_set_aside` |
 | `stale_days` | `int` | moneyfx compatibility binding from rate staleness | `rates_stale` |
+| `act_name` | `string` | identity compatibility binding from `company.act.label` | `company_minimum_directors` |
+| `director_count` | `int` | identity compatibility binding from `company.directors.count` | `company_minimum_directors` |
+| `minimum_directors` | `int` | identity compatibility binding from `company.act.minimumDirectors` | `company_minimum_directors` |

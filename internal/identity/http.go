@@ -100,6 +100,7 @@ type registerWithProfileRequest struct {
 	TradingName       string           `json:"trading_name"`
 	LegalName         string           `json:"legal_name"`
 	CompanyNumber     string           `json:"company_number"`
+	ActType           *string          `json:"act_type,omitempty"`
 	RegisteredOffice  RegisteredOffice `json:"registered_office"`
 	IncorporationDate string           `json:"incorporation_date"`
 	YearEndMonth      int              `json:"year_end_month"`
@@ -125,6 +126,7 @@ type profileResponse struct {
 	TradingName       string           `json:"trading_name"`
 	LegalName         string           `json:"legal_name"`
 	CompanyNumber     string           `json:"company_number"`
+	ActType           *string          `json:"act_type"`
 	RegisteredOffice  RegisteredOffice `json:"registered_office"`
 	IncorporationDate string           `json:"incorporation_date"`
 	YearEnd           yearEndResponse  `json:"year_end"`
@@ -579,6 +581,7 @@ func decodeRegisterWithProfileRequest(w nethttp.ResponseWriter, r *nethttp.Reque
 	request.TradingName = requiredString(raw, "trading_name", &fieldErrs)
 	request.LegalName = requiredString(raw, "legal_name", &fieldErrs)
 	request.CompanyNumber = requiredString(raw, "company_number", &fieldErrs)
+	request.ActType = optionalString(raw, "act_type", &fieldErrs)
 	request.IncorporationDate = requiredString(raw, "incorporation_date", &fieldErrs)
 	request.YearEndMonth = requiredInt(raw, "year_end_month", &fieldErrs)
 	request.YearEndDay = requiredInt(raw, "year_end_day", &fieldErrs)
@@ -599,6 +602,7 @@ func registerWithProfileFieldAllowed(field string) bool {
 		"trading_name",
 		"legal_name",
 		"company_number",
+		"act_type",
 		"registered_office",
 		"incorporation_date",
 		"year_end_month",
@@ -623,6 +627,19 @@ func requiredString(raw map[string]json.RawMessage, field string, fieldErrs *[]f
 		return ""
 	}
 	return decoded
+}
+
+func optionalString(raw map[string]json.RawMessage, field string, fieldErrs *[]fieldError) *string {
+	value, ok := raw[field]
+	if !ok || isJSONNull(value) {
+		return nil
+	}
+	var decoded string
+	if err := decodeStrict(value, &decoded); err != nil {
+		*fieldErrs = append(*fieldErrs, fieldError{Pointer: "/" + field, Detail: "must be a string or null"})
+		return nil
+	}
+	return &decoded
 }
 
 func requiredInt(raw map[string]json.RawMessage, field string, fieldErrs *[]fieldError) int {
@@ -755,6 +772,7 @@ func (request registerWithProfileRequest) companyProfile() (CompanyProfile, erro
 		TradingName:       request.TradingName,
 		LegalName:         request.LegalName,
 		CompanyNumber:     request.CompanyNumber,
+		ActType:           derefString(request.ActType),
 		RegisteredOffice:  request.RegisteredOffice,
 		IncorporationDate: incorporationDate,
 		YearEnd: YearEnd{
@@ -786,6 +804,13 @@ func decodeProfilePatch(w nethttp.ResponseWriter, r *nethttp.Request) (UpdatePro
 			assignStringPatch(value, "/legal_name", &patch.LegalName, &fieldErrors)
 		case "company_number":
 			assignStringPatch(value, "/company_number", &patch.CompanyNumber, &fieldErrors)
+		case "act_type":
+			if isJSONNull(value) {
+				actType := ""
+				patch.ActType = &actType
+				continue
+			}
+			assignStringPatch(value, "/act_type", &patch.ActType, &fieldErrors)
 		case "registered_office":
 			if rejectJSONNull(value, "/registered_office", "must be an object with address fields", &fieldErrors) {
 				continue
@@ -1074,6 +1099,8 @@ func registerWithProfileFieldErrorsFromError(err error) []fieldError {
 		return []fieldError{{Pointer: "/legal_name", Detail: detail}}
 	case strings.Contains(detail, "company number"):
 		return []fieldError{{Pointer: "/company_number", Detail: detail}}
+	case strings.Contains(detail, "act type"):
+		return []fieldError{{Pointer: "/act_type", Detail: detail}}
 	case strings.Contains(detail, "incorporation date") || strings.Contains(detail, "parse date") || strings.Contains(detail, "date is required"):
 		return []fieldError{{Pointer: "/incorporation_date", Detail: detail}}
 	case strings.Contains(detail, "year-end month"):
@@ -1094,6 +1121,8 @@ func profileFieldErrorsFromError(err error) []fieldError {
 		return []fieldError{{Pointer: "/legal_name", Detail: detail}}
 	case strings.Contains(detail, "company number"):
 		return []fieldError{{Pointer: "/company_number", Detail: detail}}
+	case strings.Contains(detail, "act type"):
+		return []fieldError{{Pointer: "/act_type", Detail: detail}}
 	case strings.Contains(detail, "director"):
 		return []fieldError{{Pointer: "/directors", Detail: detail}}
 	case strings.Contains(detail, "incorporation date") || strings.Contains(detail, "parse date") || strings.Contains(detail, "date is required"):
@@ -1168,6 +1197,7 @@ func profileToResponse(profile CompanyProfile) profileResponse {
 		TradingName:       profile.TradingName,
 		LegalName:         profile.LegalName,
 		CompanyNumber:     profile.CompanyNumber,
+		ActType:           nullableProfileText(profile.ActType),
 		RegisteredOffice:  profile.RegisteredOffice,
 		IncorporationDate: profile.IncorporationDate.UTC().Format(dateLayout),
 		YearEnd: yearEndResponse{
@@ -1199,4 +1229,11 @@ func cloneStringPointer(value *string) *string {
 	}
 	cloned := *value
 	return &cloned
+}
+
+func derefString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }

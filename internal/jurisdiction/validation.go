@@ -33,6 +33,9 @@ func validatePack(file, id, version string, pack *Pack) error {
 		return err
 	}
 
+	if err := validateCompanyActs(file, pack.CompanyActs); err != nil {
+		return err
+	}
 	if err := validateYearEnd(pack.Tax.YearEnd); err != nil {
 		return fieldError(file, "tax.year_end", "year_end", err.Error())
 	}
@@ -56,6 +59,54 @@ func validatePack(file, id, version string, pack *Pack) error {
 	}
 	if err := validateAdvisorRules(file, pack.AdvisorRules); err != nil {
 		return err
+	}
+
+	return nil
+}
+
+func validateCompanyActs(file string, acts map[string]CompanyAct) error {
+	if len(acts) == 0 {
+		return fieldError(file, "company_acts", "company_acts", "must contain at least one company act")
+	}
+
+	keys := make([]string, 0, len(acts))
+	for key := range acts {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	seenSuffixes := map[string]string{}
+	for _, key := range keys {
+		act := acts[key]
+		path := "company_acts." + key
+		if strings.TrimSpace(key) == "" {
+			return fieldError(file, path, "company_act", "must not be empty")
+		}
+		if strings.TrimSpace(act.Label) == "" {
+			return fieldError(file, path+".label", "label", "must not be empty")
+		}
+		if act.MinimumDirectors < 1 {
+			return fieldError(file, path+".minimum_directors", "minimum_directors", "must be greater than or equal to 1")
+		}
+		if len(act.CompanyNumberSuffixes) == 0 {
+			return fieldError(file, path+".company_number_suffixes", "company_number_suffixes", "must contain at least one company number suffix")
+		}
+		seenActSuffixes := map[string]struct{}{}
+		for index, suffix := range act.CompanyNumberSuffixes {
+			suffix = strings.TrimSpace(strings.ToUpper(suffix))
+			suffixPath := fmt.Sprintf("%s.company_number_suffixes[%d]", path, index)
+			if suffix == "" {
+				return fieldError(file, suffixPath, "company_number_suffix", "must not be empty")
+			}
+			if _, ok := seenActSuffixes[suffix]; ok {
+				return fieldError(file, suffixPath, "company_number_suffix", fmt.Sprintf("duplicate suffix %q for company act %q", suffix, key))
+			}
+			if previous, ok := seenSuffixes[suffix]; ok {
+				return fieldError(file, suffixPath, "company_number_suffix", fmt.Sprintf("suffix %q is already assigned to company act %q", suffix, previous))
+			}
+			seenActSuffixes[suffix] = struct{}{}
+			seenSuffixes[suffix] = key
+		}
 	}
 
 	return nil
@@ -331,7 +382,7 @@ func validateAdvisorRules(file string, rules []AdvisorRule) error {
 		}
 		for surfaceIndex, surface := range rule.Surfaces {
 			if !validAdvisorSurface(strings.TrimSpace(surface)) {
-				return fieldError(file, fmt.Sprintf("%s.surfaces[%d]", path, surfaceIndex), "surface", "must be dashboard, invoices, banking, dla, dividends, or reports")
+				return fieldError(file, fmt.Sprintf("%s.surfaces[%d]", path, surfaceIndex), "surface", "must be dashboard, settings, invoices, banking, dla, dividends, or reports")
 			}
 		}
 		if len(rule.FactQuery) == 0 {
@@ -363,7 +414,7 @@ func validateAdvisorRules(file string, rules []AdvisorRule) error {
 
 func validAdvisorSurface(value string) bool {
 	switch value {
-	case "dashboard", "invoices", "banking", "dla", "dividends", "reports":
+	case "dashboard", "settings", "invoices", "banking", "dla", "dividends", "reports":
 		return true
 	default:
 		return false

@@ -117,6 +117,21 @@ func CompanyVATRegistered(registered bool) CompanyOverride {
 		profile.IsVATRegistered = registered
 	}
 }
+
+// CompanyActType overrides the company act recorded on the identity profile.
+func CompanyActType(actType string) CompanyOverride {
+	return func(profile *identity.CompanyProfile) {
+		profile.ActType = actType
+	}
+}
+
+// CompanyDirectors replaces the directors recorded on the identity profile.
+func CompanyDirectors(directors ...identity.Director) CompanyOverride {
+	return func(profile *identity.CompanyProfile) {
+		profile.Directors = append([]identity.Director{}, directors...)
+	}
+}
+
 func npmCompanyProfile() identity.CompanyProfile {
 	return identity.CompanyProfile{
 		TradingName:   "NPM Limited",
@@ -155,6 +170,7 @@ func patchCompanyProfile(t testing.TB, h *harness.Harness, profile identity.Comp
 		"trading_name":   profile.TradingName,
 		"legal_name":     profile.LegalName,
 		"company_number": profile.CompanyNumber,
+		"act_type":       profile.ActType,
 		"registered_office": map[string]string{
 			"line1":       profile.RegisteredOffice.Line1,
 			"line2":       profile.RegisteredOffice.Line2,
@@ -216,6 +232,7 @@ type companyProfileResponse struct {
 	TradingName       string                    `json:"trading_name"`
 	LegalName         string                    `json:"legal_name"`
 	CompanyNumber     string                    `json:"company_number"`
+	ActType           *string                   `json:"act_type"`
 	RegisteredOffice  identity.RegisteredOffice `json:"registered_office"`
 	IncorporationDate string                    `json:"incorporation_date"`
 	YearEnd           yearEndResponse           `json:"year_end"`
@@ -240,10 +257,15 @@ func decodeCompanyProfile(body []byte) (identity.CompanyProfile, error) {
 	if err != nil {
 		return identity.CompanyProfile{}, fmt.Errorf("decode company fixture incorporation date %q: %w", response.IncorporationDate, err)
 	}
+	actType := ""
+	if response.ActType != nil {
+		actType = *response.ActType
+	}
 	return identity.CompanyProfile{
 		TradingName:       response.TradingName,
 		LegalName:         response.LegalName,
 		CompanyNumber:     response.CompanyNumber,
+		ActType:           actType,
 		RegisteredOffice:  response.RegisteredOffice,
 		IncorporationDate: incorporationDate,
 		YearEnd: identity.YearEnd{

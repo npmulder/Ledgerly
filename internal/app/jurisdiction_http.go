@@ -44,6 +44,7 @@ func (h jurisdictionHTTPHandler) registerRoutes(r chi.Router) {
 
 type jurisdictionPackResponse struct {
 	Meta          jurisdictionPackMetaResponse      `json:"meta"`
+	CompanyActs   []jurisdictionCompanyActResponse  `json:"company_acts"`
 	RuleSummaries []jurisdictionRuleSummaryResponse `json:"rule_summaries"`
 }
 
@@ -57,6 +58,14 @@ type jurisdictionRuleSummaryResponse struct {
 	ID      string `json:"id"`
 	Label   string `json:"label"`
 	Summary string `json:"summary"`
+}
+
+type jurisdictionCompanyActResponse struct {
+	ActType               string   `json:"act_type"`
+	Label                 string   `json:"label"`
+	MinimumDirectors      int      `json:"minimum_directors"`
+	CorporateDirectors    *bool    `json:"corporate_directors"`
+	CompanyNumberSuffixes []string `json:"company_number_suffixes"`
 }
 
 type jurisdictionFilingDeadlinesResponse struct {
@@ -115,7 +124,17 @@ func jurisdictionPackOverviewToResponse(overview jurisdiction.PackOverview) juri
 			Version: overview.Meta.Version,
 			Name:    overview.Meta.Name,
 		},
+		CompanyActs:   make([]jurisdictionCompanyActResponse, 0, len(overview.CompanyActs)),
 		RuleSummaries: make([]jurisdictionRuleSummaryResponse, 0, len(overview.RuleSummaries)),
+	}
+	for _, act := range overview.CompanyActs {
+		response.CompanyActs = append(response.CompanyActs, jurisdictionCompanyActResponse{
+			ActType:               act.ActType,
+			Label:                 act.Label,
+			MinimumDirectors:      act.MinimumDirectors,
+			CorporateDirectors:    cloneBoolPointer(act.CorporateDirectors),
+			CompanyNumberSuffixes: append([]string{}, act.CompanyNumberSuffixes...),
+		})
 	}
 	for _, summary := range overview.RuleSummaries {
 		response.RuleSummaries = append(response.RuleSummaries, jurisdictionRuleSummaryResponse{
@@ -125,6 +144,14 @@ func jurisdictionPackOverviewToResponse(overview jurisdiction.PackOverview) juri
 		})
 	}
 	return response
+}
+
+func cloneBoolPointer(value *bool) *bool {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
 }
 
 func jurisdictionFilingDeadlinesToResponse(deadlines []jurisdiction.Deadline) jurisdictionFilingDeadlinesResponse {

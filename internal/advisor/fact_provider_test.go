@@ -281,12 +281,19 @@ func TestMoneyFXFactProviderMapsStaleRates(t *testing.T) {
 }
 
 func TestIdentityFactProviderMapsCompanyFacts(t *testing.T) {
+	if err := jurisdiction.LoadActive(jurisdiction.DefaultSelector); err != nil {
+		t.Fatalf("LoadActive() error = %v", err)
+	}
 	incorporated := time.Date(2025, 8, 14, 0, 0, 0, 0, time.UTC)
 	provider := NewIdentityFactProvider(fakeIdentityReadAPI{
 		facts: identity.CompanyFacts{
 			IncorporationDate: incorporated,
 			YearEnd:           identity.YearEnd{Month: time.March, Day: 31},
 			IsVATRegistered:   true,
+			ActType:           "companies-act-1931",
+			Directors: []identity.Director{
+				{Name: "N. Meyer"},
+			},
 		},
 	})
 
@@ -308,6 +315,67 @@ func TestIdentityFactProviderMapsCompanyFacts(t *testing.T) {
 	}
 	if got := facts[FactCompanyVATRegistered]; got != true {
 		t.Fatalf("company.isVATRegistered = %#v", got)
+	}
+	if got := facts[FactCompanyActType]; got != "companies-act-1931" {
+		t.Fatalf("company.actType = %#v, want companies-act-1931", got)
+	}
+	if got := facts[FactCompanyActLabel]; got != "Companies Act 1931" {
+		t.Fatalf("company.act.label = %#v, want Companies Act 1931", got)
+	}
+	if got := facts[FactCompanyActMinimumDirectors]; got != 2 {
+		t.Fatalf("company.act.minimumDirectors = %#v, want 2", got)
+	}
+	if got := facts[FactCompanyDirectorCount]; got != 1 {
+		t.Fatalf("company.directors.count = %#v, want 1", got)
+	}
+	if got := facts[FactRuleCompanyActName]; got != "Companies Act 1931" {
+		t.Fatalf("act_name = %#v, want Companies Act 1931", got)
+	}
+	if got := facts[FactRuleDirectorCount]; got != 1 {
+		t.Fatalf("director_count = %#v, want 1", got)
+	}
+	if got := facts[FactRuleMinimumDirectors]; got != 2 {
+		t.Fatalf("minimum_directors = %#v, want 2", got)
+	}
+}
+
+func TestIdentityFactProviderKeepsIdentityFactsForUnknownCompanyAct(t *testing.T) {
+	if err := jurisdiction.LoadActive(jurisdiction.DefaultSelector); err != nil {
+		t.Fatalf("LoadActive() error = %v", err)
+	}
+	incorporated := time.Date(2025, 8, 14, 0, 0, 0, 0, time.UTC)
+	provider := NewIdentityFactProvider(fakeIdentityReadAPI{
+		facts: identity.CompanyFacts{
+			IncorporationDate: incorporated,
+			YearEnd:           identity.YearEnd{Month: time.March, Day: 31},
+			ActType:           "custom-act",
+			Directors: []identity.Director{
+				{Name: "N. Meyer"},
+			},
+		},
+	})
+
+	facts, err := provider.Gather(context.Background())
+	if err != nil {
+		t.Fatalf("Gather() error = %v", err)
+	}
+	if got := facts[FactCompanyIncorporationDate]; got != incorporated {
+		t.Fatalf("company.incorporationDate = %#v", got)
+	}
+	if got := facts[FactCompanyActType]; got != "custom-act" {
+		t.Fatalf("company.actType = %#v, want custom-act", got)
+	}
+	if got := facts[FactCompanyActLabel]; got != "" {
+		t.Fatalf("company.act.label = %#v, want empty for unknown act", got)
+	}
+	if got := facts[FactCompanyActMinimumDirectors]; got != 0 {
+		t.Fatalf("company.act.minimumDirectors = %#v, want 0 for unknown act", got)
+	}
+	if got := facts[FactCompanyDirectorCount]; got != 1 {
+		t.Fatalf("company.directors.count = %#v, want 1", got)
+	}
+	if got := facts[FactRuleMinimumDirectors]; got != 0 {
+		t.Fatalf("minimum_directors = %#v, want 0 for unknown act", got)
 	}
 }
 

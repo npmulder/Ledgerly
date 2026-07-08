@@ -14,11 +14,21 @@ type PackMeta struct {
 
 // Pack is the typed YAML schema for a jurisdiction rules pack.
 type Pack struct {
-	Meta          PackMeta          `yaml:"meta"`
-	Tax           Tax               `yaml:"tax"`
-	Filings       map[string]Filing `yaml:"filings"`
-	DirectorLoans DLAPolicy         `yaml:"director_loans"`
-	AdvisorRules  []AdvisorRule     `yaml:"advisor_rules"`
+	Meta          PackMeta              `yaml:"meta"`
+	CompanyActs   map[string]CompanyAct `yaml:"company_acts"`
+	Tax           Tax                   `yaml:"tax"`
+	Filings       map[string]Filing     `yaml:"filings"`
+	DirectorLoans DLAPolicy             `yaml:"director_loans"`
+	AdvisorRules  []AdvisorRule         `yaml:"advisor_rules"`
+}
+
+// CompanyAct contains company-law requirements keyed by explicit profile act
+// type. Advisor consumers read thresholds from here rather than feature code.
+type CompanyAct struct {
+	Label                 string   `yaml:"label"`
+	MinimumDirectors      int      `yaml:"minimum_directors"`
+	CorporateDirectors    *bool    `yaml:"corporate_directors,omitempty"`
+	CompanyNumberSuffixes []string `yaml:"company_number_suffixes,omitempty"`
 }
 
 // Tax contains tax-year keyed rules. Rate and allowance values always live

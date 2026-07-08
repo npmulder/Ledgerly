@@ -37,6 +37,7 @@ const (
 	AdvisorSurfaceDla       AdvisorSurface = "dla"
 	AdvisorSurfaceInvoices  AdvisorSurface = "invoices"
 	AdvisorSurfaceReports   AdvisorSurface = "reports"
+	AdvisorSurfaceSettings  AdvisorSurface = "settings"
 )
 
 // Defines values for BankingAccountProvider.
@@ -409,6 +410,7 @@ const (
 	Dla       AdvisorListInsightsParamsSurface = "dla"
 	Invoices  AdvisorListInsightsParamsSurface = "invoices"
 	Reports   AdvisorListInsightsParamsSurface = "reports"
+	Settings  AdvisorListInsightsParamsSurface = "settings"
 )
 
 // Defines values for BankingGetFeedParamsState.
@@ -1181,6 +1183,7 @@ type IdentityPATScope string
 
 // IdentityProfile defines model for IdentityProfile.
 type IdentityProfile struct {
+	ActType           *string             `json:"act_type"`
 	BankDetails       BankDetails         `json:"bank_details"`
 	CompanyNumber     string              `json:"company_number"`
 	Directors         []Director          `json:"directors"`
@@ -1198,17 +1201,18 @@ type IdentityProfile struct {
 
 // IdentityProfilePatch defines model for IdentityProfilePatch.
 type IdentityProfilePatch struct {
+	ActType           *string             `json:"act_type,omitempty"`
 	BankDetails       *BankDetails        `json:"bank_details,omitempty"`
 	CompanyNumber     *string             `json:"company_number,omitempty"`
 	Directors         *[]Director         `json:"directors,omitempty"`
 	IncorporationDate *openapi_types.Date `json:"incorporation_date,omitempty"`
 	IsVatRegistered   *bool               `json:"is_vat_registered,omitempty"`
 	LegalName         *string             `json:"legal_name,omitempty"`
-	LogoAssetId       *openapi_types.UUID `json:"logo_asset_id"`
+	LogoAssetId       *openapi_types.UUID `json:"logo_asset_id,omitempty"`
 	RegisteredOffice  *RegisteredOffice   `json:"registered_office,omitempty"`
 	Shareholders      *[]Shareholder      `json:"shareholders,omitempty"`
 	TradingName       *string             `json:"trading_name,omitempty"`
-	VatNumber         *string             `json:"vat_number"`
+	VatNumber         *string             `json:"vat_number,omitempty"`
 	YearEnd           *YearEnd            `json:"year_end,omitempty"`
 }
 
@@ -1221,6 +1225,7 @@ type IdentityRegisterRequest struct {
 
 // IdentityRegisterWithProfileRequest defines model for IdentityRegisterWithProfileRequest.
 type IdentityRegisterWithProfileRequest struct {
+	ActType           *string             `json:"act_type"`
 	CompanyNumber     string              `json:"company_number"`
 	Directors         *[]Director         `json:"directors,omitempty"`
 	Email             openapi_types.Email `json:"email"`
@@ -1650,6 +1655,15 @@ type InvoicingSendInvoiceResult struct {
 	Number     string              `json:"number"`
 }
 
+// JurisdictionCompanyAct defines model for JurisdictionCompanyAct.
+type JurisdictionCompanyAct struct {
+	ActType               string   `json:"act_type"`
+	CompanyNumberSuffixes []string `json:"company_number_suffixes"`
+	CorporateDirectors    *bool    `json:"corporate_directors"`
+	Label                 string   `json:"label"`
+	MinimumDirectors      int      `json:"minimum_directors"`
+}
+
 // JurisdictionFilingDeadline defines model for JurisdictionFilingDeadline.
 type JurisdictionFilingDeadline struct {
 	Authority  string             `json:"authority"`
@@ -1666,6 +1680,7 @@ type JurisdictionFilingDeadlines struct {
 
 // JurisdictionPack defines model for JurisdictionPack.
 type JurisdictionPack struct {
+	CompanyActs   []JurisdictionCompanyAct  `json:"company_acts"`
 	Meta          JurisdictionPackMeta      `json:"meta"`
 	RuleSummaries []JurisdictionRuleSummary `json:"rule_summaries"`
 }

@@ -3,6 +3,16 @@ meta:
   version: "1.0"
   name: CIT 10 Test Pack
   currency: GBP
+company_acts:
+  companies-act-1931:
+    label: Companies Act 1931
+    minimum_directors: 2
+    corporate_directors: false
+    company_number_suffixes: [C]
+  companies-act-2006:
+    label: Companies Act 2006
+    minimum_directors: 1
+    company_number_suffixes: [V]
 tax:
   year_end:
     month: 4

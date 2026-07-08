@@ -414,6 +414,7 @@ func (s *ProfileService) CompanyFacts(ctx context.Context) (CompanyFacts, error)
 		IncorporationDate: profile.IncorporationDate,
 		YearEnd:           profile.YearEnd,
 		IsVATRegistered:   profile.IsVATRegistered,
+		ActType:           profile.ActType,
 		Directors:         append([]Director{}, profile.Directors...),
 	}, nil
 }
@@ -448,6 +449,7 @@ type profileAuditRecord struct {
 	TradingName       string           `json:"trading_name"`
 	LegalName         string           `json:"legal_name"`
 	CompanyNumber     string           `json:"company_number"`
+	ActType           *string          `json:"act_type"`
 	RegisteredOffice  RegisteredOffice `json:"registered_office"`
 	IncorporationDate string           `json:"incorporation_date"`
 	YearEnd           yearEndAudit     `json:"year_end"`
@@ -471,6 +473,7 @@ func profileAuditValue(profile CompanyProfile, exists bool) any {
 		TradingName:       profile.TradingName,
 		LegalName:         profile.LegalName,
 		CompanyNumber:     profile.CompanyNumber,
+		ActType:           nullableProfileText(profile.ActType),
 		RegisteredOffice:  profile.RegisteredOffice,
 		IncorporationDate: profile.IncorporationDate.UTC().Format(dateLayout),
 		YearEnd: yearEndAudit{
@@ -793,6 +796,9 @@ func (patch UpdateProfilePatch) apply(profile CompanyProfile) (CompanyProfile, e
 	if patch.CompanyNumber != nil {
 		profile.CompanyNumber = strings.TrimSpace(*patch.CompanyNumber)
 	}
+	if patch.ActType != nil {
+		profile.ActType = strings.TrimSpace(*patch.ActType)
+	}
 	if patch.RegisteredOffice != nil {
 		profile.RegisteredOffice = *patch.RegisteredOffice
 	}
@@ -901,6 +907,7 @@ func normalizeInitialCompanyProfile(profile CompanyProfile) (CompanyProfile, err
 			normalized.VATNumber = &vatNumber
 		}
 	}
+	normalized.ActType = strings.TrimSpace(normalized.ActType)
 	normalized.Shareholders = append([]Shareholder{}, normalized.Shareholders...)
 	if normalized.Shareholders == nil {
 		normalized.Shareholders = []Shareholder{}
@@ -918,6 +925,14 @@ func normalizeInitialCompanyProfile(profile CompanyProfile) (CompanyProfile, err
 		}
 	}
 	return normalized, nil
+}
+
+func nullableProfileText(value string) *string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
 }
 
 func normalizeDirectors(directors []Director) ([]Director, error) {

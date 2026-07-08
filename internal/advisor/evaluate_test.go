@@ -1,10 +1,12 @@
 package advisor
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/npmulder/ledgerly/internal/identity"
 	"github.com/npmulder/ledgerly/internal/jurisdiction"
 	"github.com/npmulder/ledgerly/internal/moneyfx/money"
 )
@@ -166,7 +168,93 @@ func TestCompileJurisdictionRules(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompileJurisdictionRules() error = %v", err)
 	}
-	if len(rules) != 6 {
-		t.Fatalf("compiled rules length = %d, want 6", len(rules))
+	if len(rules) != 7 {
+		t.Fatalf("compiled rules length = %d, want 7", len(rules))
+	}
+}
+
+func TestCompanyMinimumDirectorsRuleUsesPackActDefinition(t *testing.T) {
+	if err := jurisdiction.LoadActive(jurisdiction.DefaultSelector); err != nil {
+		t.Fatalf("LoadActive() error = %v", err)
+	}
+	rule := compileActiveRuleByID(t, "company_minimum_directors")
+
+	tests := []struct {
+		name      string
+		actType   string
+		directors int
+		wantWarn  bool
+	}{
+		{name: "1931 one director warns", actType: "companies-act-1931", directors: 1, wantWarn: true},
+		{name: "1931 two directors clears", actType: "companies-act-1931", directors: 2},
+		{name: "2006 one director clears", actType: "companies-act-2006", directors: 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			facts, err := NewIdentityFactProvider(fakeIdentityReadAPI{
+				facts: identityCompanyFacts(tt.actType, tt.directors),
+			}).Gather(t.Context())
+			if err != nil {
+				t.Fatalf("Gather() error = %v", err)
+			}
+
+			delta, err := Evaluate([]RuleDef{rule}, facts, time.Date(2026, 7, 6, 0, 0, 0, 0, time.UTC))
+			if err != nil {
+				t.Fatalf("Evaluate() error = %v", err)
+			}
+			if len(delta.Warnings) != 0 {
+				t.Fatalf("warnings = %#v, want none", delta.Warnings)
+			}
+			if tt.wantWarn {
+				if len(delta.Insights) != 1 {
+					t.Fatalf("insights length = %d, want 1", len(delta.Insights))
+				}
+				insight := delta.Insights[0]
+				if insight.RenderedText != "Your company is registered under the Companies Act 1931 and must have at least 2 directors - profile lists 1." {
+					t.Fatalf("RenderedText = %q", insight.RenderedText)
+				}
+				if insight.Severity != SeverityAmber {
+					t.Fatalf("Severity = %q, want amber", insight.Severity)
+				}
+				if !slices.Equal(insight.Surfaces, []Surface{SurfaceDashboard, SurfaceSettings}) {
+					t.Fatalf("Surfaces = %#v, want dashboard/settings", insight.Surfaces)
+				}
+				if insight.CTA.Action != "navigate:/settings/company" {
+					t.Fatalf("CTA.Action = %q, want settings navigation", insight.CTA.Action)
+				}
+				return
+			}
+			if len(delta.Insights) != 0 {
+				t.Fatalf("insights = %#v, want none", delta.Insights)
+			}
+		})
+	}
+}
+
+func compileActiveRuleByID(t *testing.T, id string) RuleDef {
+	t.Helper()
+
+	rules, err := CompileJurisdictionRules(jurisdiction.AdvisorRules())
+	if err != nil {
+		t.Fatalf("CompileJurisdictionRules() error = %v", err)
+	}
+	for _, rule := range rules {
+		if rule.ID == id {
+			return rule
+		}
+	}
+	t.Fatalf("active rule %q not found", id)
+	return RuleDef{}
+}
+
+func identityCompanyFacts(actType string, directorCount int) identity.CompanyFacts {
+	directors := make([]identity.Director, directorCount)
+	for index := range directors {
+		directors[index] = identity.Director{Name: "Director"}
+	}
+	return identity.CompanyFacts{
+		ActType:   actType,
+		Directors: directors,
 	}
 }

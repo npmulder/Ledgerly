@@ -50,11 +50,18 @@ const (
 	FactRatesStale    FactKey = "rates.stale"
 	FactStaleDays     FactKey = "stale_days"
 
-	FactCompanyIncorporationDate FactKey = "company.incorporationDate"
-	FactCompanyYearEnd           FactKey = "company.yearEnd"
-	FactCompanyYearEndMonth      FactKey = "company.yearEnd.month"
-	FactCompanyYearEndDay        FactKey = "company.yearEnd.day"
-	FactCompanyVATRegistered     FactKey = "company.isVATRegistered"
+	FactCompanyIncorporationDate   FactKey = "company.incorporationDate"
+	FactCompanyYearEnd             FactKey = "company.yearEnd"
+	FactCompanyYearEndMonth        FactKey = "company.yearEnd.month"
+	FactCompanyYearEndDay          FactKey = "company.yearEnd.day"
+	FactCompanyVATRegistered       FactKey = "company.isVATRegistered"
+	FactCompanyActType             FactKey = "company.actType"
+	FactCompanyActLabel            FactKey = "company.act.label"
+	FactCompanyActMinimumDirectors FactKey = "company.act.minimumDirectors"
+	FactCompanyDirectorCount       FactKey = "company.directors.count"
+	FactRuleCompanyActName         FactKey = "act_name"
+	FactRuleDirectorCount          FactKey = "director_count"
+	FactRuleMinimumDirectors       FactKey = "minimum_directors"
 )
 
 // OverdueInvoiceFact is the advisor contract shape for invoices.overdue[].

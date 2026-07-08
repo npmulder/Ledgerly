@@ -202,9 +202,11 @@ describe("Company settings", () => {
       "2024-02-01",
     );
     await user.click(
-      within(screen.getByLabelText("Director 2 appointed date").closest(
-        ".director-row",
-      ) as HTMLElement).getByLabelText("Chair"),
+      within(
+        screen
+          .getByLabelText("Director 2 appointed date")
+          .closest(".director-row") as HTMLElement,
+      ).getByLabelText("Chair"),
     );
     await user.click(screen.getByLabelText("Remove director Neil Meyer"));
     await user.click(screen.getByRole("button", { name: "Save changes" }));
@@ -217,6 +219,73 @@ describe("Company settings", () => {
           name: "Jane Roberts",
         },
       ]);
+    });
+  });
+
+  it("offers a pack-backed act suggestion without silently saving it", async () => {
+    const user = userEvent.setup();
+    let profile = identityProfile();
+    let savedPatch: IdentityProfilePatch | null = null;
+    let advisorRequestCount = 0;
+    const fetchImpl = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = pathFromRequest(input);
+        if (path === "/api/identity/me") {
+          return jsonResponse({
+            created_at: "2026-07-05T12:00:00Z",
+            email: "owner@example.com",
+            id: 1,
+            name: "N. Meyer",
+          });
+        }
+        if (path === "/api/jurisdiction/pack") {
+          return jsonResponse(jurisdictionPack());
+        }
+        if (path === "/api/advisor/insights") {
+          advisorRequestCount += 1;
+          return jsonResponse({ insights: [] });
+        }
+        if (path === "/api/identity/profile" && init?.method === "PATCH") {
+          savedPatch = JSON.parse(String(init.body)) as IdentityProfilePatch;
+          profile = {
+            ...profile,
+            act_type:
+              savedPatch.act_type === undefined
+                ? profile.act_type
+                : savedPatch.act_type,
+          };
+          return jsonResponse(profile);
+        }
+        if (path === "/api/identity/profile") {
+          return jsonResponse(profile);
+        }
+        return jsonResponse(
+          { status: 404, title: "Not Found", type: "about:blank" },
+          404,
+          "application/problem+json",
+        );
+      },
+    );
+    vi.stubGlobal("fetch", fetchImpl);
+
+    renderAt("/settings/company");
+
+    const actSelect = await screen.findByLabelText("Company Act");
+    expect(actSelect).toHaveValue("");
+    expect(
+      await screen.findByText(
+        "Suggested from company number: Companies Act 1931.",
+      ),
+    ).toBeInTheDocument();
+
+    await user.selectOptions(actSelect, "companies-act-1931");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => {
+      expect(savedPatch?.act_type).toBe("companies-act-1931");
+    });
+    await waitFor(() => {
+      expect(advisorRequestCount).toBeGreaterThanOrEqual(2);
     });
   });
 
@@ -359,14 +428,18 @@ describe("Company settings", () => {
     const fabrikamRow = screen.getByText("Fabrikam Ltd").closest("tr");
     expect(contosoRow).not.toBeNull();
     expect(fabrikamRow).not.toBeNull();
-    expect(within(contosoRow as HTMLElement).getByText("EUR")).toBeInTheDocument();
-    expect(within(fabrikamRow as HTMLElement).getByText("GBP")).toBeInTheDocument();
-    expect(within(contosoRow as HTMLElement).getByText(/Retainer/)).toHaveTextContent(
-      "€4,500.00",
-    );
-    expect(within(fabrikamRow as HTMLElement).getByText(/Day rate/)).toHaveTextContent(
-      "£600.00",
-    );
+    expect(
+      within(contosoRow as HTMLElement).getByText("EUR"),
+    ).toBeInTheDocument();
+    expect(
+      within(fabrikamRow as HTMLElement).getByText("GBP"),
+    ).toBeInTheDocument();
+    expect(
+      within(contosoRow as HTMLElement).getByText(/Retainer/),
+    ).toHaveTextContent("€4,500.00");
+    expect(
+      within(fabrikamRow as HTMLElement).getByText(/Day rate/),
+    ).toHaveTextContent("£600.00");
     expect(
       within(contosoRow as HTMLElement).getByText("Net 14 · reverse charge"),
     ).toBeInTheDocument();
@@ -676,6 +749,22 @@ function authenticatedFetch() {
 
 function jurisdictionPack() {
   return {
+    company_acts: [
+      {
+        act_type: "companies-act-1931",
+        company_number_suffixes: ["C"],
+        corporate_directors: false,
+        label: "Companies Act 1931",
+        minimum_directors: 2,
+      },
+      {
+        act_type: "companies-act-2006",
+        company_number_suffixes: ["V"],
+        corporate_directors: null,
+        label: "Companies Act 2006",
+        minimum_directors: 1,
+      },
+    ],
     meta: {
       id: "isle-of-man",
       name: "Isle of Man",
@@ -723,6 +812,7 @@ function jurisdictionPack() {
 
 function identityProfile(): IdentityProfile {
   return {
+    act_type: null,
     bank_details: { bank_name: "", bic: "", iban: "" },
     company_number: "137792C",
     incorporation_date: "2020-07-14",
