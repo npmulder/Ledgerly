@@ -95,6 +95,9 @@ func WithMoneyFX(fx MoneyFX) ServiceOption {
 func WithInvoicingSettler(settler InvoiceSettler) ServiceOption {
 	return func(s *Service) {
 		s.invoices = settler
+		if provider, ok := settler.(invoicingMatchCandidateProvider); ok {
+			s.invoiceCandidates = invoicingInvoiceCandidateSource{provider: provider}
+		}
 	}
 }
 
@@ -658,6 +661,64 @@ func (s *Service) ReconciledHistory(ctx context.Context, filter ReconciledHistor
 	page.Limit = normalized.Limit
 	page.Offset = normalized.Offset
 	return page, nil
+}
+
+func (s *Service) InvoiceCandidatesForTransaction(ctx context.Context, txnID TransactionID) ([]InvoiceMatchCandidate, error) {
+	if s.pool == nil {
+		return nil, fmt.Errorf("banking: invoice candidate lookup requires pool")
+	}
+	if s.invoiceCandidates == nil {
+		return nil, fmt.Errorf("banking: invoice candidates are required: %w", ErrInvalidReconciliation)
+	}
+	if txnID <= 0 {
+		return nil, fmt.Errorf("banking: transaction id is required: %w", ErrInvalidReconciliation)
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("banking: begin invoice candidate lookup: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+
+	txn, err := s.store.Transaction(ctx, tx, txnID)
+	if err != nil {
+		return nil, err
+	}
+	switch txn.State {
+	case TransactionStateUnreconciled, TransactionStateSuggested:
+	default:
+		return nil, invalidReconciliationState(txn, TransactionStateReconciled)
+	}
+	if txn.Amount.Amount <= 0 {
+		return nil, fmt.Errorf("banking: invoice candidate transaction %d amount must be inbound: %w", txn.ID, ErrInvalidReconciliation)
+	}
+	candidates, err := s.invoiceCandidates.InvoiceCandidates(ctx, tx, txn.Amount.Currency)
+	if err != nil {
+		return nil, fmt.Errorf("banking: invoice match candidates: %w", err)
+	}
+	return candidates, nil
+}
+
+func (s *Service) invoiceCandidatesForCurrency(ctx context.Context, currency string) ([]InvoiceMatchCandidate, error) {
+	if s.pool == nil {
+		return nil, fmt.Errorf("banking: invoice candidate lookup requires pool")
+	}
+	if s.invoiceCandidates == nil {
+		return nil, fmt.Errorf("banking: invoice candidates are required: %w", ErrInvalidReconciliation)
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("banking: begin invoice candidate lookup: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+	candidates, err := s.invoiceCandidates.InvoiceCandidates(ctx, tx, currency)
+	if err != nil {
+		return nil, fmt.Errorf("banking: invoice match candidates: %w", err)
+	}
+	return candidates, nil
 }
 
 func (s *Service) AttachReceipt(ctx context.Context, txnID TransactionID, upload ReceiptUpload) (_ Receipt, err error) {

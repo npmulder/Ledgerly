@@ -16,6 +16,8 @@ import {
   excludeBankingTransaction,
   fileBankingTransactionToDLA,
   getBankingAccounts,
+  getBankingFeed,
+  getBankingInvoiceCandidates,
   getReconciledHistory,
   getBankingReviewQueue,
   getRecentlyReconciled,
@@ -25,6 +27,7 @@ import {
   type BankingAccountsResponse,
   type BankingCommandResponse,
   type BankingCreateAccountRequest,
+  type BankingInvoiceCandidate,
   type BankingMoney,
   type BankingRecentTransaction,
   type BankingReconciledHistoryResponse,
@@ -32,6 +35,7 @@ import {
   type BankingReconciliationKind,
   type BankingReviewCard,
   type BankingReviewQueue,
+  type BankingTransaction,
 } from "@/api/banking";
 import { isApiError } from "@/api/client";
 import { queryKeys } from "@/api/queryKeys";
@@ -107,6 +111,11 @@ type ExcludeContext = {
 
 type RecentKindByID = Partial<Record<number, BankingReviewCard["kind"]>>;
 
+type ConfirmVariables = {
+  invoiceID?: string;
+  transactionID: number;
+};
+
 type AttachReceiptVariables = {
   file: File;
   transactionID: number;
@@ -156,6 +165,18 @@ export function BankingScreen() {
       selectedAccount?.id ?? null,
     ),
   });
+  const unmatchedQuery = useQuery({
+    enabled: selectedAccount !== null,
+    queryFn: () =>
+      getBankingFeed({
+        accountID: selectedAccount?.id ?? null,
+        state: "unreconciled",
+      }),
+    queryKey: queryKeys.banking.feed(
+      selectedAccount?.id ?? null,
+      "unreconciled",
+    ),
+  });
   const historyQuery = useQuery({
     enabled: activeView === "history",
     queryFn: () =>
@@ -195,6 +216,17 @@ export function BankingScreen() {
         : [],
     [allReviewCards, selectedAccount],
   );
+  const manualAllocationTransactions = useMemo(
+    () =>
+      selectedAccount
+        ? (unmatchedQuery.data?.transactions ?? []).filter(
+            (transaction) =>
+              transaction.account_id === selectedAccount.id &&
+              transaction.amount.amount_minor > 0,
+          )
+        : [],
+    [selectedAccount, unmatchedQuery.data],
+  );
   const scopedRecent = selectedAccount
     ? (recentQuery.data?.transactions ?? [])
     : [];
@@ -214,8 +246,13 @@ export function BankingScreen() {
     },
   });
 
-  const confirmMutation = useMutation({
-    mutationFn: confirmBankingMatch,
+  const confirmMutation = useMutation<
+    BankingCommandResponse,
+    Error,
+    ConfirmVariables
+  >({
+    mutationFn: ({ invoiceID, transactionID }) =>
+      confirmBankingMatch(transactionID, invoiceID),
     onError: (error) => {
       setToast({ message: problemMessage(error), tone: "error" });
     },
@@ -357,17 +394,24 @@ export function BankingScreen() {
     attachReceiptMutation.isPending ||
     deleteReceiptMutation.isPending;
   const selectedWorkCount = selectedAccount
-    ? Math.max(scopedReviewCards.length, selectedAccount.unreconciled_count)
+    ? Math.max(
+        scopedReviewCards.length + manualAllocationTransactions.length,
+        selectedAccount.unreconciled_count,
+      )
     : 0;
   const isEmptyQueue =
     !reviewQuery.isPending &&
+    !unmatchedQuery.isPending &&
     selectedAccount !== null &&
     scopedReviewCards.length === 0 &&
+    manualAllocationTransactions.length === 0 &&
     selectedAccount.unreconciled_count === 0;
   const hasUnmatchedImports =
     !reviewQuery.isPending &&
+    !unmatchedQuery.isPending &&
     selectedAccount !== null &&
     scopedReviewCards.length === 0 &&
+    manualAllocationTransactions.length === 0 &&
     selectedAccount.unreconciled_count > 0;
   const queueTitle = selectedAccount
     ? `${selectedAccount.name} review queue`
@@ -532,6 +576,12 @@ export function BankingScreen() {
           fallbackTitle="Unable to load recently reconciled."
         />
       ) : null}
+      {unmatchedQuery.isError ? (
+        <ProblemAlert
+          error={unmatchedQuery.error}
+          fallbackTitle="Unable to load unmatched transactions."
+        />
+      ) : null}
       {historyQuery.isError ? (
         <ProblemAlert
           error={historyQuery.error}
@@ -551,7 +601,11 @@ export function BankingScreen() {
         useReviewCounts={!!reviewQuery.data}
       />
 
-      <div className="banking-view-tabs" role="tablist" aria-label="Banking views">
+      <div
+        className="banking-view-tabs"
+        role="tablist"
+        aria-label="Banking views"
+      >
         <button
           aria-selected={activeView === "review"}
           className="banking-view-tab"
@@ -612,9 +666,6 @@ export function BankingScreen() {
                 onAttachReceipt={(transactionID, file) =>
                   attachReceiptMutation.mutate({ file, transactionID })
                 }
-                onConfirm={(transactionID) =>
-                  confirmMutation.mutate(transactionID)
-                }
                 onDeleteReceipt={(transactionID) =>
                   deleteReceiptMutation.mutate({ transactionID })
                 }
@@ -622,9 +673,29 @@ export function BankingScreen() {
                   excludeMutation.mutate({ card: selectedCard, reason })
                 }
                 onFileDLA={(transactionID) => dlaMutation.mutate(transactionID)}
+                onMatchInvoice={(transactionID, invoiceID) =>
+                  confirmMutation.mutate({ invoiceID, transactionID })
+                }
                 onRecode={(transactionID, accountCode) =>
                   recodeMutation.mutate({ accountCode, transactionID })
                 }
+              />
+            ))}
+
+            {manualAllocationTransactions.map((transaction) => (
+              <ManualAllocationCard
+                busy={isCommandPending}
+                key={`manual-${transaction.id}`}
+                onAttachReceipt={(transactionID, file) =>
+                  attachReceiptMutation.mutate({ file, transactionID })
+                }
+                onConfirm={(transactionID, invoiceID) =>
+                  confirmMutation.mutate({ invoiceID, transactionID })
+                }
+                onDeleteReceipt={(transactionID) =>
+                  deleteReceiptMutation.mutate({ transactionID })
+                }
+                transaction={transaction}
               />
             ))}
 
@@ -867,7 +938,9 @@ function ReconciledHistoryPanel({
   readonly accounts: BankingAccount[];
   readonly filters: HistoryFilters;
   readonly isLoading: boolean;
-  readonly onFilterChange: (patch: Partial<Omit<HistoryFilters, "offset">>) => void;
+  readonly onFilterChange: (
+    patch: Partial<Omit<HistoryFilters, "offset">>,
+  ) => void;
   readonly onPageChange: (offset: number) => void;
   readonly onReset: () => void;
   readonly page: BankingReconciledHistoryResponse | undefined;
@@ -905,7 +978,9 @@ function ReconciledHistoryPanel({
                     : Number(event.target.value),
               })
             }
-            value={filters.accountID === null ? "all" : String(filters.accountID)}
+            value={
+              filters.accountID === null ? "all" : String(filters.accountID)
+            }
           >
             <option value="all">All accounts</option>
             {accounts.map((account) => (
@@ -1068,19 +1143,19 @@ function ReviewCard({
   busy,
   card,
   onAttachReceipt,
-  onConfirm,
   onDeleteReceipt,
   onExclude,
   onFileDLA,
+  onMatchInvoice,
   onRecode,
 }: {
   readonly busy: boolean;
   readonly card: BankingReviewCard;
   readonly onAttachReceipt: (transactionID: number, file: File) => void;
-  readonly onConfirm: (transactionID: number) => void;
   readonly onDeleteReceipt: (transactionID: number) => void;
   readonly onExclude: (card: BankingReviewCard, reason: string) => void;
   readonly onFileDLA: (transactionID: number) => void;
+  readonly onMatchInvoice: (transactionID: number, invoiceID?: string) => void;
   readonly onRecode: (transactionID: number, accountCode: string) => void;
 }) {
   const title = reviewCardTitle(card);
@@ -1095,8 +1170,8 @@ function ReviewCard({
         <ReviewCardActions
           busy={busy}
           card={card}
-          onConfirm={onConfirm}
           onFileDLA={onFileDLA}
+          onMatchInvoice={onMatchInvoice}
           onRecode={onRecode}
         />
       }
@@ -1139,6 +1214,68 @@ function ReviewCard({
   );
 }
 
+function ManualAllocationCard({
+  busy,
+  onAttachReceipt,
+  onConfirm,
+  onDeleteReceipt,
+  transaction,
+}: {
+  readonly busy: boolean;
+  readonly onAttachReceipt: (transactionID: number, file: File) => void;
+  readonly onConfirm: (transactionID: number, invoiceID: string) => void;
+  readonly onDeleteReceipt: (transactionID: number) => void;
+  readonly transaction: BankingTransaction;
+}) {
+  return (
+    <Card
+      as="article"
+      className="banking-review-card banking-review-card--manual"
+      footer={
+        <div className="banking-review-card__actions">
+          <ManualInvoicePicker
+            busy={busy}
+            buttonLabel="Match selected"
+            onConfirm={(invoiceID) => onConfirm(transaction.id, invoiceID)}
+            transaction={transaction}
+          />
+        </div>
+      }
+      title={
+        <span className="banking-review-card__title">
+          <span className="banking-kind-icon" aria-hidden="true">
+            M
+          </span>
+          <span>Manual match</span>
+          <Badge variant="neutral">Unreconciled</Badge>
+          {transaction.receipt ? (
+            <Badge variant="neutral">Receipt</Badge>
+          ) : null}
+        </span>
+      }
+    >
+      <div className="banking-review-card__body">
+        <div>
+          <p className="banking-review-card__payee">{transaction.payee}</p>
+          <p className="banking-review-card__reference">
+            {transaction.reference}
+          </p>
+        </div>
+        <p className="banking-review-card__amount type-mono-numeral">
+          {formatMoney(transaction.amount)}
+        </p>
+      </div>
+
+      <ReceiptControls
+        busy={busy}
+        onAttachReceipt={onAttachReceipt}
+        onDeleteReceipt={onDeleteReceipt}
+        transaction={transaction}
+      />
+    </Card>
+  );
+}
+
 function ReceiptControls({
   busy,
   onAttachReceipt,
@@ -1148,7 +1285,7 @@ function ReceiptControls({
   readonly busy: boolean;
   readonly onAttachReceipt: (transactionID: number, file: File) => void;
   readonly onDeleteReceipt: (transactionID: number) => void;
-  readonly transaction: BankingReviewCard["transaction"];
+  readonly transaction: BankingTransaction;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const receipt = transaction.receipt;
@@ -1207,10 +1344,13 @@ function ReceiptControls({
 }
 
 function MatchDetails({ card }: { readonly card: BankingReviewCard }) {
+  const invoiceLabel = isDraftInvoiceMatch(card)
+    ? "Draft invoice"
+    : (card.target.invoice_number ?? card.target.id);
   return (
     <div className="banking-review-card__detail">
       <p>
-        <strong>{card.target.invoice_number ?? card.target.id}</strong>
+        <strong>{invoiceLabel}</strong>
         {card.target.client ? <span> · {card.target.client}</span> : null}
       </p>
       <p>{card.explanation}</p>
@@ -1250,27 +1390,45 @@ function RuleDetails({ card }: { readonly card: BankingReviewCard }) {
 function ReviewCardActions({
   busy,
   card,
-  onConfirm,
   onFileDLA,
+  onMatchInvoice,
   onRecode,
 }: {
   readonly busy: boolean;
   readonly card: BankingReviewCard;
-  readonly onConfirm: (transactionID: number) => void;
   readonly onFileDLA: (transactionID: number) => void;
+  readonly onMatchInvoice: (transactionID: number, invoiceID?: string) => void;
   readonly onRecode: (transactionID: number, accountCode: string) => void;
 }) {
+  const manualInvoicePicker = canManuallyAllocateSuggestedTransaction(card) ? (
+    <ManualInvoicePicker
+      busy={busy}
+      buttonLabel="Match selected"
+      onConfirm={(invoiceID) => onMatchInvoice(card.transaction.id, invoiceID)}
+      transaction={card.transaction}
+    />
+  ) : null;
+
   if (card.kind === "match") {
     return (
       <div className="banking-review-card__actions">
         <Button
           disabled={busy}
-          onClick={() => onConfirm(card.transaction.id)}
+          onClick={() => onMatchInvoice(card.transaction.id)}
           size="small"
           type="button"
         >
-          Confirm
+          {isDraftInvoiceMatch(card) ? "Send + allocate" : "Confirm"}
         </Button>
+        <ManualInvoicePicker
+          busy={busy}
+          buttonLabel="Confirm selected"
+          defaultInvoiceID={card.target.id}
+          onConfirm={(invoiceID) =>
+            onMatchInvoice(card.transaction.id, invoiceID)
+          }
+          transaction={card.transaction}
+        />
       </div>
     );
   }
@@ -1291,6 +1449,7 @@ function ReviewCardActions({
           label="DLA recode"
           onRecode={(accountCode) => onRecode(card.transaction.id, accountCode)}
         />
+        {manualInvoicePicker}
       </div>
     );
   }
@@ -1315,7 +1474,73 @@ function ReviewCardActions({
         label="Rule recode"
         onRecode={(accountCode) => onRecode(card.transaction.id, accountCode)}
       />
+      {manualInvoicePicker}
     </div>
+  );
+}
+
+function ManualInvoicePicker({
+  busy,
+  buttonLabel,
+  defaultInvoiceID = "",
+  onConfirm,
+  transaction,
+}: {
+  readonly busy: boolean;
+  readonly buttonLabel: string;
+  readonly defaultInvoiceID?: string;
+  readonly onConfirm: (invoiceID: string) => void;
+  readonly transaction: BankingTransaction;
+}) {
+  const [invoiceID, setInvoiceID] = useState(defaultInvoiceID);
+  const candidatesQuery = useQuery({
+    queryFn: () => getBankingInvoiceCandidates(transaction.id),
+    queryKey: queryKeys.banking.candidates(transaction.id),
+  });
+  const candidates = candidatesQuery.data?.candidates ?? [];
+
+  return (
+    <details className="banking-invoice-picker">
+      <summary>Match to invoice ▾</summary>
+      <div className="banking-invoice-picker__panel">
+        {candidatesQuery.isError ? (
+          <p className="type-secondary">
+            {problemMessage(candidatesQuery.error)}
+          </p>
+        ) : null}
+        <label>
+          <span>Invoice</span>
+          <select
+            disabled={busy || candidatesQuery.isPending}
+            onChange={(event) => setInvoiceID(event.target.value)}
+            value={invoiceID}
+          >
+            <option value="">
+              {candidatesQuery.isPending
+                ? "Loading invoices"
+                : "Select invoice"}
+            </option>
+            {candidates.map((candidate) => (
+              <option key={candidate.invoice_id} value={candidate.invoice_id}>
+                {invoiceCandidateLabel(candidate)}
+              </option>
+            ))}
+          </select>
+        </label>
+        {!candidatesQuery.isPending && candidates.length === 0 ? (
+          <p className="type-secondary">No open invoices.</p>
+        ) : null}
+        <Button
+          disabled={busy || candidatesQuery.isPending || invoiceID === ""}
+          onClick={() => onConfirm(invoiceID)}
+          size="small"
+          type="button"
+          variant="secondary"
+        >
+          {buttonLabel}
+        </Button>
+      </div>
+    </details>
   );
 }
 
@@ -1511,6 +1736,10 @@ async function refreshBankingData(
   await Promise.all([
     queryClient.invalidateQueries({ queryKey: queryKeys.banking.accounts() }),
     queryClient.invalidateQueries({ queryKey: queryKeys.banking.review() }),
+    queryClient.invalidateQueries({ queryKey: ["banking", "feed"] }),
+    queryClient.invalidateQueries({
+      queryKey: ["banking", "invoiceCandidates"],
+    }),
     queryClient.invalidateQueries({ queryKey: ["banking", "recent"] }),
     queryClient.invalidateQueries({ queryKey: ["banking", "history"] }),
   ]);
@@ -1582,12 +1811,18 @@ function accountCreateErrorMessage(error: unknown) {
 function reviewCardTitle(card: BankingReviewCard) {
   switch (card.kind) {
     case "match":
-      return "Invoice match";
+      return isDraftInvoiceMatch(card)
+        ? "Draft invoice match"
+        : "Invoice match";
     case "rule":
       return "Payee rule";
     case "suggestion":
       return "DLA suggestion";
   }
+}
+
+function isDraftInvoiceMatch(card: BankingReviewCard) {
+  return card.kind === "match" && card.target.invoice_status === "draft";
 }
 
 function kindIcon(kind: BankingReviewCard["kind"]) {
@@ -1669,6 +1904,11 @@ function formatMoney(value: BankingMoney) {
   });
 }
 
+function invoiceCandidateLabel(candidate: BankingInvoiceCandidate) {
+  const number = candidate.invoice_number || candidate.invoice_id;
+  return `${number} - ${candidate.client} - ${formatMoney(candidate.amount)} - due ${formatShortDate(candidate.due_date)}`;
+}
+
 function formatAbsoluteMoney(value: BankingMoney) {
   return formatMinorUnits({
     amountMinor: Math.abs(value.amount_minor),
@@ -1680,6 +1920,10 @@ function hasNonZeroMoney(
   value: BankingMoney | undefined,
 ): value is BankingMoney {
   return value !== undefined && value.amount_minor !== 0;
+}
+
+function canManuallyAllocateSuggestedTransaction(card: BankingReviewCard) {
+  return card.kind !== "match" && card.transaction.amount.amount_minor > 0;
 }
 
 function formatFXResult(value: BankingMoney) {

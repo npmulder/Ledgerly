@@ -202,14 +202,35 @@ func OpenAPIFragment() httpserver.OpenAPIFragment {
 					},
 				},
 			},
-			"/api/banking/transactions/{id}/confirm":   bankingCommandPath("bankingConfirmTransaction", "Confirm an invoice match", nil, "BankingCommandResponse"),
-			"/api/banking/transactions/{id}/file-dla":  bankingCommandPath("bankingFileTransactionToDLA", "File a transaction to the DLA", nil, "BankingCommandResponse"),
-			"/api/banking/transactions/{id}/recode":    bankingCommandPath("bankingRecodeTransaction", "Recode a transaction to an expense account", bankingJSONRequestBodyRef("BankingRecodeRequest"), "BankingCommandResponse"),
-			"/api/banking/transactions/{id}/exclude":   bankingCommandPath("bankingExcludeTransaction", "Exclude a transaction", bankingJSONRequestBodyRef("BankingReasonRequest"), "BankingCommandResponse"),
-			"/api/banking/transactions/{id}/unexclude": bankingCommandPath("bankingUnexcludeTransaction", "Unexclude a transaction", bankingOptionalJSONRequestBodyRef("BankingReasonRequest"), "BankingCommandResponse"),
-			"/api/banking/transactions/{id}/receipt":   bankingReceiptPath(),
+			"/api/banking/transactions/{id}/invoice-candidates": bankingInvoiceCandidatesPath(),
+			"/api/banking/transactions/{id}/confirm":            bankingCommandPath("bankingConfirmTransaction", "Confirm an invoice match", bankingOptionalJSONRequestBodyRef("BankingConfirmMatchRequest"), "BankingCommandResponse"),
+			"/api/banking/transactions/{id}/file-dla":           bankingCommandPath("bankingFileTransactionToDLA", "File a transaction to the DLA", nil, "BankingCommandResponse"),
+			"/api/banking/transactions/{id}/recode":             bankingCommandPath("bankingRecodeTransaction", "Recode a transaction to an expense account", bankingJSONRequestBodyRef("BankingRecodeRequest"), "BankingCommandResponse"),
+			"/api/banking/transactions/{id}/exclude":            bankingCommandPath("bankingExcludeTransaction", "Exclude a transaction", bankingJSONRequestBodyRef("BankingReasonRequest"), "BankingCommandResponse"),
+			"/api/banking/transactions/{id}/unexclude":          bankingCommandPath("bankingUnexcludeTransaction", "Unexclude a transaction", bankingOptionalJSONRequestBodyRef("BankingReasonRequest"), "BankingCommandResponse"),
+			"/api/banking/transactions/{id}/receipt":            bankingReceiptPath(),
 		},
 		Components: bankingComponents(),
+	}
+}
+
+func bankingInvoiceCandidatesPath() map[string]any {
+	return map[string]any{
+		"get": map[string]any{
+			"tags":        []string{"banking"},
+			"summary":     "List invoice candidates for manual transaction allocation",
+			"description": "Returns open sent invoices in the transaction currency without applying the automatic match-score threshold.",
+			"operationId": "bankingListInvoiceCandidates",
+			"security":    bankingSessionSecurity(),
+			"parameters":  []map[string]any{bankingIDPathParameter("id", "Bank transaction ID.")},
+			"responses": map[string]any{
+				"200": bankingJSONResponseRef("Invoice candidates", "BankingInvoiceCandidatesResponse"),
+				"401": bankingProblemResponse("Authentication required"),
+				"404": bankingProblemResponse("Transaction was not found"),
+				"409": bankingProblemResponse("Transaction state cannot be manually allocated"),
+				"422": bankingProblemResponse("Transaction is not eligible for invoice allocation"),
+			},
+		},
 	}
 }
 
@@ -400,6 +421,8 @@ func bankingComponents() map[string]any {
 			"BankingBatchSummary":                 bankingBatchSummarySchema(),
 			"BankingReceipt":                      bankingReceiptSchema(),
 			"BankingTransaction":                  bankingTransactionSchema(),
+			"BankingInvoiceCandidate":             bankingInvoiceCandidateSchema(),
+			"BankingInvoiceCandidatesResponse":    bankingInvoiceCandidatesResponseSchema(),
 			"BankingReviewTarget":                 bankingReviewTargetSchema(),
 			"BankingReviewCard":                   bankingReviewCardSchema(),
 			"BankingReviewQueue":                  bankingReviewQueueSchema(),
@@ -442,6 +465,14 @@ func bankingComponents() map[string]any {
 				"additionalProperties": false,
 			},
 			"BankingStateChange": bankingStateChangeSchema(),
+			"BankingConfirmMatchRequest": map[string]any{
+				"type":     "object",
+				"required": []string{"invoice_id"},
+				"properties": map[string]any{
+					"invoice_id": map[string]any{"type": "string"},
+				},
+				"additionalProperties": false,
+			},
 			"BankingRecodeRequest": map[string]any{
 				"type":     "object",
 				"required": []string{"account_code"},
@@ -599,6 +630,37 @@ func bankingTransactionStateSchema() map[string]any {
 	}
 }
 
+func bankingInvoiceCandidateSchema() map[string]any {
+	return map[string]any{
+		"type":     "object",
+		"required": []string{"invoice_id", "invoice_number", "client", "issue_date", "due_date", "amount", "status"},
+		"properties": map[string]any{
+			"invoice_id":     map[string]any{"type": "string"},
+			"invoice_number": map[string]any{"type": "string"},
+			"client":         map[string]any{"type": "string"},
+			"issue_date":     map[string]any{"type": "string", "format": "date"},
+			"due_date":       map[string]any{"type": "string", "format": "date"},
+			"amount":         map[string]any{"$ref": "#/components/schemas/BankingMoney"},
+			"status":         map[string]any{"type": "string"},
+		},
+		"additionalProperties": false,
+	}
+}
+
+func bankingInvoiceCandidatesResponseSchema() map[string]any {
+	return map[string]any{
+		"type":     "object",
+		"required": []string{"candidates"},
+		"properties": map[string]any{
+			"candidates": map[string]any{
+				"type":  "array",
+				"items": map[string]any{"$ref": "#/components/schemas/BankingInvoiceCandidate"},
+			},
+		},
+		"additionalProperties": false,
+	}
+}
+
 func bankingReviewTargetSchema() map[string]any {
 	return map[string]any{
 		"type":     "object",
@@ -607,6 +669,7 @@ func bankingReviewTargetSchema() map[string]any {
 			"type":           map[string]any{"type": "string", "enum": []string{"invoice", "dla", "account"}},
 			"id":             map[string]any{"type": "string"},
 			"invoice_number": map[string]any{"type": "string"},
+			"invoice_status": map[string]any{"type": "string", "enum": []string{"draft", "sent"}},
 			"client":         map[string]any{"type": "string"},
 			"account_code":   map[string]any{"type": "string"},
 			"times_applied":  map[string]any{"type": "integer", "nullable": true},

@@ -44,6 +44,7 @@ func TestHTTPImportRoundTripSummaryOversizeAndAuth(t *testing.T) {
 		{http.MethodPost, "/api/banking/payee-rules"},
 		{http.MethodPut, "/api/banking/payee-rules/1"},
 		{http.MethodDelete, "/api/banking/payee-rules/1"},
+		{http.MethodGet, "/api/banking/transactions/1/invoice-candidates"},
 		{http.MethodPost, "/api/banking/transactions/1/confirm"},
 		{http.MethodPost, "/api/banking/transactions/1/file-dla"},
 		{http.MethodPost, "/api/banking/transactions/1/recode"},
@@ -205,6 +206,106 @@ func TestHTTPReviewQueuePayloadIsCardComplete(t *testing.T) {
 	}
 	if card := queue.Rules[0]; card.Kind != "rule" || card.Target.AccountCode != "6200-software" || card.Target.TimesApplied == nil || *card.Target.TimesApplied != 2 || card.Transaction.ID != int64(ruleTxn) {
 		t.Fatalf("rule card = %+v, want account target with times_applied 2", card)
+	}
+}
+
+func TestHTTPInvoiceCandidatesAndManualConfirm(t *testing.T) {
+	pool, _ := temporaryMigratedBankingDatabase(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	ledger := &recordingBankingLedger{}
+	candidateItems := []InvoiceMatchCandidate{
+		{
+			InvoiceID:  "invoice-manual-1",
+			Number:     "INV-MANUAL-1",
+			ClientName: "Contoso Ltd",
+			IssueDate:  time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC),
+			DueDate:    time.Date(2026, 10, 31, 0, 0, 0, 0, time.UTC),
+			Amount:     money.Money{Amount: 50000, Currency: "GBP"},
+			Status:     "sent",
+		},
+		{
+			InvoiceID:  "invoice-manual-2",
+			Number:     "INV-MANUAL-2",
+			ClientName: "Fabrikam Ltd",
+			IssueDate:  time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC),
+			DueDate:    time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC),
+			Amount:     money.Money{Amount: 75000, Currency: "GBP"},
+			Status:     "sent",
+		},
+	}
+	candidates := &mutableInvoiceCandidates{}
+	settler := &recordingInvoiceSettler{}
+	service := NewService(
+		pool,
+		ledger,
+		WithInvoiceCandidates(candidates),
+		WithLedgerJournal(ledger),
+		WithMoneyFX(stubBankingMoneyFX{realised: money.Money{Amount: 0, Currency: "GBP"}}),
+		WithInvoicingSettler(settler),
+	)
+	router := newBankingHTTPTestRouter(t, service)
+	account := createBankingHTTPAccount(t, router, "Revolut GBP", "GBP")
+
+	manualTxn := importSingleBankingTxn(t, ctx, pool, service, AccountID(account.ID), revolutTestTxn{
+		Date:      time.Date(2026, 11, 5, 9, 0, 0, 0, time.UTC),
+		ID:        "http-manual-confirm",
+		Payee:     "Client payment",
+		Reference: "manual",
+		Amount:    money.Money{Amount: 50000, Currency: "GBP"},
+	})
+	assertStoredTransactionState(t, ctx, pool, manualTxn, TransactionStateUnreconciled)
+
+	candidates.items = candidateItems
+	suggestedTxn := importSingleBankingTxn(t, ctx, pool, service, AccountID(account.ID), revolutTestTxn{
+		Date:      time.Date(2026, 11, 6, 9, 0, 0, 0, time.UTC),
+		ID:        "http-manual-override",
+		Payee:     "Client override",
+		Reference: "wrong suggestion",
+		Amount:    money.Money{Amount: 75000, Currency: "GBP"},
+	})
+	mustRecordSuggestion(t, ctx, service, suggestedTxn, SuggestionKindInvoiceMatch, 0.980, "invoice-manual-1", "wrong invoice match")
+
+	candidatesResponse := performBankingRequest(router, http.MethodGet, fmt.Sprintf("/api/banking/transactions/%d/invoice-candidates", manualTxn), nil, "", true)
+	if candidatesResponse.Code != http.StatusOK {
+		t.Fatalf("invoice candidates status = %d, want %d; body=%s", candidatesResponse.Code, http.StatusOK, candidatesResponse.Body.String())
+	}
+	var candidateBody invoiceCandidatesResponse
+	decodeBankingResponse(t, candidatesResponse, &candidateBody)
+	if len(candidateBody.Candidates) != 2 || candidateBody.Candidates[0].InvoiceID != "invoice-manual-1" || candidateBody.Candidates[1].InvoiceID != "invoice-manual-2" {
+		t.Fatalf("invoice candidates = %+v, want both open candidates without threshold filtering", candidateBody)
+	}
+
+	manualResponse := performBankingRequest(router, http.MethodPost, fmt.Sprintf("/api/banking/transactions/%d/confirm", manualTxn), strings.NewReader(`{"invoice_id":"invoice-manual-1"}`), "application/json", true)
+	if manualResponse.Code != http.StatusOK {
+		t.Fatalf("manual confirm status = %d, want %d; body=%s", manualResponse.Code, http.StatusOK, manualResponse.Body.String())
+	}
+	var manual commandResponse
+	decodeBankingResponse(t, manualResponse, &manual)
+	if manual.Transaction == nil || manual.Transaction.State != TransactionStateReconciled || manual.Kind != "match" {
+		t.Fatalf("manual confirm response = %+v, want reconciled match", manual)
+	}
+
+	overrideResponse := performBankingRequest(router, http.MethodPost, fmt.Sprintf("/api/banking/transactions/%d/confirm", suggestedTxn), strings.NewReader(`{"invoice_id":"invoice-manual-2"}`), "application/json", true)
+	if overrideResponse.Code != http.StatusOK {
+		t.Fatalf("override confirm status = %d, want %d; body=%s", overrideResponse.Code, http.StatusOK, overrideResponse.Body.String())
+	}
+	if got := settler.invoiceIDs(); fmt.Sprint(got) != "[invoice-manual-1 invoice-manual-2]" {
+		t.Fatalf("settled invoice IDs = %v, want manual then override invoices", got)
+	}
+	assertHTTPActiveSuggestionCount(t, ctx, pool, suggestedTxn, 0)
+
+	badTxn := importSingleBankingTxn(t, ctx, pool, service, AccountID(account.ID), revolutTestTxn{
+		Date:      time.Date(2026, 11, 7, 9, 0, 0, 0, time.UTC),
+		ID:        "http-manual-bad",
+		Payee:     "Bad candidate",
+		Reference: "missing invoice",
+		Amount:    money.Money{Amount: 50000, Currency: "GBP"},
+	})
+	badResponse := performBankingRequest(router, http.MethodPost, fmt.Sprintf("/api/banking/transactions/%d/confirm", badTxn), strings.NewReader(`{"invoice_id":"invoice-missing"}`), "application/json", true)
+	if badResponse.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("bad manual confirm status = %d, want %d; body=%s", badResponse.Code, http.StatusUnprocessableEntity, badResponse.Body.String())
 	}
 }
 
@@ -677,6 +778,21 @@ func assertBankingConflict(t *testing.T, router http.Handler, method string, pat
 	}
 }
 
+func assertHTTPActiveSuggestionCount(t *testing.T, ctx context.Context, pool db.Tx, txnID TransactionID, want int) {
+	t.Helper()
+	var got int
+	if err := pool.QueryRow(ctx, `
+SELECT count(*)::integer
+FROM suggestions
+WHERE txn_id = $1
+	AND superseded_at IS NULL`, int64(txnID)).Scan(&got); err != nil {
+		t.Fatalf("count active suggestions for %d: %v", txnID, err)
+	}
+	if got != want {
+		t.Fatalf("active suggestion count for %d = %d, want %d", txnID, got, want)
+	}
+}
+
 func bankingTestAuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -732,6 +848,35 @@ type stubInvoiceSettler struct{}
 
 func (stubInvoiceSettler) MarkSettled(context.Context, db.Tx, string, string, time.Time, invoicing.Money) (invoicing.Invoice, error) {
 	return invoicing.Invoice{}, nil
+}
+
+type recordingInvoiceSettler struct {
+	calls []invoiceSettlementCall
+}
+
+type invoiceSettlementCall struct {
+	invoiceID string
+	txnRef    string
+	date      time.Time
+	amount    invoicing.Money
+}
+
+func (r *recordingInvoiceSettler) MarkSettled(_ context.Context, _ db.Tx, invoiceID string, txnRef string, date time.Time, amount invoicing.Money) (invoicing.Invoice, error) {
+	r.calls = append(r.calls, invoiceSettlementCall{
+		invoiceID: invoiceID,
+		txnRef:    txnRef,
+		date:      date,
+		amount:    amount,
+	})
+	return invoicing.Invoice{}, nil
+}
+
+func (r *recordingInvoiceSettler) invoiceIDs() []string {
+	ids := make([]string, 0, len(r.calls))
+	for _, call := range r.calls {
+		ids = append(ids, call.invoiceID)
+	}
+	return ids
 }
 
 type recordingDLAFileDrawer struct{}

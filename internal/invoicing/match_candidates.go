@@ -10,19 +10,41 @@ import (
 )
 
 func (s Store) InvoiceMatchCandidates(ctx context.Context, tx db.Tx, currency string) ([]MatchCandidate, error) {
+	return s.invoiceMatchCandidates(ctx, tx, currency, func(invoice Invoice) (Invoice, error) {
+		return invoiceMatchTotals(invoice)
+	})
+}
+
+// InvoiceMatchCandidates returns match candidates with draft totals computed
+// from the service's current company identity state.
+func (s *Service) InvoiceMatchCandidates(ctx context.Context, tx db.Tx, currency string) ([]MatchCandidate, error) {
+	if s == nil {
+		return nil, fmt.Errorf("invoicing: list match candidates requires service")
+	}
+	return s.store.invoiceMatchCandidates(ctx, tx, currency, func(invoice Invoice) (Invoice, error) {
+		return s.computeTotals(ctx, invoice, false)
+	})
+}
+
+type invoiceMatchTotaler func(Invoice) (Invoice, error)
+
+func (s Store) invoiceMatchCandidates(ctx context.Context, tx db.Tx, currency string, totals invoiceMatchTotaler) ([]MatchCandidate, error) {
 	currency = strings.TrimSpace(currency)
 	if currency == "" {
 		return nil, nil
+	}
+	if totals == nil {
+		totals = invoiceMatchTotals
 	}
 	rows, err := tx.Query(ctx, `
 SELECT i.id, c.name, c.terms_days
 FROM invoicing.invoices i
 JOIN invoicing.clients c ON c.id = i.client_id
-WHERE i.status = 'sent'
+WHERE i.status IN ('draft', 'sent')
 	AND i.currency = $1
 	AND i.settled_date IS NULL
 	AND i.settled_amount_minor IS NULL
-ORDER BY i.issue_date, i.number, i.id`, currency)
+ORDER BY i.issue_date, i.number NULLS LAST, i.id`, currency)
 	if err != nil {
 		return nil, fmt.Errorf("invoicing: list match candidates: %w", err)
 	}
@@ -51,7 +73,7 @@ ORDER BY i.issue_date, i.number, i.id`, currency)
 		if err != nil {
 			return nil, fmt.Errorf("invoicing: load match candidate invoice %q: %w", row.invoiceID, err)
 		}
-		invoice, err = invoiceMatchTotals(invoice)
+		invoice, err = totals(invoice)
 		if err != nil {
 			return nil, fmt.Errorf("invoicing: compute match candidate invoice %q total: %w", row.invoiceID, err)
 		}

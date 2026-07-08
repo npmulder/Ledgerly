@@ -289,6 +289,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/banking/transactions/{id}/invoice-candidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List invoice candidates for manual transaction allocation
+         * @description Returns open sent invoices in the transaction currency without applying the automatic match-score threshold.
+         */
+        get: operations["bankingListInvoiceCandidates"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/banking/transactions/{id}/receipt": {
         parameters: {
             query?: never;
@@ -1547,6 +1567,9 @@ export interface components {
             state_change?: components["schemas"]["BankingStateChange"];
             transaction?: components["schemas"]["BankingTransaction"];
         };
+        BankingConfirmMatchRequest: {
+            invoice_id: string;
+        };
         BankingCreateAccountRequest: {
             /** @enum {string} */
             currency: "GBP" | "EUR";
@@ -1557,6 +1580,20 @@ export interface components {
         BankingFeedResponse: {
             next_cursor: string | null;
             transactions: components["schemas"]["BankingTransaction"][];
+        };
+        BankingInvoiceCandidate: {
+            amount: components["schemas"]["BankingMoney"];
+            client: string;
+            /** Format: date */
+            due_date: string;
+            invoice_id: string;
+            invoice_number: string;
+            /** Format: date */
+            issue_date: string;
+            status: string;
+        };
+        BankingInvoiceCandidatesResponse: {
+            candidates: components["schemas"]["BankingInvoiceCandidate"][];
         };
         BankingMoney: {
             /** Format: int64 */
@@ -1648,6 +1685,8 @@ export interface components {
             client?: string;
             id?: string;
             invoice_number?: string;
+            /** @enum {string} */
+            invoice_status?: "draft" | "sent";
             times_applied?: number | null;
             /** @enum {string} */
             type: "invoice" | "dla" | "account";
@@ -3396,7 +3435,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["BankingConfirmMatchRequest"];
+            };
+        };
         responses: {
             /** @description Command accepted */
             200: {
@@ -3611,6 +3654,65 @@ export interface operations {
                 };
             };
             /** @description Command validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    bankingListInvoiceCandidates: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Bank transaction ID. */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Invoice candidates */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BankingInvoiceCandidatesResponse"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Transaction was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Transaction state cannot be manually allocated */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Transaction is not eligible for invoice allocation */
             422: {
                 headers: {
                     [name: string]: unknown;
