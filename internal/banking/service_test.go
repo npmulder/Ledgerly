@@ -18,6 +18,8 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 
+	"github.com/npmulder/ledgerly/internal/dla"
+	"github.com/npmulder/ledgerly/internal/invoicing"
 	"github.com/npmulder/ledgerly/internal/ledger"
 	"github.com/npmulder/ledgerly/internal/moneyfx/money"
 	"github.com/npmulder/ledgerly/internal/platform/db"
@@ -990,6 +992,164 @@ func TestPayeeRuleUpdateResetsCountersWhenMatcherChanges(t *testing.T) {
 	}
 }
 
+func TestUnreconcileInvoiceMatchReversesLedgerAndClearsSettlement(t *testing.T) {
+	pool, ledgerPool := temporaryMigratedBankingDatabase(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	ledgerService := ledger.New(ledgerPool)
+	invoices := &recordingInvoiceSettlementCommands{invoiceID: "invoice-unreconcile-1"}
+	fx := &recordingUnreconcileMoneyFX{realised: money.Money{Amount: 321, Currency: "GBP"}}
+	service := NewService(
+		pool,
+		ledgerService,
+		WithLedgerJournal(ledgerService),
+		WithMoneyFX(fx),
+		WithInvoicingSettler(invoices),
+	)
+	account, err := service.CreateAccount(ctx, AccountInput{Name: "Revolut GBP", Provider: ProviderRevolut, Currency: "GBP"})
+	if err != nil {
+		t.Fatalf("CreateAccount() error = %v", err)
+	}
+	txnID := importSingleBankingTxn(t, ctx, pool, service, account.ID, revolutTestTxn{
+		Date:      time.Date(2026, 8, 1, 9, 0, 0, 0, time.UTC),
+		ID:        "undo-invoice",
+		Payee:     "Client Ltd",
+		Reference: "INV-UNDO-1",
+		Amount:    money.Money{Amount: 75000, Currency: "GBP"},
+	})
+	mustRecordSuggestion(t, ctx, service, txnID, SuggestionKindInvoiceMatch, 0.990, invoices.invoiceID, "invoice match")
+
+	if _, err := service.ConfirmMatch(ctx, txnID); err != nil {
+		t.Fatalf("ConfirmMatch() error = %v", err)
+	}
+	result, err := service.Unreconcile(ctx, txnID)
+	if err != nil {
+		t.Fatalf("Unreconcile() error = %v", err)
+	}
+	if result.Kind != SuggestionKindInvoiceMatch || result.Transaction.State != TransactionStateUnreconciled || result.StateChange.To != TransactionStateUnreconciled {
+		t.Fatalf("Unreconcile() result = %#v, want invoice match to unreconciled", result)
+	}
+	assertStoredTransactionState(t, ctx, pool, txnID, TransactionStateUnreconciled)
+	if got, want := invoices.clearedRefs, []string{bankingTxnRef(txnID)}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("cleared settlement refs = %v, want %v", got, want)
+	}
+	if got, want := fx.clearedInvoices, []string{invoices.invoiceID}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("cleared realised FX invoices = %v, want %v", got, want)
+	}
+	assertJournalSourceReversed(t, ctx, ledgerPool, ModuleName, commandSourceRef(txnID, "confirm-match"))
+	if _, err := service.Unreconcile(ctx, txnID); !errors.Is(err, ErrNotReconciled) {
+		t.Fatalf("duplicate Unreconcile() error = %v, want ErrNotReconciled", err)
+	}
+}
+
+func TestUnreconcileDLAReversesLedgerAndPresentationEntry(t *testing.T) {
+	pool, ledgerPool := temporaryMigratedBankingDatabase(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	ledgerService := ledger.New(ledgerPool)
+	dlaService := dla.New(pool, ledgerService)
+	service := NewService(
+		pool,
+		ledgerService,
+		WithLedgerJournal(ledgerService),
+		WithMoneyFX(&recordingUnreconcileMoneyFX{}),
+		WithDLAFileDrawer(dlaService),
+	)
+	account, err := service.CreateAccount(ctx, AccountInput{Name: "Revolut GBP", Provider: ProviderRevolut, Currency: "GBP"})
+	if err != nil {
+		t.Fatalf("CreateAccount() error = %v", err)
+	}
+	txnID := importSingleBankingTxn(t, ctx, pool, service, account.ID, revolutTestTxn{
+		Date:      time.Date(2026, 8, 2, 9, 0, 0, 0, time.UTC),
+		ID:        "undo-dla",
+		Payee:     "Director drawing",
+		Reference: "drawing",
+		Amount:    money.Money{Amount: -12000, Currency: "GBP"},
+	})
+	mustRecordSuggestion(t, ctx, service, txnID, SuggestionKindDLA, 0.850, "director-loan", "DLA match")
+
+	if _, err := service.FileToDLA(ctx, txnID); err != nil {
+		t.Fatalf("FileToDLA() error = %v", err)
+	}
+	result, err := service.Unreconcile(ctx, txnID)
+	if err != nil {
+		t.Fatalf("Unreconcile() error = %v", err)
+	}
+	if result.Kind != SuggestionKindDLA || result.DLAPresentationRef != commandSourceRef(txnID, "unreconcile") {
+		t.Fatalf("Unreconcile() result = %#v, want DLA presentation reversal ref", result)
+	}
+	assertStoredTransactionState(t, ctx, pool, txnID, TransactionStateUnreconciled)
+	assertJournalSourceReversed(t, ctx, ledgerPool, dla.ModuleName, bankingTxnRef(txnID))
+	assertDLABalanceForSources(t, ctx, pool, []string{bankingTxnRef(txnID), commandSourceRef(txnID, "unreconcile")}, 0)
+}
+
+func TestUnreconcileRecodeReversesLedger(t *testing.T) {
+	pool, ledgerPool := temporaryMigratedBankingDatabase(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	ledgerService := ledger.New(ledgerPool)
+	service := NewService(
+		pool,
+		ledgerService,
+		WithLedgerJournal(ledgerService),
+		WithMoneyFX(&recordingUnreconcileMoneyFX{}),
+	)
+	account, err := service.CreateAccount(ctx, AccountInput{Name: "Revolut GBP", Provider: ProviderRevolut, Currency: "GBP"})
+	if err != nil {
+		t.Fatalf("CreateAccount() error = %v", err)
+	}
+	txnID := importSingleBankingTxn(t, ctx, pool, service, account.ID, revolutTestTxn{
+		Date:      time.Date(2026, 8, 3, 9, 0, 0, 0, time.UTC),
+		ID:        "undo-recode",
+		Payee:     "Software Vendor",
+		Reference: "subscription",
+		Amount:    money.Money{Amount: -4400, Currency: "GBP"},
+	})
+	mustRecordSuggestion(t, ctx, service, txnID, SuggestionKindPayeeRule, 0.920, "5010-software", "payee rule")
+	if _, err := service.Recode(ctx, txnID, "5010-software"); err != nil {
+		t.Fatalf("Recode() error = %v", err)
+	}
+	result, err := service.Unreconcile(ctx, txnID)
+	if err != nil {
+		t.Fatalf("Unreconcile() error = %v", err)
+	}
+	if result.Kind != SuggestionKindPayeeRule || result.Transaction.State != TransactionStateUnreconciled {
+		t.Fatalf("Unreconcile() result = %#v, want payee-rule recode to unreconciled", result)
+	}
+	assertStoredTransactionState(t, ctx, pool, txnID, TransactionStateUnreconciled)
+	assertJournalSourceReversed(t, ctx, ledgerPool, ModuleName, commandSourceRef(txnID, "recode"))
+}
+
+func TestUnreconcileUnsupportedReconciliationKindIsExplicit(t *testing.T) {
+	pool, ledgerPool := temporaryMigratedBankingDatabase(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	ledgerService := ledger.New(ledgerPool)
+	service := NewService(pool, ledgerService, WithLedgerJournal(ledgerService))
+	account, err := service.CreateAccount(ctx, AccountInput{Name: "Revolut GBP", Provider: ProviderRevolut, Currency: "GBP"})
+	if err != nil {
+		t.Fatalf("CreateAccount() error = %v", err)
+	}
+	txnID := importSingleBankingTxn(t, ctx, pool, service, account.ID, revolutTestTxn{
+		Date:      time.Date(2026, 8, 4, 9, 0, 0, 0, time.UTC),
+		ID:        "undo-unsupported",
+		Payee:     "Manual",
+		Reference: "manual",
+		Amount:    money.Money{Amount: 1000, Currency: "GBP"},
+	})
+	mustTransition(t, ctx, service, txnID, TransactionStateSuggested, "manual")
+	mustTransition(t, ctx, service, txnID, TransactionStateReconciled, "manual")
+
+	if _, err := service.Unreconcile(ctx, txnID); !errors.Is(err, ErrUnsupportedReconciliation) {
+		t.Fatalf("Unreconcile() error = %v, want ErrUnsupportedReconciliation", err)
+	}
+	assertStoredTransactionState(t, ctx, pool, txnID, TransactionStateReconciled)
+}
+
 type recordingEnsurer struct {
 	calls int
 	specs []ledger.AccountSpec
@@ -1138,6 +1298,119 @@ WHERE id = $1`, int64(txnID)).Scan(&got); err != nil {
 	if TransactionState(got) != want {
 		t.Fatalf("transaction %d state = %q, want %q", txnID, got, want)
 	}
+}
+
+func assertJournalSourceReversed(t *testing.T, ctx context.Context, pool *pgxpool.Pool, sourceModule string, sourceRef string) {
+	t.Helper()
+	rows, err := pool.Query(ctx, `
+SELECT id, COALESCE(reversal_of, 0)
+FROM ledger.journal_entries
+WHERE source_module = $1
+	AND source_ref = $2
+ORDER BY id`, sourceModule, sourceRef)
+	if err != nil {
+		t.Fatalf("query journal entries for %s/%s: %v", sourceModule, sourceRef, err)
+	}
+	defer rows.Close()
+	type entry struct {
+		id         int64
+		reversalOf int64
+	}
+	var entries []entry
+	for rows.Next() {
+		var item entry
+		if err := rows.Scan(&item.id, &item.reversalOf); err != nil {
+			t.Fatalf("scan journal source entry: %v", err)
+		}
+		entries = append(entries, item)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate journal source entries: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("journal entries for %s/%s = %#v, want original and reversal", sourceModule, sourceRef, entries)
+	}
+	if entries[0].reversalOf != 0 || entries[1].reversalOf != entries[0].id {
+		t.Fatalf("journal reversal pair for %s/%s = %#v, want second reverses first", sourceModule, sourceRef, entries)
+	}
+}
+
+func assertDLABalanceForSources(t *testing.T, ctx context.Context, pool *pgxpool.Pool, sources []string, want int64) {
+	t.Helper()
+	rows, err := pool.Query(ctx, `
+SELECT kind::text, amount
+FROM dla.dla_entries
+WHERE source = ANY($1)
+ORDER BY id`, sources)
+	if err != nil {
+		t.Fatalf("query DLA entries for %v: %v", sources, err)
+	}
+	defer rows.Close()
+	var balance int64
+	var count int
+	for rows.Next() {
+		var kind string
+		var amount int64
+		if err := rows.Scan(&kind, &amount); err != nil {
+			t.Fatalf("scan DLA entry: %v", err)
+		}
+		count++
+		if kind == string(dla.EntryKindDrawing) {
+			balance -= amount
+		} else {
+			balance += amount
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate DLA entries: %v", err)
+	}
+	if count != len(sources) {
+		t.Fatalf("DLA entry count for %v = %d, want %d", sources, count, len(sources))
+	}
+	if balance != want {
+		t.Fatalf("DLA balance for %v = %d, want %d", sources, balance, want)
+	}
+}
+
+type recordingInvoiceSettlementCommands struct {
+	invoiceID   string
+	settledRefs []string
+	clearedRefs []string
+}
+
+func (r *recordingInvoiceSettlementCommands) MarkSettled(_ context.Context, _ db.Tx, id string, txnRef string, _ time.Time, _ invoicing.Money) (invoicing.Invoice, error) {
+	r.invoiceID = id
+	r.settledRefs = append(r.settledRefs, txnRef)
+	return invoicing.Invoice{ID: id}, nil
+}
+
+func (r *recordingInvoiceSettlementCommands) ClearSettlementByTxnRef(_ context.Context, _ db.Tx, txnRef string) (invoicing.Invoice, error) {
+	r.clearedRefs = append(r.clearedRefs, txnRef)
+	return invoicing.Invoice{ID: r.invoiceID}, nil
+}
+
+type recordingUnreconcileMoneyFX struct {
+	realised        money.Money
+	clearedInvoices []string
+}
+
+func (r *recordingUnreconcileMoneyFX) ToGBP(_ context.Context, value money.Money, _ time.Time) (money.Money, error) {
+	return money.Money{Amount: value.Amount, Currency: "GBP"}, nil
+}
+
+func (r *recordingUnreconcileMoneyFX) RealisedFXAmount(context.Context, db.Tx, string) (money.Money, error) {
+	if r.realised.Currency == "" {
+		return money.Money{Amount: 0, Currency: "GBP"}, nil
+	}
+	return r.realised, nil
+}
+
+func (r *recordingUnreconcileMoneyFX) ClearRealisedFX(_ context.Context, _ db.Tx, invoiceID string, _ string) (money.Money, error) {
+	r.clearedInvoices = append(r.clearedInvoices, invoiceID)
+	if r.realised.Currency == "" {
+		return money.Money{Amount: 0, Currency: "GBP"}, nil
+	}
+	return r.realised, nil
 }
 
 func hasRecentTransaction(recent []ReconciledTransaction, txnID TransactionID) bool {

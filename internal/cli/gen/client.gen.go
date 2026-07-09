@@ -3039,6 +3039,9 @@ type ClientInterface interface {
 
 	BankingUnexcludeTransaction(ctx context.Context, id int64, body BankingUnexcludeTransactionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// BankingUnreconcileTransaction request
+	BankingUnreconcileTransaction(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// DashboardGetSummary request
 	DashboardGetSummary(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -3608,6 +3611,18 @@ func (c *Client) BankingUnexcludeTransactionWithBody(ctx context.Context, id int
 
 func (c *Client) BankingUnexcludeTransaction(ctx context.Context, id int64, body BankingUnexcludeTransactionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewBankingUnexcludeTransactionRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) BankingUnreconcileTransaction(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBankingUnreconcileTransactionRequest(c.Server, id)
 	if err != nil {
 		return nil, err
 	}
@@ -5514,6 +5529,40 @@ func NewBankingUnexcludeTransactionRequestWithBody(server string, id int64, cont
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewBankingUnreconcileTransactionRequest generates requests for BankingUnreconcileTransaction
+func NewBankingUnreconcileTransactionRequest(server string, id int64) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/banking/transactions/%s/unreconcile", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -8126,6 +8175,9 @@ type ClientWithResponsesInterface interface {
 
 	BankingUnexcludeTransactionWithResponse(ctx context.Context, id int64, body BankingUnexcludeTransactionJSONRequestBody, reqEditors ...RequestEditorFn) (*BankingUnexcludeTransactionResponse, error)
 
+	// BankingUnreconcileTransactionWithResponse request
+	BankingUnreconcileTransactionWithResponse(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*BankingUnreconcileTransactionResponse, error)
+
 	// DashboardGetSummaryWithResponse request
 	DashboardGetSummaryWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*DashboardGetSummaryResponse, error)
 
@@ -8922,6 +8974,34 @@ func (r BankingUnexcludeTransactionResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r BankingUnexcludeTransactionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type BankingUnreconcileTransactionResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON200                   *BankingCommandResponse
+	ApplicationproblemJSON400 *Problem
+	ApplicationproblemJSON401 *Problem
+	ApplicationproblemJSON404 *Problem
+	ApplicationproblemJSON409 *Problem
+	ApplicationproblemJSON413 *Problem
+	ApplicationproblemJSON422 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r BankingUnreconcileTransactionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r BankingUnreconcileTransactionResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -10712,6 +10792,15 @@ func (c *ClientWithResponses) BankingUnexcludeTransactionWithResponse(ctx contex
 	return ParseBankingUnexcludeTransactionResponse(rsp)
 }
 
+// BankingUnreconcileTransactionWithResponse request returning *BankingUnreconcileTransactionResponse
+func (c *ClientWithResponses) BankingUnreconcileTransactionWithResponse(ctx context.Context, id int64, reqEditors ...RequestEditorFn) (*BankingUnreconcileTransactionResponse, error) {
+	rsp, err := c.BankingUnreconcileTransaction(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseBankingUnreconcileTransactionResponse(rsp)
+}
+
 // DashboardGetSummaryWithResponse request returning *DashboardGetSummaryResponse
 func (c *ClientWithResponses) DashboardGetSummaryWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*DashboardGetSummaryResponse, error) {
 	rsp, err := c.DashboardGetSummary(ctx, reqEditors...)
@@ -12476,6 +12565,74 @@ func ParseBankingUnexcludeTransactionResponse(rsp *http.Response) (*BankingUnexc
 	}
 
 	response := &BankingUnexcludeTransactionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest BankingCommandResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseBankingUnreconcileTransactionResponse parses an HTTP response from a BankingUnreconcileTransactionWithResponse call
+func ParseBankingUnreconcileTransactionResponse(rsp *http.Response) (*BankingUnreconcileTransactionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &BankingUnreconcileTransactionResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}

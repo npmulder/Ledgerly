@@ -761,6 +761,49 @@ RETURNING `+invoiceColumnsSQL(),
 	return updated, err
 }
 
+func (s Store) InvoiceBySettlementTxnRefForUpdate(ctx context.Context, tx db.Tx, txnRef string) (Invoice, error) {
+	invoice, err := scanInvoiceRow(tx.QueryRow(ctx, selectInvoiceSQL()+`
+WHERE settlement_txn_ref = $1
+FOR UPDATE`, txnRef))
+	if err != nil {
+		return Invoice{}, err
+	}
+	lines, err := s.InvoiceLines(ctx, tx, invoice.ID)
+	if err != nil {
+		return Invoice{}, err
+	}
+	invoice.Lines = lines
+	return invoice, nil
+}
+
+func (s Store) ClearInvoiceSettlement(ctx context.Context, tx db.Tx, id string, txnRef string) (Invoice, error) {
+	updated, err := scanInvoiceRow(tx.QueryRow(ctx, `
+UPDATE invoicing.invoices
+SET settlement_txn_ref = NULL,
+	settled_date = NULL,
+	settled_amount_minor = NULL,
+	settled_amount_currency = NULL,
+	status = 'sent',
+	updated_at = now()
+WHERE id = $1
+	AND settlement_txn_ref = $2
+	AND status = 'paid'
+RETURNING `+invoiceColumnsSQL(),
+		id,
+		txnRef,
+	))
+	if errors.Is(err, ErrInvoiceNotFound) {
+		exists, existsErr := s.invoiceExists(ctx, tx, id)
+		if existsErr != nil {
+			return Invoice{}, existsErr
+		}
+		if exists {
+			return Invoice{}, ErrInvoiceImmutable
+		}
+	}
+	return updated, err
+}
+
 func (s Store) RevertSentToDraft(ctx context.Context, tx db.Tx, id string) (Invoice, error) {
 	updated, err := scanInvoiceRow(tx.QueryRow(ctx, `
 UPDATE invoicing.invoices

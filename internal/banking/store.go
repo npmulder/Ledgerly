@@ -343,6 +343,38 @@ RETURNING id, txn_id, from_state, to_state, changed_at, actor`,
 	))
 }
 
+func (Store) unreconcileTransactionLocked(ctx context.Context, tx db.Tx, txn Transaction, actor string) (TransactionStateChange, error) {
+	actor = strings.TrimSpace(actor)
+	if actor == "" {
+		return TransactionStateChange{}, fmt.Errorf("banking: unreconcile actor is required: %w", ErrInvalidStateTransition)
+	}
+	if txn.State != TransactionStateReconciled {
+		return TransactionStateChange{}, &InvalidStateTransitionError{
+			TransactionID: txn.ID,
+			From:          txn.State,
+			To:            TransactionStateUnreconciled,
+		}
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE transactions
+SET state = $2
+WHERE id = $1`,
+		int64(txn.ID),
+		string(TransactionStateUnreconciled),
+	); err != nil {
+		return TransactionStateChange{}, fmt.Errorf("banking: unreconcile transaction %d state: %w", txn.ID, err)
+	}
+	return scanStateChangeRow(tx.QueryRow(ctx, `
+INSERT INTO transaction_state_changes (txn_id, from_state, to_state, actor)
+VALUES ($1, $2, $3, $4)
+RETURNING id, txn_id, from_state, to_state, changed_at, actor`,
+		int64(txn.ID),
+		string(TransactionStateReconciled),
+		string(TransactionStateUnreconciled),
+		actor,
+	))
+}
+
 func (s Store) InsertSuggestion(ctx context.Context, tx db.Tx, input SuggestionInput) (Suggestion, error) {
 	normalized, err := normalizeSuggestionInput(input)
 	if err != nil {

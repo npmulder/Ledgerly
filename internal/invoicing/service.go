@@ -875,6 +875,30 @@ func (s *Service) markSettledLocked(ctx context.Context, tx db.Tx, invoice Invoi
 	return settled, nil
 }
 
+// ClearSettlementByTxnRef clears a banking-origin settlement inside the
+// caller's transaction and returns the invoice to sent.
+func (s *Service) ClearSettlementByTxnRef(ctx context.Context, tx db.Tx, txnRef string) (Invoice, error) {
+	if tx == nil {
+		return Invoice{}, fmt.Errorf("invoicing: clear settlement requires transaction")
+	}
+	normalizedRef := strings.TrimSpace(txnRef)
+	if normalizedRef == "" {
+		return Invoice{}, invoiceValidationError([]FieldError{{Pointer: "/settlement_txn_ref", Detail: "is required"}})
+	}
+
+	invoice, err := s.store.InvoiceBySettlementTxnRefForUpdate(ctx, tx, normalizedRef)
+	if err != nil {
+		return Invoice{}, err
+	}
+	cleared, err := s.store.ClearInvoiceSettlement(ctx, tx, invoice.ID, normalizedRef)
+	if err != nil {
+		return Invoice{}, err
+	}
+	cleared.Lines = invoice.Lines
+	cleared.VATRegistered = invoice.VATRegistered
+	return s.withComputedTotals(ctx, cleared)
+}
+
 // RevertToDraft unsends a same-day, unsettled invoice by reversing the send
 // ledger entry and returning the invoice to draft. The previous invoice number
 // is deliberately not reused: the numbering row is left advanced, the draft's

@@ -124,6 +124,10 @@ export function recodeBankingTransaction(
   });
 }
 
+export function unreconcileBankingTransaction(transactionID: number) {
+  return apiClient.post(transactionCommandPath(transactionID, "unreconcile"));
+}
+
 export function excludeBankingTransaction(
   transactionID: number,
   reason: string,
@@ -147,7 +151,7 @@ function payeeRulePath(ruleID: number) {
 
 function transactionCommandPath(
   transactionID: number,
-  command: "confirm" | "exclude" | "file-dla" | "recode",
+  command: "confirm" | "exclude" | "file-dla" | "recode" | "unreconcile",
 ) {
   return `/api/banking/transactions/${encodeURIComponent(
     String(transactionID),
@@ -155,7 +159,8 @@ function transactionCommandPath(
     | "/api/banking/transactions/{id}/confirm"
     | "/api/banking/transactions/{id}/exclude"
     | "/api/banking/transactions/{id}/file-dla"
-    | "/api/banking/transactions/{id}/recode";
+    | "/api/banking/transactions/{id}/recode"
+    | "/api/banking/transactions/{id}/unreconcile";
 }
 
 function transactionInvoiceCandidatesPath(transactionID: number) {

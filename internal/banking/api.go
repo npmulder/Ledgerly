@@ -70,25 +70,27 @@ const (
 )
 
 var (
-	ErrInvalidAccount           = errors.New("banking: invalid account")
-	ErrUnsupportedProvider      = errors.New("banking: unsupported provider")
-	ErrUnsupportedCurrency      = errors.New("banking: unsupported currency")
-	ErrAccountNotFound          = errors.New("banking: account not found")
-	ErrTransactionNotFound      = errors.New("banking: transaction not found")
-	ErrInvalidImport            = errors.New("banking: invalid import")
-	ErrCurrencyMismatch         = errors.New("banking: currency mismatch")
-	ErrInvalidStateTransition   = errors.New("banking: invalid transaction state transition")
-	ErrInvalidSuggestion        = errors.New("banking: invalid suggestion")
-	ErrInvalidPayeeRule         = errors.New("banking: invalid payee rule")
-	ErrInvalidTransactionFilter = errors.New("banking: invalid transaction filter")
-	ErrSuggestionNotFound       = errors.New("banking: suggestion not found")
-	ErrPayeeRuleNotFound        = errors.New("banking: payee rule not found")
-	ErrInvalidReconciliation    = errors.New("banking: invalid reconciliation")
-	ErrAlreadyReconciled        = errors.New("banking: already reconciled")
-	ErrReceiptNotFound          = errors.New("banking: receipt not found")
-	ErrInvalidReceipt           = errors.New("banking: invalid receipt")
-	ErrReceiptTooLarge          = errors.New("banking: receipt exceeds maximum size")
-	ErrUnsupportedReceipt       = errors.New("banking: unsupported receipt MIME type")
+	ErrInvalidAccount            = errors.New("banking: invalid account")
+	ErrUnsupportedProvider       = errors.New("banking: unsupported provider")
+	ErrUnsupportedCurrency       = errors.New("banking: unsupported currency")
+	ErrAccountNotFound           = errors.New("banking: account not found")
+	ErrTransactionNotFound       = errors.New("banking: transaction not found")
+	ErrInvalidImport             = errors.New("banking: invalid import")
+	ErrCurrencyMismatch          = errors.New("banking: currency mismatch")
+	ErrInvalidStateTransition    = errors.New("banking: invalid transaction state transition")
+	ErrInvalidSuggestion         = errors.New("banking: invalid suggestion")
+	ErrInvalidPayeeRule          = errors.New("banking: invalid payee rule")
+	ErrInvalidTransactionFilter  = errors.New("banking: invalid transaction filter")
+	ErrSuggestionNotFound        = errors.New("banking: suggestion not found")
+	ErrPayeeRuleNotFound         = errors.New("banking: payee rule not found")
+	ErrInvalidReconciliation     = errors.New("banking: invalid reconciliation")
+	ErrAlreadyReconciled         = errors.New("banking: already reconciled")
+	ErrNotReconciled             = errors.New("banking: transaction is not reconciled")
+	ErrUnsupportedReconciliation = errors.New("banking: unsupported reconciliation kind")
+	ErrReceiptNotFound           = errors.New("banking: receipt not found")
+	ErrInvalidReceipt            = errors.New("banking: invalid receipt")
+	ErrReceiptTooLarge           = errors.New("banking: receipt exceeds maximum size")
+	ErrUnsupportedReceipt        = errors.New("banking: unsupported receipt MIME type")
 )
 
 // LedgerAccountEnsurer is the ledger capability banking needs when creating
@@ -106,7 +108,9 @@ type LedgerAccountCatalog interface {
 // LedgerJournal is the ledger posting capability used by reconciliation
 // commands. ledger.Service satisfies this interface.
 type LedgerJournal interface {
+	EntryBySource(context.Context, db.Tx, string, string) (ledger.JournalEntry, error)
 	Post(context.Context, db.Tx, ledger.NewJournalEntry) (ledger.EntryID, error)
+	Reverse(context.Context, db.Tx, ledger.EntryID, string) (ledger.EntryID, error)
 }
 
 // MoneyFX supplies transaction-date GBP conversion and same-transaction
@@ -117,10 +121,15 @@ type MoneyFX interface {
 	RealisedFXAmount(context.Context, db.Tx, string) (money.Money, error)
 }
 
+type realisedFXClearer interface {
+	ClearRealisedFX(context.Context, db.Tx, string, string) (money.Money, error)
+}
+
 // InvoiceSettler is the invoicing command banking calls when confirming an
 // invoice match. invoicing.Service satisfies this interface.
 type InvoiceSettler interface {
 	MarkSettled(context.Context, db.Tx, string, string, time.Time, invoicing.Money) (invoicing.Invoice, error)
+	ClearSettlementByTxnRef(context.Context, db.Tx, string) (invoicing.Invoice, error)
 }
 
 type invoiceMatchSettler interface {
@@ -135,6 +144,7 @@ type invoicePDFScheduler interface {
 // transaction as a director drawing. dla.Service satisfies this interface.
 type DLAFileDrawer interface {
 	FileDrawing(context.Context, db.Tx, dla.TxnRef) error
+	RecordExternalCredit(context.Context, db.Tx, string, time.Time, money.Money, string) error
 }
 
 // ReceiptAssetStore persists immutable receipt bytes outside the banking
@@ -318,6 +328,16 @@ type RecodeResult struct {
 	Rule        PayeeRule
 }
 
+type UnreconcileResult struct {
+	Transaction        Transaction
+	Kind               SuggestionKind
+	StateChange        TransactionStateChange
+	ReversedEntryIDs   []ledger.EntryID
+	ClearedRealisedFX  money.Money
+	ClearedInvoiceID   string
+	DLAPresentationRef string
+}
+
 type AlreadyReconciledError struct {
 	TransactionID TransactionID
 	State         TransactionState
@@ -338,6 +358,40 @@ func (e *AlreadyReconciledError) Error() string {
 
 func (e *AlreadyReconciledError) Unwrap() error {
 	return ErrAlreadyReconciled
+}
+
+type NotReconciledError struct {
+	TransactionID TransactionID
+	State         TransactionState
+}
+
+func (e *NotReconciledError) Error() string {
+	if e == nil || e.TransactionID <= 0 {
+		return ErrNotReconciled.Error()
+	}
+	if e.State == "" {
+		return fmt.Sprintf("banking: transaction %d is not reconciled", e.TransactionID)
+	}
+	return fmt.Sprintf("banking: transaction %d is %s, not reconciled", e.TransactionID, e.State)
+}
+
+func (e *NotReconciledError) Unwrap() error {
+	return ErrNotReconciled
+}
+
+type UnsupportedReconciliationError struct {
+	TransactionID TransactionID
+}
+
+func (e *UnsupportedReconciliationError) Error() string {
+	if e == nil || e.TransactionID <= 0 {
+		return ErrUnsupportedReconciliation.Error()
+	}
+	return fmt.Sprintf("banking: transaction %d reconciliation kind cannot be undone", e.TransactionID)
+}
+
+func (e *UnsupportedReconciliationError) Unwrap() error {
+	return ErrUnsupportedReconciliation
 }
 
 type ImportFile struct {

@@ -335,9 +335,20 @@ WHERE id = $1`,
 type realisedFXStore interface {
 	InsertRealisedFX(ctx context.Context, tx db.Tx, record newRealisedFX) (bool, error)
 	RealisedFXAmount(ctx context.Context, tx db.Tx, invoiceID string) (money.Money, error)
+	RealisedFXForUpdate(ctx context.Context, tx db.Tx, invoiceID string) (realisedFXRecord, error)
+	DeleteRealisedFX(ctx context.Context, tx db.Tx, id int64) error
 }
 
 type newRealisedFX struct {
+	InvoiceID      string
+	LockID         LockID
+	SettlementDate time.Time
+	AmountGBP      money.Money
+	SourceRef      string
+}
+
+type realisedFXRecord struct {
+	ID             int64
 	InvoiceID      string
 	LockID         LockID
 	SettlementDate time.Time
@@ -402,6 +413,58 @@ LIMIT 1`, normalizedInvoiceID).Scan(&amount); err != nil {
 		return money.Money{}, fmt.Errorf("moneyfx: realised FX lookup for invoice %s: %w", normalizedInvoiceID, err)
 	}
 	return money.Money{Amount: amount, Currency: "GBP"}, nil
+}
+
+// RealisedFXForUpdate locks the newest realised-FX dedupe row for invoiceID.
+func (s Store) RealisedFXForUpdate(ctx context.Context, tx db.Tx, invoiceID string) (realisedFXRecord, error) {
+	if tx == nil {
+		return realisedFXRecord{}, fmt.Errorf("moneyfx: realised FX lookup requires transaction")
+	}
+	normalizedInvoiceID := strings.TrimSpace(invoiceID)
+	if normalizedInvoiceID == "" {
+		return realisedFXRecord{}, fmt.Errorf("moneyfx: realised FX invoice id is required")
+	}
+
+	var record realisedFXRecord
+	var amount int64
+	if err := tx.QueryRow(ctx, `
+SELECT id, invoice_id, lock_id, settlement_date, amount_gbp, source_ref
+FROM moneyfx.realised_fx
+WHERE invoice_id = $1
+ORDER BY id DESC
+LIMIT 1
+FOR UPDATE`, normalizedInvoiceID).Scan(
+		&record.ID,
+		&record.InvoiceID,
+		&record.LockID,
+		&record.SettlementDate,
+		&amount,
+		&record.SourceRef,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return realisedFXRecord{}, fmt.Errorf("moneyfx: realised FX for invoice %s: %w", normalizedInvoiceID, ErrRealisedFXNotFound)
+		}
+		return realisedFXRecord{}, fmt.Errorf("moneyfx: realised FX lookup for invoice %s: %w", normalizedInvoiceID, err)
+	}
+	record.AmountGBP = money.Money{Amount: amount, Currency: "GBP"}
+	return record, nil
+}
+
+// DeleteRealisedFX removes a dedupe row after its ledger effect has been reversed.
+func (s Store) DeleteRealisedFX(ctx context.Context, tx db.Tx, id int64) error {
+	if tx == nil {
+		return fmt.Errorf("moneyfx: delete realised FX requires transaction")
+	}
+	tag, err := tx.Exec(ctx, `
+DELETE FROM moneyfx.realised_fx
+WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("moneyfx: delete realised FX %d: %w", id, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("moneyfx: realised FX %d: %w", id, ErrRealisedFXNotFound)
+	}
+	return nil
 }
 
 func normalizeNewRealisedFX(record newRealisedFX) (newRealisedFX, error) {

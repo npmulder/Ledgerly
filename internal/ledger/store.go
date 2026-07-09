@@ -225,6 +225,44 @@ FROM ledger.journal_entry($1)`, int64(id)).
 	return entry, nil
 }
 
+// JournalEntryBySource loads the latest original entry with a source module/ref.
+func (Store) JournalEntryBySource(ctx context.Context, tx db.Tx, sourceModule string, sourceRef string) (JournalEntry, error) {
+	var (
+		entry      JournalEntry
+		reversalOf pgtype.Int8
+	)
+	if err := tx.QueryRow(ctx, `
+SELECT id, entry_date, description, source_module, source_ref, reversal_of, created_at
+FROM ledger.journal_entry_by_source($1, $2)`,
+		sourceModule,
+		sourceRef,
+	).Scan(
+		&entry.ID,
+		&entry.Date,
+		&entry.Description,
+		&entry.SourceModule,
+		&entry.SourceRef,
+		&reversalOf,
+		&entry.CreatedAt,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return JournalEntry{}, fmt.Errorf("ledger: source %s/%s: %w", sourceModule, sourceRef, ErrEntryNotFound)
+		}
+		return JournalEntry{}, fmt.Errorf("ledger: load journal entry source %s/%s: %w", sourceModule, sourceRef, err)
+	}
+	if reversalOf.Valid {
+		reversedID := EntryID(reversalOf.Int64)
+		entry.ReversalOf = &reversedID
+	}
+
+	postings, err := loadPostings(ctx, tx, entry.ID)
+	if err != nil {
+		return JournalEntry{}, err
+	}
+	entry.Postings = postings
+	return entry, nil
+}
+
 // HasReversal reports whether id already has a reversing entry.
 func (Store) HasReversal(ctx context.Context, tx db.Tx, id EntryID) (bool, error) {
 	var exists bool

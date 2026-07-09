@@ -78,6 +78,43 @@ func (m *Module) RealisedFXAmount(ctx context.Context, tx db.Tx, invoiceID strin
 	return m.service.RealisedFXAmount(ctx, tx, invoiceID)
 }
 
+// ClearRealisedFX reverses any realised-FX ledger entry and clears the
+// settlement dedupe row inside the caller's transaction.
+func (m *Module) ClearRealisedFX(ctx context.Context, tx db.Tx, invoiceID string, reason string) (money.Money, error) {
+	if m == nil || m.service == nil || m.service.realised == nil {
+		return money.Money{}, fmt.Errorf("moneyfx: realised FX store is required")
+	}
+	if tx == nil {
+		return money.Money{}, fmt.Errorf("moneyfx: clear realised FX requires transaction")
+	}
+	record, err := m.service.realised.RealisedFXForUpdate(ctx, tx, invoiceID)
+	if err != nil {
+		return money.Money{}, err
+	}
+	if !record.AmountGBP.IsZero() {
+		reverser, ok := m.ledger.(ledgerSourceReverser)
+		if !ok || reverser == nil {
+			return money.Money{}, fmt.Errorf("moneyfx: clear realised FX requires ledger source lookup")
+		}
+		entry, err := reverser.EntryBySource(ctx, tx, ModuleName, record.SourceRef)
+		if err != nil {
+			return money.Money{}, fmt.Errorf("moneyfx: clear realised FX ledger lookup: %w", err)
+		}
+		if _, err := reverser.Reverse(ctx, tx, entry.ID, reason); err != nil {
+			return money.Money{}, fmt.Errorf("moneyfx: reverse realised FX ledger entry: %w", err)
+		}
+	}
+	if err := m.service.realised.DeleteRealisedFX(ctx, tx, record.ID); err != nil {
+		return money.Money{}, err
+	}
+	return record.AmountGBP, nil
+}
+
+type ledgerSourceReverser interface {
+	EntryBySource(context.Context, db.Tx, string, string) (ledger.JournalEntry, error)
+	Reverse(context.Context, db.Tx, ledger.EntryID, string) (ledger.EntryID, error)
+}
+
 // HTTPModule returns the platform route mount for this module.
 func (m *Module) HTTPModule() httpserver.Module {
 	return httpserver.Module{

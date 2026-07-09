@@ -1173,6 +1173,10 @@ func (s *candidateProviderSettler) MarkSettled(context.Context, db.Tx, string, s
 	return invoicing.Invoice{}, nil
 }
 
+func (s *candidateProviderSettler) ClearSettlementByTxnRef(context.Context, db.Tx, string) (invoicing.Invoice, error) {
+	return invoicing.Invoice{}, nil
+}
+
 func (s *candidateProviderSettler) InvoiceMatchCandidates(context.Context, db.Tx, string) ([]invoicing.MatchCandidate, error) {
 	s.calls++
 	return append([]invoicing.MatchCandidate{}, s.candidates...), nil

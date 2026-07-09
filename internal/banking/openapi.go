@@ -183,6 +183,7 @@ func OpenAPIFragment() httpserver.OpenAPIFragment {
 			"/api/banking/transactions/{id}/confirm":            bankingCommandPath("bankingConfirmTransaction", "Confirm an invoice match", bankingOptionalJSONRequestBodyRef("BankingConfirmMatchRequest"), "BankingCommandResponse"),
 			"/api/banking/transactions/{id}/file-dla":           bankingCommandPath("bankingFileTransactionToDLA", "File a transaction to the DLA", nil, "BankingCommandResponse"),
 			"/api/banking/transactions/{id}/recode":             bankingCommandPath("bankingRecodeTransaction", "Recode a transaction to an expense account", bankingJSONRequestBodyRef("BankingRecodeRequest"), "BankingCommandResponse"),
+			"/api/banking/transactions/{id}/unreconcile":        bankingCommandPath("bankingUnreconcileTransaction", "Un-reconcile a transaction", nil, "BankingCommandResponse"),
 			"/api/banking/transactions/{id}/exclude":            bankingCommandPath("bankingExcludeTransaction", "Exclude a transaction", bankingJSONRequestBodyRef("BankingReasonRequest"), "BankingCommandResponse"),
 			"/api/banking/transactions/{id}/unexclude":          bankingCommandPath("bankingUnexcludeTransaction", "Unexclude a transaction", bankingOptionalJSONRequestBodyRef("BankingReasonRequest"), "BankingCommandResponse"),
 			"/api/banking/transactions/{id}/receipt":            bankingReceiptPath(),

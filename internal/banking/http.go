@@ -237,6 +237,7 @@ func (m *Module) RegisterRoutes(r chi.Router) {
 	r.Post("/transactions/{id}/confirm", h.confirmTransaction)
 	r.Post("/transactions/{id}/file-dla", h.fileTransactionToDLA)
 	r.Post("/transactions/{id}/recode", h.recodeTransaction)
+	r.Post("/transactions/{id}/unreconcile", h.unreconcileTransaction)
 	r.Post("/transactions/{id}/exclude", h.excludeTransaction)
 	r.Post("/transactions/{id}/unexclude", h.unexcludeTransaction)
 	r.Put("/transactions/{id}/receipt", h.putReceipt)
@@ -614,6 +615,29 @@ func (h bankingHandler) recodeTransaction(w nethttp.ResponseWriter, r *nethttp.R
 		Transaction: &transaction,
 		Kind:        cardKindForSuggestion(result.Kind),
 		Rule:        &rule,
+	})
+}
+
+func (h bankingHandler) unreconcileTransaction(w nethttp.ResponseWriter, r *nethttp.Request) {
+	txnID, ok := transactionIDParam(w, r)
+	if !ok {
+		return
+	}
+	result, err := h.service.Unreconcile(r.Context(), txnID)
+	if err != nil {
+		writeBankingError(w, r, err)
+		return
+	}
+	transaction, err := h.transactionToResponse(r.Context(), result.Transaction)
+	if err != nil {
+		writeBankingError(w, r, err)
+		return
+	}
+	stateChange := stateChangeToResponse(result.StateChange)
+	writeBankingJSON(w, nethttp.StatusOK, commandResponse{
+		Transaction: &transaction,
+		Kind:        cardKindForSuggestion(result.Kind),
+		StateChange: &stateChange,
 	})
 }
 
@@ -1291,7 +1315,7 @@ func bankingProblemForError(err error) (httpserver.Problem, bool) {
 		return validationProblemWithRows(err.Error(), rows), true
 	}
 	switch {
-	case errors.Is(err, ErrAlreadyReconciled):
+	case errors.Is(err, ErrAlreadyReconciled), errors.Is(err, ErrNotReconciled):
 		return httpserver.Problem{
 			Type:   problemTypeBankingConflict,
 			Title:  nethttp.StatusText(nethttp.StatusConflict),
@@ -1340,6 +1364,7 @@ func bankingProblemForError(err error) (httpserver.Problem, bool) {
 		errors.Is(err, ErrCurrencyMismatch),
 		errors.Is(err, ErrInvalidSuggestion),
 		errors.Is(err, ErrInvalidPayeeRule),
+		errors.Is(err, ErrUnsupportedReconciliation),
 		errors.Is(err, ErrInvalidReconciliation),
 		errors.Is(err, ErrInvalidReceipt):
 		return httpserver.Problem{
