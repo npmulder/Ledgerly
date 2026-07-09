@@ -58,3 +58,25 @@ func TestModulesAndRoles(t *testing.T) {
 		t.Fatal("Modules() missing audit module")
 	}
 }
+
+func TestHistoricalMigrationChecksumCompatibility(t *testing.T) {
+	migration := migrationFile{
+		AppliedMigration: AppliedMigration{
+			Module:   "identity",
+			Filename: "003_company_profile.sql",
+			Checksum: "61daeee584c6c6e407bfae57d02338d561ae56674d71fd7f2b141bbb9e59df68",
+		},
+	}
+
+	if !isHistoricalMigrationChecksum(migration, "8feff29291685754dc96a2955b89167fe25d73b198a091fbbcb5a11a0fa3af6a") {
+		t.Fatal("old identity/003 checksum was rejected, want compatibility")
+	}
+	if isHistoricalMigrationChecksum(migration, "not-a-real-checksum") {
+		t.Fatal("unknown checksum was accepted, want mismatch rejection")
+	}
+
+	migration.Module = "ledger"
+	if isHistoricalMigrationChecksum(migration, "8feff29291685754dc96a2955b89167fe25d73b198a091fbbcb5a11a0fa3af6a") {
+		t.Fatal("checksum was accepted for wrong module")
+	}
+}

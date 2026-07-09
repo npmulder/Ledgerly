@@ -21,6 +21,7 @@ import (
 const (
 	migrationAdvisoryLockKey        int64 = 240247
 	clusterMigrationAdvisoryLockKey int64 = 0x6c65646765726c79
+	devSeedDataSetting                    = "ledgerly.seed_dev_data"
 )
 
 // AppliedMigration describes a migration applied by this run.
@@ -35,14 +36,52 @@ type migrationFile struct {
 	SQL string
 }
 
+type migrationKey struct {
+	module   string
+	filename string
+}
+
+type migrationConfig struct {
+	seedDevData bool
+}
+
+var historicalMigrationChecksums = map[migrationKey]map[string]struct{}{
+	// CV-338 rewrites dev-only seed blocks to use explicit migration runner
+	// state. Databases that already applied the old files can safely keep their
+	// recorded checksums; fresh installs apply the new SQL.
+	{module: "identity", filename: "003_company_profile.sql"}: {
+		"8feff29291685754dc96a2955b89167fe25d73b198a091fbbcb5a11a0fa3af6a": {},
+	},
+	{module: "identity", filename: "004_assets.sql"}: {
+		"b23a5221da9deea627b01e30433a6fdf19d3ae4af05088b262df7829eea74c87": {},
+	},
+}
+
+// MigrationOption customizes migration execution.
+type MigrationOption func(*migrationConfig)
+
+// WithDevSeedData enables development/test-only seed data in migrations.
+func WithDevSeedData() MigrationOption {
+	return func(cfg *migrationConfig) {
+		cfg.seedDevData = true
+	}
+}
+
 // MigrateDir applies migrations from a filesystem directory.
-func MigrateDir(ctx context.Context, pool *pgxpool.Pool, dir string) ([]AppliedMigration, error) {
-	return MigrateFS(ctx, pool, os.DirFS(dir))
+func MigrateDir(ctx context.Context, pool *pgxpool.Pool, dir string, opts ...MigrationOption) ([]AppliedMigration, error) {
+	return MigrateFS(ctx, pool, os.DirFS(dir), opts...)
 }
 
 // MigrateFS applies module migrations from fsys. The root must contain one
 // directory per Ledgerly database module.
-func MigrateFS(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) (applied []AppliedMigration, err error) {
+func MigrateFS(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS, opts ...MigrationOption) (applied []AppliedMigration, err error) {
+	cfg := migrationConfig{}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&cfg)
+		}
+	}
+
 	clusterLockConn, err := acquireClusterMigrationLock(ctx, pool)
 	if err != nil {
 		return nil, err
@@ -87,7 +126,7 @@ func MigrateFS(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) (applied []A
 	}
 
 	for _, migration := range plan {
-		didApply, err := applyMigration(ctx, conn, migration)
+		didApply, err := applyMigration(ctx, conn, migration, cfg)
 		if err != nil {
 			return nil, err
 		}
@@ -269,7 +308,7 @@ func readMigrationPlan(fsys fs.FS) ([]migrationFile, error) {
 	return plan, nil
 }
 
-func applyMigration(ctx context.Context, conn *pgxpool.Conn, migration migrationFile) (bool, error) {
+func applyMigration(ctx context.Context, conn *pgxpool.Conn, migration migrationFile, cfg migrationConfig) (bool, error) {
 	var existingChecksum string
 	err := conn.QueryRow(
 		ctx,
@@ -278,7 +317,7 @@ func applyMigration(ctx context.Context, conn *pgxpool.Conn, migration migration
 		migration.Filename,
 	).Scan(&existingChecksum)
 	if err == nil {
-		if existingChecksum != migration.Checksum {
+		if existingChecksum != migration.Checksum && !isHistoricalMigrationChecksum(migration, existingChecksum) {
 			return false, fmt.Errorf("migration checksum changed for %s/%s", migration.Module, migration.Filename)
 		}
 		return false, nil
@@ -295,6 +334,9 @@ func applyMigration(ctx context.Context, conn *pgxpool.Conn, migration migration
 		_ = tx.Rollback(ctx)
 	}()
 
+	if _, err := tx.Exec(ctx, "SELECT set_config($1, $2, true)", devSeedDataSetting, migrationBool(cfg.seedDevData)); err != nil {
+		return false, fmt.Errorf("configure migration %s/%s dev seed setting: %w", migration.Module, migration.Filename, err)
+	}
 	if _, err := tx.Exec(ctx, migration.SQL); err != nil {
 		return false, fmt.Errorf("apply migration %s/%s: %w", migration.Module, migration.Filename, err)
 	}
@@ -312,4 +354,23 @@ func applyMigration(ctx context.Context, conn *pgxpool.Conn, migration migration
 	}
 
 	return true, nil
+}
+
+func isHistoricalMigrationChecksum(migration migrationFile, checksum string) bool {
+	accepted := historicalMigrationChecksums[migrationKey{
+		module:   migration.Module,
+		filename: migration.Filename,
+	}]
+	if accepted == nil {
+		return false
+	}
+	_, ok := accepted[checksum]
+	return ok
+}
+
+func migrationBool(value bool) string {
+	if value {
+		return "on"
+	}
+	return "off"
 }

@@ -54,6 +54,57 @@ func TestRunRejectsUnexpectedArguments(t *testing.T) {
 	}
 }
 
+func TestMigrationOptionsDevSeedDataDefaultsToLocalDevOnly(t *testing.T) {
+	unsetEnvForTest(t, devSeedDataEnv, "LEDGERLY_ENV")
+
+	opts, err := migrationOptions(true)
+	if err != nil {
+		t.Fatalf("migrationOptions(default dev) error = %v", err)
+	}
+	if len(opts) != 1 {
+		t.Fatalf("migrationOptions(default dev) len = %d, want dev seed option", len(opts))
+	}
+
+	opts, err = migrationOptions(false)
+	if err != nil {
+		t.Fatalf("migrationOptions(explicit URL) error = %v", err)
+	}
+	if len(opts) != 0 {
+		t.Fatalf("migrationOptions(explicit URL) len = %d, want no dev seed option", len(opts))
+	}
+}
+
+func TestMigrationOptionsDevSeedDataExplicitEnvironment(t *testing.T) {
+	unsetEnvForTest(t, devSeedDataEnv, "LEDGERLY_ENV")
+
+	t.Setenv("LEDGERLY_ENV", "dev")
+	opts, err := migrationOptions(false)
+	if err != nil {
+		t.Fatalf("migrationOptions(LEDGERLY_ENV=dev) error = %v", err)
+	}
+	if len(opts) != 1 {
+		t.Fatalf("migrationOptions(LEDGERLY_ENV=dev) len = %d, want dev seed option", len(opts))
+	}
+
+	t.Setenv(devSeedDataEnv, "false")
+	opts, err = migrationOptions(true)
+	if err != nil {
+		t.Fatalf("migrationOptions(%s=false) error = %v", devSeedDataEnv, err)
+	}
+	if len(opts) != 0 {
+		t.Fatalf("migrationOptions(%s=false) len = %d, want no dev seed option", devSeedDataEnv, len(opts))
+	}
+}
+
+func TestMigrationOptionsRejectInvalidDevSeedDataOverride(t *testing.T) {
+	unsetEnvForTest(t, devSeedDataEnv, "LEDGERLY_ENV")
+	t.Setenv(devSeedDataEnv, "sometimes")
+
+	if _, err := migrationOptions(false); err == nil || !strings.Contains(err.Error(), "invalid "+devSeedDataEnv) {
+		t.Fatalf("migrationOptions(invalid override) error = %v, want invalid %s", err, devSeedDataEnv)
+	}
+}
+
 func TestRunRejectsInvalidCheckArguments(t *testing.T) {
 	var stdout bytes.Buffer
 	err := run(context.Background(), []string{"check"}, &stdout)
@@ -215,6 +266,28 @@ func TestRunServeFailsOnMalformedJurisdictionPack(t *testing.T) {
 		if !strings.Contains(message, want) {
 			t.Fatalf("run() error = %q, want text %q", message, want)
 		}
+	}
+}
+
+func unsetEnvForTest(t *testing.T, keys ...string) {
+	t.Helper()
+
+	for _, key := range keys {
+		value, ok := os.LookupEnv(key)
+		if err := os.Unsetenv(key); err != nil {
+			t.Fatalf("unset %s: %v", key, err)
+		}
+		t.Cleanup(func() {
+			if ok {
+				if err := os.Setenv(key, value); err != nil {
+					t.Fatalf("restore %s: %v", key, err)
+				}
+				return
+			}
+			if err := os.Unsetenv(key); err != nil {
+				t.Fatalf("restore unset %s: %v", key, err)
+			}
+		})
 	}
 }
 

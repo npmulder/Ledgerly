@@ -13,13 +13,9 @@ CREATE INDEX IF NOT EXISTS assets_sha256_idx ON identity.assets (sha256);
 
 GRANT ALL PRIVILEGES ON TABLE identity.assets TO ledgerly_identity;
 
-DO $ledgerly_seed$
+DO $ledgerly_dev_seed$
 BEGIN
-	IF current_database() = 'ledgerly_dev'
-		OR current_database() = 'ledgerly_test'
-		OR current_database() LIKE 'ledgerly\_test\_%' ESCAPE '\'
-		OR current_database() LIKE '%\_test' ESCAPE '\'
-	THEN
+	IF current_setting('ledgerly.seed_dev_data', true) = 'on' THEN
 		INSERT INTO identity.assets (
 			id,
 			sha256,
@@ -41,7 +37,7 @@ BEGIN
 			AND logo_asset_id IS NULL;
 	END IF;
 END
-$ledgerly_seed$;
+$ledgerly_dev_seed$;
 
 ALTER TABLE identity.company_profile
 	ADD CONSTRAINT company_profile_logo_asset_id_fk
