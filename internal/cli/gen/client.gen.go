@@ -1816,6 +1816,34 @@ type ReportsArchiveRef struct {
 	Url         string    `json:"url"`
 }
 
+// ReportsBalanceSheetLine defines model for ReportsBalanceSheetLine.
+type ReportsBalanceSheetLine struct {
+	AccountCode string       `json:"account_code"`
+	AccountName string       `json:"account_name"`
+	Amount      ReportsMoney `json:"amount"`
+}
+
+// ReportsBalanceSheetResponse defines model for ReportsBalanceSheetResponse.
+type ReportsBalanceSheetResponse struct {
+	AsOf                      openapi_types.Date         `json:"as_of"`
+	Assets                    ReportsBalanceSheetSection `json:"assets"`
+	Balanced                  bool                       `json:"balanced"`
+	Equity                    ReportsBalanceSheetSection `json:"equity"`
+	FinancialYear             string                     `json:"financial_year"`
+	Liabilities               ReportsBalanceSheetSection `json:"liabilities"`
+	TotalAssets               ReportsMoney               `json:"total_assets"`
+	TotalEquity               ReportsMoney               `json:"total_equity"`
+	TotalLiabilities          ReportsMoney               `json:"total_liabilities"`
+	TotalLiabilitiesAndEquity ReportsMoney               `json:"total_liabilities_and_equity"`
+}
+
+// ReportsBalanceSheetSection defines model for ReportsBalanceSheetSection.
+type ReportsBalanceSheetSection struct {
+	Label string                    `json:"label"`
+	Lines []ReportsBalanceSheetLine `json:"lines"`
+	Total ReportsMoney              `json:"total"`
+}
+
 // ReportsExpenseLine defines model for ReportsExpenseLine.
 type ReportsExpenseLine struct {
 	AccountCode string       `json:"account_code"`
@@ -2079,6 +2107,12 @@ type MoneyfxRateOnParams struct {
 type MoneyfxTodayRateParams struct {
 	From string `form:"from" json:"from"`
 	To   string `form:"to" json:"to"`
+}
+
+// ReportsGetBalanceSheetParams defines parameters for ReportsGetBalanceSheet.
+type ReportsGetBalanceSheetParams struct {
+	// AsOf Balance sheet date.
+	AsOf openapi_types.Date `form:"asOf" json:"asOf"`
 }
 
 // ReportsExportPackParams defines parameters for ReportsExportPack.
@@ -3230,6 +3264,9 @@ type ClientInterface interface {
 
 	// MoneyfxTodayRate request
 	MoneyfxTodayRate(ctx context.Context, params *MoneyfxTodayRateParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReportsGetBalanceSheet request
+	ReportsGetBalanceSheet(ctx context.Context, params *ReportsGetBalanceSheetParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ReportsGetFilingCalendar request
 	ReportsGetFilingCalendar(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -4436,6 +4473,18 @@ func (c *Client) MoneyfxRateOn(ctx context.Context, params *MoneyfxRateOnParams,
 
 func (c *Client) MoneyfxTodayRate(ctx context.Context, params *MoneyfxTodayRateParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewMoneyfxTodayRateRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ReportsGetBalanceSheet(ctx context.Context, params *ReportsGetBalanceSheetParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReportsGetBalanceSheetRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -7675,6 +7724,51 @@ func NewMoneyfxTodayRateRequest(server string, params *MoneyfxTodayRateParams) (
 	return req, nil
 }
 
+// NewReportsGetBalanceSheetRequest generates requests for ReportsGetBalanceSheet
+func NewReportsGetBalanceSheetRequest(server string, params *ReportsGetBalanceSheetParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/reports/balance-sheet")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "asOf", runtime.ParamLocationQuery, params.AsOf); err != nil {
+			return nil, err
+		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+			return nil, err
+		} else {
+			for k, v := range parsed {
+				for _, v2 := range v {
+					queryValues.Add(k, v2)
+				}
+			}
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewReportsGetFilingCalendarRequest generates requests for ReportsGetFilingCalendar
 func NewReportsGetFilingCalendarRequest(server string) (*http.Request, error) {
 	var err error
@@ -8317,6 +8411,9 @@ type ClientWithResponsesInterface interface {
 
 	// MoneyfxTodayRateWithResponse request
 	MoneyfxTodayRateWithResponse(ctx context.Context, params *MoneyfxTodayRateParams, reqEditors ...RequestEditorFn) (*MoneyfxTodayRateResponse, error)
+
+	// ReportsGetBalanceSheetWithResponse request
+	ReportsGetBalanceSheetWithResponse(ctx context.Context, params *ReportsGetBalanceSheetParams, reqEditors ...RequestEditorFn) (*ReportsGetBalanceSheetResponse, error)
 
 	// ReportsGetFilingCalendarWithResponse request
 	ReportsGetFilingCalendarWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ReportsGetFilingCalendarResponse, error)
@@ -10257,6 +10354,31 @@ func (r MoneyfxTodayRateResponse) StatusCode() int {
 	return 0
 }
 
+type ReportsGetBalanceSheetResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON200                   *ReportsBalanceSheetResponse
+	ApplicationproblemJSON400 *Problem
+	ApplicationproblemJSON401 *Problem
+	ApplicationproblemJSON404 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r ReportsGetBalanceSheetResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReportsGetBalanceSheetResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type ReportsGetFilingCalendarResponse struct {
 	Body                      []byte
 	HTTPResponse              *http.Response
@@ -11316,6 +11438,15 @@ func (c *ClientWithResponses) MoneyfxTodayRateWithResponse(ctx context.Context, 
 		return nil, err
 	}
 	return ParseMoneyfxTodayRateResponse(rsp)
+}
+
+// ReportsGetBalanceSheetWithResponse request returning *ReportsGetBalanceSheetResponse
+func (c *ClientWithResponses) ReportsGetBalanceSheetWithResponse(ctx context.Context, params *ReportsGetBalanceSheetParams, reqEditors ...RequestEditorFn) (*ReportsGetBalanceSheetResponse, error) {
+	rsp, err := c.ReportsGetBalanceSheet(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReportsGetBalanceSheetResponse(rsp)
 }
 
 // ReportsGetFilingCalendarWithResponse request returning *ReportsGetFilingCalendarResponse
@@ -14895,6 +15026,53 @@ func ParseMoneyfxTodayRateResponse(rsp *http.Response) (*MoneyfxTodayRateRespons
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest MoneyFXRateResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseReportsGetBalanceSheetResponse parses an HTTP response from a ReportsGetBalanceSheetWithResponse call
+func ParseReportsGetBalanceSheetResponse(rsp *http.Response) (*ReportsGetBalanceSheetResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReportsGetBalanceSheetResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ReportsBalanceSheetResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

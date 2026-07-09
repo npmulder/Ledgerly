@@ -3,11 +3,13 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 
 import { queryKeys } from "@/api/queryKeys";
 import {
+  getReportsBalanceSheet,
   getReportsCalendar,
   getReportsPL,
   getReportsVAT,
   reportsExportURL,
   shareReportsExport,
+  type ReportsBalanceSheet,
   type ReportsFiling,
   type ReportsMoney,
   type ReportsPL,
@@ -46,6 +48,10 @@ export function ReportsScreen() {
     from: defaultPeriod.from,
     to: defaultPeriod.to,
   }));
+  const [balanceSheetAsOf, setBalanceSheetAsOf] = useState(defaultPeriod.to);
+  const [balanceSheetDraftAsOf, setBalanceSheetDraftAsOf] = useState(
+    defaultPeriod.to,
+  );
   const [shareOpen, setShareOpen] = useState(false);
   const [shareEmail, setShareEmail] = useState("");
   const [statusToast, setStatusToast] = useState<{
@@ -60,6 +66,10 @@ export function ReportsScreen() {
   const vatQuery = useQuery({
     queryFn: () => getReportsVAT(period.vatPeriod),
     queryKey: queryKeys.reports.vat(period.vatPeriod),
+  });
+  const balanceSheetQuery = useQuery({
+    queryFn: () => getReportsBalanceSheet(balanceSheetAsOf),
+    queryKey: queryKeys.reports.balanceSheet(balanceSheetAsOf),
   });
   const calendarQuery = useQuery({
     queryFn: getReportsCalendar,
@@ -113,6 +123,14 @@ export function ReportsScreen() {
       to: customRange.to,
       vatPeriod: quarterForDate(customRange.from),
     });
+  }
+
+  function applyBalanceSheetDate(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (balanceSheetDraftAsOf === "") {
+      return;
+    }
+    setBalanceSheetAsOf(balanceSheetDraftAsOf);
   }
 
   function exportPack() {
@@ -193,16 +211,26 @@ export function ReportsScreen() {
       <AdvisorStrip surface="reports" />
 
       <div className="reports-layout">
-        <ProfitAndLossCard
-          isLoading={plQuery.isPending}
-          period={period}
-          pl={plQuery.data}
-          onSelectPreset={selectPreset}
-          customRange={customRange}
-          onCustomRangeChange={setCustomRange}
-          onCustomRangeSubmit={applyCustomRange}
-          quarterPresets={quarterPresets}
-        />
+        <main className="reports-main">
+          <ProfitAndLossCard
+            isLoading={plQuery.isPending}
+            period={period}
+            pl={plQuery.data}
+            onSelectPreset={selectPreset}
+            customRange={customRange}
+            onCustomRangeChange={setCustomRange}
+            onCustomRangeSubmit={applyCustomRange}
+            quarterPresets={quarterPresets}
+          />
+          <BalanceSheetCard
+            asOf={balanceSheetAsOf}
+            draftAsOf={balanceSheetDraftAsOf}
+            isLoading={balanceSheetQuery.isPending}
+            balanceSheet={balanceSheetQuery.data}
+            onDraftAsOfChange={setBalanceSheetDraftAsOf}
+            onSubmit={applyBalanceSheetDate}
+          />
+        </main>
         <aside className="reports-rail" aria-label="VAT and filing calendar">
           <VATReturnCard
             filing={vatFiling}
@@ -217,6 +245,123 @@ export function ReportsScreen() {
         </aside>
       </div>
     </div>
+  );
+}
+
+function BalanceSheetCard({
+  asOf,
+  balanceSheet,
+  draftAsOf,
+  isLoading,
+  onDraftAsOfChange,
+  onSubmit,
+}: {
+  readonly asOf: string;
+  readonly balanceSheet: ReportsBalanceSheet | undefined;
+  readonly draftAsOf: string;
+  readonly isLoading: boolean;
+  readonly onDraftAsOfChange: (asOf: string) => void;
+  readonly onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  return (
+    <Card
+      className="reports-balance-card"
+      title={
+        <div className="reports-card-title">
+          <span>Balance sheet · {formatReportDate(asOf)}</span>
+          <span>GBP · as at date</span>
+        </div>
+      }
+      actions={
+        balanceSheet ? (
+          <BalanceStatusBadge balanced={balanceSheet.balanced} />
+        ) : null
+      }
+    >
+      <form
+        aria-label="Balance sheet date"
+        className="reports-balance-control"
+        onSubmit={onSubmit}
+      >
+        <Field label="As at">
+          <Input
+            name="asOf"
+            onChange={(event) => onDraftAsOfChange(event.target.value)}
+            required
+            type="date"
+            value={draftAsOf}
+          />
+        </Field>
+        <Button size="small" type="submit" variant="secondary">
+          Apply
+        </Button>
+      </form>
+
+      {isLoading ? (
+        <p className="type-secondary">Loading balance sheet.</p>
+      ) : balanceSheet ? (
+        <div
+          className="reports-balance-sections"
+          role="table"
+          aria-label="Balance sheet sections"
+        >
+          <BalanceSheetSectionLines section={balanceSheet.assets} />
+          <BalanceSheetSectionLines section={balanceSheet.liabilities} />
+          <BalanceSheetSectionLines section={balanceSheet.equity} />
+          <ReportLine
+            amount={balanceSheet.total_liabilities_and_equity}
+            label="Liabilities and equity"
+            rule
+            strong
+          />
+        </div>
+      ) : (
+        <p className="type-secondary">Unable to load balance sheet.</p>
+      )}
+    </Card>
+  );
+}
+
+function BalanceSheetSectionLines({
+  section,
+}: {
+  readonly section: ReportsBalanceSheet["assets"];
+}) {
+  return (
+    <section className="reports-balance-section">
+      <div className="reports-section-heading">
+        <span>{section.label}</span>
+        <span className="reports-money">
+          {formatReportMoney(section.total)}
+        </span>
+      </div>
+      {section.lines.map((line) => (
+        <ReportLine
+          amount={line.amount}
+          key={line.account_code}
+          label={line.account_name}
+        />
+      ))}
+      <ReportLine
+        amount={section.total}
+        label={`${section.label} total`}
+        strong
+      />
+    </section>
+  );
+}
+
+function BalanceStatusBadge({ balanced }: { readonly balanced: boolean }) {
+  return (
+    <span
+      className={
+        balanced
+          ? "reports-balance-badge reports-balance-badge--balanced"
+          : "reports-balance-badge reports-balance-badge--unbalanced"
+      }
+    >
+      {balanced ? "Balanced" : "Out of balance"}
+    </span>
   );
 }
 
@@ -561,6 +706,15 @@ function formatDateBadge(value: string) {
   })
     .format(new Date(`${value}T00:00:00Z`))
     .toUpperCase();
+}
+
+function formatReportDate(value: string) {
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "2-digit",
+    month: "short",
+    timeZone: "UTC",
+    year: "numeric",
+  }).format(new Date(`${value}T00:00:00Z`));
 }
 
 function formatRangeLabel(from: string, to: string) {

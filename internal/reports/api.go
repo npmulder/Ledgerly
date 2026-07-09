@@ -36,6 +36,35 @@ type PL struct {
 	NetProfit       money.Money
 }
 
+// BalanceSheet is the point-in-time statement of financial position in GBP.
+type BalanceSheet struct {
+	AsOf                      time.Time
+	FinancialYear             string
+	Assets                    BalanceSheetSection
+	Liabilities               BalanceSheetSection
+	Equity                    BalanceSheetSection
+	TotalAssets               money.Money
+	TotalLiabilities          money.Money
+	TotalEquity               money.Money
+	TotalLiabilitiesAndEquity money.Money
+	Balanced                  bool
+}
+
+// BalanceSheetSection groups balance-sheet lines by account type.
+type BalanceSheetSection struct {
+	Label string
+	Lines []BalanceSheetLine
+	Total money.Money
+}
+
+// BalanceSheetLine is one report-facing balance-sheet row. AccountCode may be
+// a virtual report row code for derived rows such as current-year profit.
+type BalanceSheetLine struct {
+	AccountCode ledger.AccountCode
+	AccountName string
+	Amount      money.Money
+}
+
 // IncomeLine is a GBP-presentational income row, grouped by client/currency or
 // by the Other income fallback for non-invoice income.
 type IncomeLine struct {
@@ -202,6 +231,7 @@ type ReceiptDocumentProvider interface {
 // Reports is the v1 reports read API.
 type Reports interface {
 	ProfitAndLoss(context.Context, Period) (PL, error)
+	BalanceSheet(context.Context, time.Time) (BalanceSheet, error)
 	ProfitYTD(context.Context, string) (money.Money, error)
 	VATPosition(context.Context) (VATPosition, error)
 	FilingCalendarContext(context.Context) ([]Filing, error)

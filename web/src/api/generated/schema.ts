@@ -1222,6 +1222,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/reports/balance-sheet": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Return balance sheet as at a date
+         * @description Returns assets, liabilities, and equity grouped from ledger account balances as at a chosen date, including retained earnings carry-forward and current-year profit.
+         */
+        get: operations["reportsGetBalanceSheet"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/reports/calendar": {
         parameters: {
             query?: never;
@@ -2567,6 +2587,29 @@ export interface components {
             size_bytes: number;
             /** Format: uri-reference */
             url: string;
+        };
+        ReportsBalanceSheetLine: {
+            account_code: string;
+            account_name: string;
+            amount: components["schemas"]["ReportsMoney"];
+        };
+        ReportsBalanceSheetResponse: {
+            /** Format: date */
+            as_of: string;
+            assets: components["schemas"]["ReportsBalanceSheetSection"];
+            balanced: boolean;
+            equity: components["schemas"]["ReportsBalanceSheetSection"];
+            financial_year: string;
+            liabilities: components["schemas"]["ReportsBalanceSheetSection"];
+            total_assets: components["schemas"]["ReportsMoney"];
+            total_equity: components["schemas"]["ReportsMoney"];
+            total_liabilities: components["schemas"]["ReportsMoney"];
+            total_liabilities_and_equity: components["schemas"]["ReportsMoney"];
+        };
+        ReportsBalanceSheetSection: {
+            label: string;
+            lines: components["schemas"]["ReportsBalanceSheetLine"][];
+            total: components["schemas"]["ReportsMoney"];
         };
         ReportsExpenseLine: {
             account_code: string;
@@ -6547,6 +6590,56 @@ export interface operations {
                 };
             };
             /** @description Rate was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    reportsGetBalanceSheet: {
+        parameters: {
+            query: {
+                /** @description Balance sheet date. */
+                asOf: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Balance sheet report */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportsBalanceSheetResponse"];
+                };
+            };
+            /** @description Invalid balance sheet query */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Company profile not found */
             404: {
                 headers: {
                     [name: string]: unknown;
